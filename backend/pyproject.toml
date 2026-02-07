@@ -37,6 +37,9 @@ dependencies = [
     # LLM
     "openai>=1.12.0",
 
+    # Required by manim-voiceover (pkg_resources)
+    "setuptools>=65.0.0",
+
     # Dedalus SDK + MCP Gateway (Context7 live docs)
     "dedalus-labs>=0.2.0",
 ]

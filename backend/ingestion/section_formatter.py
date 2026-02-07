@@ -1,13 +1,19 @@
 """
-LLM-based section formatter for ArXiviz.
+Section formatting pipeline for ArXiviz.
 
-Takes raw extracted section content and produces clean, well-formatted
-summaries using OpenAI's API. Runs after section_extractor in the pipeline.
+Two-phase LLM pipeline:
+  Phase 1: Holistic summarization -- LLM summarizes the entire paper to 30-40%
+           of original length in beginner-friendly language.
+  Phase 2: Section organization -- LLM organizes the summary into <=5 logical
+           sections with descriptive headers.
+
+Output populates both .content and .summary on each Section.
 """
 
-import asyncio
+import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -25,6 +31,8 @@ logger = logging.getLogger(__name__)
 
 # Lazy-initialized client
 _client: Optional[AsyncOpenAI] = None
+
+MAX_SECTIONS = 5
 
 
 def _get_client() -> AsyncOpenAI:
@@ -46,110 +54,337 @@ def _get_client() -> AsyncOpenAI:
     return _client
 
 
-SYSTEM_PROMPT = """\
-You are a technical writing assistant that reformats academic paper sections into clean, readable summaries.
+# ---------------------------------------------------------------------------
+# Pre-processing
+# ---------------------------------------------------------------------------
 
-Given the raw extracted text of a section from an academic paper, produce a well-formatted summary that:
+def _prepare_paper_content(
+    sections: list[Section],
+    meta: ArxivPaperMeta,
+) -> tuple[str, int]:
+    """
+    Concatenate all section content into a single document for summarization.
 
-1. Preserves all key technical information, claims, and results
-2. Uses clean markdown formatting (headers, bullet points, bold for emphasis where appropriate)
-3. Removes parsing artifacts, broken formatting, random whitespace, and garbled text
-4. Keeps mathematical notation intact (LaTeX expressions like $...$ or $$...$$)
-5. Maintains the original meaning — do NOT add information that isn't in the source
-6. Is concise but thorough — aim for roughly 40-60% of the original length
-7. Uses clear paragraph breaks and logical flow
+    Prepends the abstract from metadata if it's not already present as a section.
+    Returns (full_text, word_count).
+    """
+    parts: list[str] = []
 
-If the section content is already well-formatted and clean, return it mostly as-is with minor cleanup.
-If the content is very short (a few sentences), just clean it up without trying to summarize.
+    # Add abstract from metadata if not in sections
+    has_abstract = any(s.title.lower().strip() == "abstract" for s in sections)
+    if meta.abstract and not has_abstract:
+        parts.append(f"## Abstract\n\n{meta.abstract}")
 
-Return ONLY the formatted summary text. No preamble, no "Here is the summary:", just the content."""
+    for section in sections:
+        parts.append(f"## {section.title}\n\n{section.content}")
+
+    full_text = "\n\n".join(parts)
+    word_count = len(full_text.split())
+    return full_text, word_count
 
 
-async def format_section(
-    section: Section,
+# ---------------------------------------------------------------------------
+# Phase 1: Holistic summarization
+# ---------------------------------------------------------------------------
+
+SUMMARIZE_SYSTEM_PROMPT = """\
+You are an expert science communicator who makes academic papers accessible to newcomers.
+
+Your task: Read the entire paper below and write a clear, approachable summary.
+
+GOALS:
+- Reduce to roughly {target_pct}% of the original length (~{target_words} words)
+- Use language a smart person NEW to research can follow
+- Explain the overall idea and core concepts, not every technical detail
+- Make someone understand what this paper contributes and why it matters
+
+KEEP (preserve fully):
+- What the paper is about and why it matters (the "big picture")
+- Core methodology -- how they did it, at a high level
+- Key results and what they mean in plain language
+- Important equations in LaTeX notation ($...$ inline, $$...$$ display) with a brief intuitive explanation of what each equation means
+- Novel concepts and definitions, explained clearly
+- Key figure/table references and their takeaways
+
+CUT (remove aggressively):
+- Detailed mathematical derivations and proofs (keep the statement, cut the steps)
+- Hyperparameters, training schedules, and implementation specifics
+- Extensive related work comparisons and literature reviews
+- Boilerplate academic language ("In this section we...", "It is worth noting that...")
+- Redundant explanations that restate what was already said
+- Appendix material, author checklists, ethics statements
+
+FORMATTING:
+- Write in clean markdown with paragraph breaks for readability
+- Use **bold** for key terms when first introduced
+- Use bullet points sparingly for lists of results or contributions
+- Preserve LaTeX notation for important equations
+- Do NOT invent information not in the source paper
+- Do NOT start with "This paper..." or any preamble -- just begin explaining
+
+Return ONLY the summarized text."""
+
+
+async def _summarize_paper(
+    full_content: str,
     paper_title: str,
-    model: str = "moonshotai/kimi-k2.5",
+    total_words: int,
+    model: str,
 ) -> str:
     """
-    Format a single section's content using an LLM via Martian.
+    Phase 1: Summarize the entire paper holistically.
 
-    Args:
-        section: The section to format
-        paper_title: Title of the paper (for context)
-        model: Martian model identifier (e.g. "moonshotai/kimi-k2.5")
-
-    Returns:
-        Formatted summary string
+    Returns plain markdown text at 30-40% of original length.
     """
     client = _get_client()
 
-    # Skip very short sections — just clean them up
-    if len(section.content.split()) < 20:
-        return section.content.strip()
+    target_pct = 35  # aim for middle of 30-40% range
+    target_words = max(300, int(total_words * target_pct / 100))
+
+    system_prompt = (
+        SUMMARIZE_SYSTEM_PROMPT
+        .replace("{target_pct}", str(target_pct))
+        .replace("{target_words}", str(target_words))
+    )
 
     user_prompt = f"""Paper: "{paper_title}"
-Section: "{section.title}"
+Original length: ~{total_words} words
+Target summary length: ~{target_words} words
 
-Raw content:
-{section.content}"""
+Full paper content:
 
-    try:
-        print(f"[FORMATTER] Calling Martian API for section: {section.title[:50]}...")
-        response = await client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.2,  # Low temperature for consistent formatting
-            max_tokens=2000,
+{full_content}"""
+
+    print(f"[FORMATTER] Phase 1: Summarizing paper ({total_words} words -> ~{target_words} words)...")
+
+    response = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.3,
+        max_tokens=16000,
+    )
+
+    result = response.choices[0].message.content.strip()
+    result_words = len(result.split())
+    compression = round(result_words / total_words * 100) if total_words > 0 else 0
+    print(f"[FORMATTER] Phase 1 complete: {total_words} -> {result_words} words ({compression}% of original)")
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Section organization
+# ---------------------------------------------------------------------------
+
+ORGANIZE_SYSTEM_PROMPT = """\
+You are organizing a summarized academic paper into clear, logical sections.
+
+Given the summarized text of a research paper, split it into {max_sections} or fewer \
+well-structured sections.
+
+RULES:
+1. Create at most {max_sections} sections (fewer is fine for shorter content).
+2. Each section needs a clear, descriptive title -- NOT generic labels like \
+"Section 1" or "Part A".
+3. Good title examples: "The Core Idea", "How It Works", "Key Results and Findings", \
+"Why This Matters".
+4. Sections should flow logically, typically:
+   - What is this about and why does it matter
+   - How does it work (methodology)
+   - What did they find (results)
+   - What does it mean (discussion / implications)
+5. Every piece of the input text must appear in exactly one section -- do NOT drop content.
+6. Do NOT rewrite or modify the text -- just organize it into sections.
+7. Do NOT add new content or commentary.
+
+Return ONLY valid JSON (no markdown fences, no explanation):
+{
+  "sections": [
+    {"title": "Descriptive Section Title", "content": "Section content here..."},
+    ...
+  ]
+}"""
+
+
+async def _organize_into_sections(
+    summary_text: str,
+    paper_title: str,
+    model: str,
+) -> list[dict]:
+    """
+    Phase 2: Organize summarized text into <=5 logical sections.
+
+    Returns list of dicts with 'title' and 'content' keys.
+    """
+    client = _get_client()
+
+    system_prompt = ORGANIZE_SYSTEM_PROMPT.replace(
+        "{max_sections}", str(MAX_SECTIONS)
+    )
+
+    user_prompt = f"""Paper: "{paper_title}"
+
+Summarized text to organize into sections:
+
+{summary_text}"""
+
+    summary_words = len(summary_text.split())
+    print(f"[FORMATTER] Phase 2: Organizing {summary_words} words into <={MAX_SECTIONS} sections...")
+
+    response = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.2,
+        max_tokens=16000,
+    )
+
+    raw_response = response.choices[0].message.content.strip()
+
+    # Strip markdown code fences if present
+    if raw_response.startswith("```"):
+        lines = raw_response.split("\n")
+        raw_response = "\n".join(
+            line for line in lines if not line.strip().startswith("```")
         )
-        result = response.choices[0].message.content.strip()
-        print(f"[FORMATTER] Success for section: {section.title[:50]} ({len(result)} chars)")
-        return result
-    except Exception as e:
-        print(f"[FORMATTER] ERROR for section '{section.title}': {type(e).__name__}: {e}")
-        logger.error(f"LLM formatting failed for section '{section.title}': {e}")
-        # Graceful fallback: return the original content
-        return section.content
 
+    parsed = json.loads(raw_response)
+    organized_sections = parsed["sections"]
+
+    # Validate
+    if not organized_sections:
+        raise ValueError("LLM returned empty sections list")
+    if len(organized_sections) > MAX_SECTIONS:
+        # Truncate to max if LLM returned too many
+        organized_sections = organized_sections[:MAX_SECTIONS]
+
+    print(f"[FORMATTER] Phase 2 complete: {len(organized_sections)} sections")
+    for s in organized_sections:
+        wc = len(s["content"].split())
+        print(f'  - "{s["title"]}": {wc} words')
+
+    return organized_sections
+
+
+# ---------------------------------------------------------------------------
+# Fallback: deterministic split
+# ---------------------------------------------------------------------------
+
+def _fallback_split(text: str, max_sections: int = MAX_SECTIONS) -> list[dict]:
+    """
+    Deterministic fallback if the LLM organization call fails.
+
+    Splits text on double-newline paragraph boundaries into roughly equal chunks,
+    then assigns generic titles based on position.
+    """
+    paragraphs = [p.strip() for p in re.split(r"\n{2,}", text) if p.strip()]
+
+    if not paragraphs:
+        return [{"title": "Summary", "content": text.strip()}]
+
+    target = min(max_sections, len(paragraphs))
+    sections: list[dict] = []
+    base_size = len(paragraphs) // target
+    remainder = len(paragraphs) % target
+    idx = 0
+
+    fallback_titles = [
+        "Introduction & Motivation",
+        "Approach & Methodology",
+        "Key Concepts",
+        "Results & Findings",
+        "Discussion & Implications",
+    ]
+
+    for i in range(target):
+        size = base_size + (1 if i < remainder else 0)
+        chunk = "\n\n".join(paragraphs[idx : idx + size])
+        title = fallback_titles[i] if i < len(fallback_titles) else f"Part {i + 1}"
+        sections.append({"title": title, "content": chunk})
+        idx += size
+
+    return sections
+
+
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
 
 async def format_sections(
     sections: list[Section],
     meta: ArxivPaperMeta,
     model: str = "moonshotai/kimi-k2.5",
-    max_concurrent: int = 5,
 ) -> list[Section]:
     """
-    Format all sections using LLM, populating the `summary` field.
+    Summarize and organize paper sections for presentation.
 
-    Runs requests concurrently with a semaphore to respect rate limits.
+    Phase 1: Holistic LLM summarization of the entire paper (30-40% of original).
+    Phase 2: LLM organizes the summary into <= 5 logical sections.
+    Output populates both .content and .summary on each Section.
 
     Args:
-        sections: List of sections to format
+        sections: Sections from extract_sections()
         meta: Paper metadata for context
-        model: Martian model identifier (e.g. "moonshotai/kimi-k2.5")
-        max_concurrent: Max concurrent API calls
+        model: Martian model identifier
 
     Returns:
-        The same list of sections with `summary` fields populated
+        List of <= 5 sections with summarized .content and .summary
     """
     if not sections:
         return sections
 
-    print(f"\n[FORMATTER] === Starting LLM formatting for {len(sections)} sections (model={model}) ===")
-    logger.info(f"Formatting {len(sections)} sections with LLM ({model})")
+    print(f"\n[FORMATTER] === Summarize & Organize pipeline: {len(sections)} input sections ===")
+    logger.info(f"Starting summarize & organize pipeline for {len(sections)} sections")
 
-    semaphore = asyncio.Semaphore(max_concurrent)
+    # --- Pre-processing: combine all sections into one document ---
+    full_content, total_words = _prepare_paper_content(sections, meta)
+    print(f"[FORMATTER] Total paper content: {total_words} words")
 
-    async def _format_one(section: Section) -> None:
-        async with semaphore:
-            summary = await format_section(section, meta.title, model)
-            section.summary = summary
+    # --- Phase 1: Holistic summarization ---
+    try:
+        summary_text = await _summarize_paper(full_content, meta.title, total_words, model)
+    except Exception as e:
+        logger.error(f"Phase 1 (summarization) failed: {e}")
+        print(f"[FORMATTER] Phase 1 FAILED ({type(e).__name__}: {e}), using raw content")
+        summary_text = full_content  # fallback: use raw content
 
-    # Run all formatting tasks concurrently
-    tasks = [_format_one(section) for section in sections]
-    await asyncio.gather(*tasks)
+    # --- Phase 2: Section organization ---
+    try:
+        organized = await _organize_into_sections(summary_text, meta.title, model)
+    except Exception as e:
+        logger.error(f"Phase 2 (organization) failed: {e}")
+        print(f"[FORMATTER] Phase 2 FAILED ({type(e).__name__}: {e}), using fallback split")
+        organized = _fallback_split(summary_text)
 
-    logger.info(f"Finished formatting {len(sections)} sections")
-    return sections
+    # --- Build final Section objects ---
+    result_sections: list[Section] = []
+    for i, org_section in enumerate(organized):
+        section = Section(
+            id=f"{meta.arxiv_id}-section-{i + 1}",
+            title=org_section["title"],
+            level=1,
+            content=org_section["content"],
+            summary=org_section["content"],
+            equations=[],
+            figures=[],
+            tables=[],
+            parent_id=None,
+        )
+        result_sections.append(section)
+
+    print(f"[FORMATTER] === Pipeline complete: {len(result_sections)} final sections ===")
+    total_output_words = 0
+    for s in result_sections:
+        wc = len(s.content.split())
+        total_output_words += wc
+        print(f'  - "{s.title}": {wc} words')
+    compression = round(total_output_words / total_words * 100) if total_words > 0 else 0
+    print(f"[FORMATTER] Total output: {total_output_words} words ({compression}% of original {total_words})")
+
+    logger.info(f"Summarize & organize pipeline complete: {len(result_sections)} sections")
+    return result_sections

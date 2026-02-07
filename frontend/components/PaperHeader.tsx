@@ -35,7 +35,7 @@ export function PaperHeader({
 
       {/* Authors */}
       <div className="flex flex-wrap items-center gap-2">
-        {paper.authors.map((author, i) => (
+        {paper.authors.slice(0, 5).map((author, i) => (
           <span
             key={i}
             className="rounded-full bg-white/[0.04] px-3 py-1 text-sm text-white/55 border border-white/[0.06]"
@@ -43,6 +43,11 @@ export function PaperHeader({
             {author}
           </span>
         ))}
+        {paper.authors.length > 5 && (
+          <span className="rounded-full bg-white/[0.04] px-3 py-1 text-sm text-white/40 italic border border-white/[0.06]">
+            et al.
+          </span>
+        )}
       </div>
 
       {/* Paper ID and links */}

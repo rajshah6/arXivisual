@@ -293,7 +293,8 @@ function OverviewMode({
           </h1>
 
           <p className="text-white/40 max-w-2xl mx-auto">
-            {paper.authors.join(", ")}
+            {paper.authors.slice(0, 5).join(", ")}
+            {paper.authors.length > 5 && ", et al."}
           </p>
 
           <motion.button

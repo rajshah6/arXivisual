@@ -5,11 +5,15 @@ Fetches paper metadata from the arXiv API and downloads PDFs.
 Also checks for ar5iv HTML availability.
 """
 
+import asyncio
+import logging
 import re
 import arxiv
 import httpx
 from datetime import datetime
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from models.paper import ArxivPaperMeta
 
@@ -85,30 +89,47 @@ async def fetch_paper_meta(arxiv_id: str) -> ArxivPaperMeta:
             f"Expected formats: '1706.03762', '1706.03762v1', or 'cs/0123456'"
         )
     
-    try:
-        # Create search client
-        client = arxiv.Client()
-        
-        # Search for the paper
-        search = arxiv.Search(
-            id_list=[search_id],
-            max_results=1
-        )
-        
-        # Get results (arxiv library is synchronous)
-        results = list(client.results(search))
-        
-    except Exception as e:
-        # Catch HTTP errors, network issues, etc.
-        error_msg = str(e)
-        if "400" in error_msg or "Bad Request" in error_msg:
-            raise ValueError(f"Invalid arXiv ID: '{arxiv_id}' - arXiv API rejected the request")
-        elif "404" in error_msg or "Not Found" in error_msg:
-            raise ValueError(f"Paper not found on arXiv: '{arxiv_id}'")
-        elif "timeout" in error_msg.lower() or "connection" in error_msg.lower():
-            raise ConnectionError(f"Could not connect to arXiv API: {e}")
-        else:
-            raise ValueError(f"Error fetching paper '{arxiv_id}': {e}")
+    max_retries = 4
+    last_error = None
+
+    for attempt in range(max_retries):
+        try:
+            # Create search client
+            client = arxiv.Client()
+
+            # Search for the paper
+            search = arxiv.Search(
+                id_list=[search_id],
+                max_results=1
+            )
+
+            # Get results (arxiv library is synchronous)
+            results = list(client.results(search))
+            break  # Success
+
+        except Exception as e:
+            error_msg = str(e)
+            last_error = e
+
+            # Retry on rate limit (429)
+            if "429" in error_msg:
+                wait = 3 * (2 ** attempt)  # 3s, 6s, 12s, 24s
+                logger.warning(f"arXiv rate limited (429), retrying in {wait}s (attempt {attempt + 1}/{max_retries})")
+                await asyncio.sleep(wait)
+                continue
+
+            # Non-retryable errors — raise immediately
+            if "400" in error_msg or "Bad Request" in error_msg:
+                raise ValueError(f"Invalid arXiv ID: '{arxiv_id}' - arXiv API rejected the request")
+            elif "404" in error_msg or "Not Found" in error_msg:
+                raise ValueError(f"Paper not found on arXiv: '{arxiv_id}'")
+            elif "timeout" in error_msg.lower() or "connection" in error_msg.lower():
+                raise ConnectionError(f"Could not connect to arXiv API: {e}")
+            else:
+                raise ValueError(f"Error fetching paper '{arxiv_id}': {e}")
+    else:
+        # All retries exhausted
+        raise ValueError(f"Error fetching paper '{arxiv_id}' after {max_retries} retries: {last_error}")
     
     if not results:
         raise ValueError(f"Paper not found on arXiv: '{arxiv_id}'")

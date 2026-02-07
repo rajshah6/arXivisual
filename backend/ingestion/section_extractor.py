@@ -48,14 +48,27 @@ EXPECTED_SECTIONS = [
 SKIP_SECTIONS = [
     "References",
     "Bibliography",
+    "Appendix",
+    "Appendices",
+    "Checklist",
+    "Acknowledgment",
+    "Acknowledgments",
+    "Acknowledgement",
+    "Acknowledgements",
+    "Author Contributions",
+    "Ethics Statement",
+    "Broader Impact",
+    "Funding",
+    "Disclosure",
 ]
 
 # Header patterns in markdown
 HEADER_PATTERN = re.compile(r'^(#{1,6})\s+(.+)$', re.MULTILINE)
 
-# Numbered section pattern (e.g., "1 Introduction", "3.2 Attention")
+# Numbered section pattern (e.g., "1 Introduction", "3.2 Attention", "2Related Works")
+# Uses \s* after number to handle cases where no space separates number from title
 NUMBERED_HEADER_PATTERN = re.compile(
-    r'^(#{1,6})\s*(\d+(?:\.\d+)*\.?)\s+(.+)$',
+    r'^(#{1,6})\s*(\d+(?:\.\d+)*\.?)\s*(\S.*)$',
     re.MULTILINE
 )
 
@@ -100,7 +113,7 @@ def extract_sections(
     
     # Build parent-child hierarchy
     sections = build_hierarchy(sections)
-    
+
     # Add abstract if not present and available in metadata
     if meta.abstract and not any(s.title.lower() == 'abstract' for s in sections):
         abstract_section = Section(
@@ -157,7 +170,8 @@ def find_headers(text: str) -> list[dict]:
         
         if not already_found:
             # Check if title starts with a number (it's numbered but pattern didn't catch)
-            num_match = re.match(r'^(\d+(?:\.\d+)*\.?)\s+(.+)$', title)
+            # Allow zero whitespace so "2Related Works" is split into "2" + "Related Works"
+            num_match = re.match(r'^(\d+(?:\.\d+)*\.?)\s*(.*\S.*)$', title)
             if num_match:
                 number = num_match.group(1).rstrip('.')
                 title = num_match.group(2)
@@ -235,9 +249,13 @@ def build_sections_from_headers(
             header['title']
         )
         
+        # Strip any leading section numbers (e.g. "3.2 Attention" → "Attention")
+        # Use \s* so "2Related Works" → "Related Works" (no space between number and text)
+        clean_title = re.sub(r'^\d+(\.\d+)*\.?\s*', '', header['title']).strip()
+
         sections.append(Section(
             id=section_id,
-            title=header['title'],
+            title=clean_title or header['title'],
             level=header['level'],
             content=section_content,
             equations=section_equations,
@@ -354,31 +372,34 @@ def find_tables_in_section(
 
 def filter_sections(sections: list[Section]) -> list[Section]:
     """
-    Filter out unwanted sections (References, Bibliography).
+    Filter out unwanted sections (References, Bibliography, Acknowledgments, etc.).
     """
     filtered = []
     skip_from_here = False
-    
+
     for section in sections:
         title_lower = section.title.lower().strip()
-        
+
         # Check if this is a section to skip
+        # Use bidirectional substring check so both
+        # "Acknowledgment" in "Acknowledgments" AND
+        # "Acknowledgments" in "Acknowledgment" work
         should_skip = any(
-            skip.lower() in title_lower 
+            skip.lower() in title_lower or title_lower in skip.lower()
             for skip in SKIP_SECTIONS
         )
-        
+
         # Also skip appendices that come after references
         if should_skip:
             skip_from_here = True
-        
-        # Once we hit references, skip everything after (usually appendix of refs)
-        if skip_from_here and 'appendix' not in title_lower:
+
+        # Once we hit references/appendix, skip everything after
+        if skip_from_here:
             continue
-        
+
         if not should_skip:
             filtered.append(section)
-    
+
     return filtered
 
 
@@ -413,6 +434,81 @@ def build_hierarchy(sections: list[Section]) -> list[Section]:
             parent_stack[i] = None
     
     return sections
+
+
+def consolidate_sections(sections: list[Section]) -> list[Section]:
+    """
+    Merge subsections into their top-level parents.
+
+    Reduces 30-100+ sections to ~5-12 top-level sections.
+    Subsection content is appended under bold subheading markers
+    so no information is lost, but the section count drops dramatically.
+    """
+    if len(sections) <= 12:
+        return sections
+
+    # Build parent → children map
+    children_map: dict[str | None, list[Section]] = {}
+    for s in sections:
+        children_map.setdefault(s.parent_id, []).append(s)
+
+    # Find root sections (parent_id=None)
+    roots = [s for s in sections if s.parent_id is None]
+
+    if not roots:
+        return sections  # Flat structure, no hierarchy to merge
+
+    # If there's only 1 root (e.g. the paper title at h1), it would
+    # swallow the entire paper.  Step down to its direct children instead.
+    if len(roots) == 1 and roots[0].id in children_map:
+        single_root = roots[0]
+        roots = children_map[single_root.id]
+        # Re-parent: these children are now the new roots
+        for r in roots:
+            r.parent_id = None
+
+    def _collect_descendants(section_id: str) -> list[Section]:
+        """DFS collect all descendants in document order."""
+        result = []
+        for child in children_map.get(section_id, []):
+            if child in roots:
+                continue  # Don't collect fellow roots as descendants
+            result.append(child)
+            result.extend(_collect_descendants(child.id))
+        return result
+
+    consolidated = []
+    for root in roots:
+        descendants = _collect_descendants(root.id)
+
+        if not descendants:
+            consolidated.append(root)
+            continue
+
+        # Merge content: root content + each descendant as a subheading
+        merged_parts = [root.content]
+        merged_equations = list(root.equations)
+        merged_figures = list(root.figures)
+        merged_tables = list(root.tables)
+
+        for desc in descendants:
+            merged_parts.append(f"\n\n**{desc.title}**\n\n{desc.content}")
+            merged_equations.extend(desc.equations)
+            merged_figures.extend(desc.figures)
+            merged_tables.extend(desc.tables)
+
+        consolidated.append(Section(
+            id=root.id,
+            title=root.title,
+            level=root.level,
+            content="\n".join(merged_parts),
+            equations=merged_equations,
+            figures=merged_figures,
+            tables=merged_tables,
+            parent_id=None,
+        ))
+
+    return consolidated
 
 
 def detect_paper_structure(text: str) -> dict:

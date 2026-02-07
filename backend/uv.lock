@@ -496,7 +496,7 @@ wheels = [
 [[package]]
 name = "dedalus-labs"
 version = "0.2.0"
-source = { registry = "https://pypi.org/simple" }
+source = { registry = "https://pkgs.shopify.io/basic/data/python/simple/" }
 dependencies = [
     { name = "anyio" },
     { name = "distro" },

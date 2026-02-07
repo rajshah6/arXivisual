@@ -4,6 +4,7 @@ Background job processing for ArXiviz.
 Processes papers asynchronously with progress tracking.
 """
 
+import asyncio
 import logging
 from db.connection import async_session_maker
 from db import queries
@@ -103,31 +104,37 @@ async def process_paper_job(job_id: str, arxiv_id: str):
                 sections_completed=0
             )
 
-            for i, viz in enumerate(viz_records):
-                try:
-                    video_url = await process_visualization(
-                        viz_id=viz["id"],
-                        manim_code=viz["manim_code"],
-                        quality="low_quality"
-                    )
-                    await queries.update_visualization_status(
-                        db, viz["id"],
-                        status="complete",
-                        video_url=video_url
-                    )
-                except Exception as e:
-                    await queries.update_visualization_status(
-                        db, viz["id"],
-                        status="failed",
-                        error=str(e)
-                    )
+            render_semaphore = asyncio.Semaphore(3)
 
-                progress = 0.4 + (0.5 * (i + 1) / len(viz_records))
-                await queries.update_job_status(
-                    db, job_id,
-                    progress=progress,
-                    sections_completed=i + 1
-                )
+            async def _render_one(viz: dict):
+                async with render_semaphore:
+                    try:
+                        video_url = await process_visualization(
+                            viz_id=viz["id"],
+                            manim_code=viz["manim_code"],
+                            quality="low_quality"
+                        )
+                        await queries.update_visualization_status(
+                            db, viz["id"],
+                            status="complete",
+                            video_url=video_url
+                        )
+                    except Exception as e:
+                        await queries.update_visualization_status(
+                            db, viz["id"],
+                            status="failed",
+                            error=str(e)
+                        )
+
+            await asyncio.gather(*[
+                _render_one(viz) for viz in viz_records
+            ])
+
+            await queries.update_job_status(
+                db, job_id,
+                progress=0.9,
+                sections_completed=len(viz_records)
+            )
 
             # Step 4: Complete
             await queries.update_job_status(

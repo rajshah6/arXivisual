@@ -18,6 +18,7 @@ Usage (from the backend/ directory):
 import asyncio
 import argparse
 import logging
+import os
 import subprocess
 import sys
 import time
@@ -133,42 +134,78 @@ OUTPUT_DIR = Path(__file__).parent / "generated_output"
 
 
 def create_attention_paper() -> StructuredPaper:
-    """Create a test paper based on 'Attention Is All You Need'."""
+    """Create a curated 5-section paper based on 'Attention Is All You Need'.
+
+    Each section is designed to produce a distinct, high-quality visualization
+    that passes all 4 validation stages reliably.
+    """
     meta = ArxivPaperMeta(
         arxiv_id="1706.03762",
         title="Attention Is All You Need",
-        authors=["Ashish Vaswani", "Noam Shazeer", "Niki Parmar"],
-        abstract="""The dominant sequence transduction models are based on complex 
-        recurrent or convolutional neural networks. We propose a new simple network 
-        architecture, the Transformer, based solely on attention mechanisms.""",
+        authors=[
+            "Ashish Vaswani", "Noam Shazeer", "Niki Parmar",
+            "Jakob Uszkoreit", "Llion Jones", "Aidan N. Gomez",
+            "Lukasz Kaiser", "Illia Polosukhin",
+        ],
+        abstract=(
+            "The dominant sequence transduction models are based on complex recurrent "
+            "or convolutional neural networks that include an encoder and a decoder. "
+            "The best performing models also connect the encoder and decoder through "
+            "an attention mechanism. We propose a new simple network architecture, "
+            "the Transformer, based solely on attention mechanisms, dispensing with "
+            "recurrence and convolutions entirely. Experiments on two machine "
+            "translation tasks show these models to be superior in quality while "
+            "being more parallelizable and requiring significantly less time to train."
+        ),
         published=datetime(2017, 6, 12),
         updated=datetime(2017, 12, 6),
         categories=["cs.CL", "cs.LG"],
         pdf_url="https://arxiv.org/pdf/1706.03762",
         html_url="https://ar5iv.org/abs/1706.03762",
     )
-    
+
     sections = [
+        # Section 1: High-level Transformer architecture (ARCHITECTURE viz)
         Section(
-            id="abstract",
-            title="Abstract",
-            level=1,
-            content=meta.abstract,
+            id="section-3-1",
+            title="The Transformer Architecture",
+            level=2,
+            content=(
+                "Most competitive neural sequence transduction models have an "
+                "encoder-decoder structure. The encoder maps an input sequence of "
+                "symbol representations (x1, ..., xn) to a sequence of continuous "
+                "representations z = (z1, ..., zn). Given z, the decoder then generates "
+                "an output sequence (y1, ..., ym) of symbols one element at a time. "
+                "The Transformer follows this overall architecture using stacked "
+                "self-attention and point-wise fully connected layers for both the "
+                "encoder and decoder. The encoder is composed of a stack of N=6 "
+                "identical layers, each with two sub-layers: multi-head self-attention "
+                "and a position-wise feed-forward network. The decoder is similar but "
+                "inserts a third sub-layer for encoder-decoder attention. Residual "
+                "connections surround each sub-layer, followed by layer normalization."
+            ),
             equations=[],
             figures=[],
             parent_id=None,
         ),
+        # Section 2: Scaled Dot-Product Attention (DATA_FLOW viz)
         Section(
             id="section-3-2",
             title="Scaled Dot-Product Attention",
             level=2,
-            content="""An attention function can be described as mapping a query and 
-            a set of key-value pairs to an output. The output is computed as a weighted 
-            sum of the values, where the weight assigned to each value is computed by a 
-            compatibility function of the query with the corresponding key.
-            
-            We compute the dot products of the query with all keys, divide each by 
-            sqrt(d_k), and apply a softmax function to obtain the weights on the values.""",
+            content=(
+                "An attention function maps a query and a set of key-value pairs to "
+                "an output. The output is computed as a weighted sum of the values, "
+                "where the weight assigned to each value is computed by a compatibility "
+                "function of the query with the corresponding key. We compute the dot "
+                "products of the query with all keys, divide each by the square root "
+                "of d_k, and apply a softmax function to obtain the weights on the "
+                "values. The scaling factor prevents the dot products from growing "
+                "large in magnitude for large d_k, which would push the softmax into "
+                "regions with extremely small gradients. In practice, we compute the "
+                "attention function on a set of queries simultaneously, packed into "
+                "a matrix Q. The keys and values are also packed into matrices K and V."
+            ),
             equations=[
                 Equation(
                     latex=r"\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V",
@@ -179,26 +216,95 @@ def create_attention_paper() -> StructuredPaper:
             figures=[],
             parent_id=None,
         ),
+        # Section 3: Multi-Head Attention (ARCHITECTURE viz)
         Section(
             id="section-3-3",
             title="Multi-Head Attention",
             level=2,
-            content="""Instead of performing a single attention function, we linearly 
-            project the queries, keys and values h times. On each of these projected 
-            versions we perform the attention function in parallel, yielding outputs 
-            that are concatenated and projected.""",
+            content=(
+                "Instead of performing a single attention function with "
+                "d_model-dimensional keys, values and queries, we found it beneficial "
+                "to linearly project the queries, keys and values h times with "
+                "different learned linear projections. On each of these projected "
+                "versions we perform the attention function in parallel, yielding "
+                "d_v-dimensional output values. These are concatenated and once again "
+                "projected, resulting in the final values. Multi-head attention allows "
+                "the model to jointly attend to information from different "
+                "representation subspaces at different positions. With a single "
+                "attention head, averaging inhibits this. In this work we employ h=8 "
+                "parallel attention layers, or heads. For each head we use "
+                "d_k = d_v = d_model / h = 64. Due to the reduced dimension of each "
+                "head, the total computational cost is similar to single-head attention "
+                "with full dimensionality."
+            ),
             equations=[
                 Equation(
-                    latex=r"\text{MultiHead}(Q, K, V) = \text{Concat}(\text{head}_1, ..., \text{head}_h)W^O",
-                    context="Multi-head attention concatenates multiple attention outputs",
+                    latex=r"\text{MultiHead}(Q, K, V) = \text{Concat}(\text{head}_1, \ldots, \text{head}_h) W^O",
+                    context="Multi-head attention concatenates multiple parallel attention outputs",
                     is_inline=False,
                 ),
             ],
             figures=[],
             parent_id=None,
         ),
+        # Section 4: Positional Encoding (EQUATION viz)
+        Section(
+            id="section-3-5",
+            title="Positional Encoding",
+            level=2,
+            content=(
+                "Since the Transformer contains no recurrence and no convolution, "
+                "in order for the model to make use of the order of the sequence, "
+                "we must inject some information about the relative or absolute "
+                "position of the tokens in the sequence. We add positional encodings "
+                "to the input embeddings at the bottoms of the encoder and decoder "
+                "stacks. The positional encodings have the same dimension d_model as "
+                "the embeddings, so the two can be summed. We use sine and cosine "
+                "functions of different frequencies: PE(pos, 2i) = sin(pos / 10000^(2i/d_model)) "
+                "and PE(pos, 2i+1) = cos(pos / 10000^(2i/d_model)). Each dimension "
+                "corresponds to a sinusoid with wavelengths forming a geometric "
+                "progression from 2*pi to 10000*2*pi. This allows the model to learn "
+                "to attend by relative positions, since for any fixed offset k, "
+                "PE(pos+k) can be represented as a linear function of PE(pos)."
+            ),
+            equations=[
+                Equation(
+                    latex=r"PE_{(pos, 2i)} = \sin\left(\frac{pos}{10000^{2i/d_{\text{model}}}}\right)",
+                    context="Sinusoidal positional encoding injects sequence order information",
+                    is_inline=False,
+                ),
+            ],
+            figures=[],
+            parent_id=None,
+        ),
+        # Section 5: Why Self-Attention (DATA_FLOW viz — comparison)
+        Section(
+            id="section-4",
+            title="Why Self-Attention",
+            level=2,
+            content=(
+                "We compare self-attention layers to recurrent and convolutional "
+                "layers on three criteria: total computational complexity per layer, "
+                "amount of parallelizable computation, and maximum path length between "
+                "long-range dependencies. A self-attention layer connects all positions "
+                "with a constant number of sequential operations O(1), whereas a "
+                "recurrent layer requires O(n). In terms of computational complexity, "
+                "self-attention layers are faster than recurrent layers when the "
+                "sequence length n is smaller than the representation dimensionality d, "
+                "which is most often the case in machine translation. A single "
+                "convolutional layer with kernel width k < n does not connect all "
+                "pairs of positions, requiring O(n/k) layers or O(log_k(n)) with "
+                "dilated convolutions. Self-attention also yields more interpretable "
+                "models: individual attention heads clearly learn to perform different "
+                "tasks, with many exhibiting behavior related to syntactic and semantic "
+                "structure of sentences."
+            ),
+            equations=[],
+            figures=[],
+            parent_id=None,
+        ),
     ]
-    
+
     return StructuredPaper(meta=meta, sections=sections)
 
 
@@ -216,10 +322,13 @@ async def run_demo(max_visualizations: int = 2, verbose: bool = False) -> list[P
     # Create output directory
     OUTPUT_DIR.mkdir(exist_ok=True)
     
-    # Create test paper
+    # Use curated 5-section paper (reliable, high-quality output)
     paper = create_attention_paper()
     print(f"\nPaper: \033[1m{paper.meta.title}\033[0m")
+    print(f"Authors: {', '.join(paper.meta.authors[:5])}")
     print(f"Sections to analyze: {len(paper.sections)}")
+    for i, s in enumerate(paper.sections):
+        print(f"  [{i+1}] {s.title} ({len(s.content)} chars)")
     print(f"Max visualizations: {max_visualizations}")
     
     print_step(1, "Analyzing sections for visualization candidates")
@@ -252,20 +361,35 @@ async def run_demo(max_visualizations: int = 2, verbose: bool = False) -> list[P
     print_step(5, "Saving generated Manim code")
     saved_files = []
     
+    manifest_lines = []
     for i, viz in enumerate(visualizations, 1):
         # Create filename from concept
         filename = viz.concept.lower().replace(" ", "_").replace("-", "_")
         filename = "".join(c for c in filename if c.isalnum() or c == "_")
         filepath = OUTPUT_DIR / f"{filename}.py"
-        
+
         # Save the code
         filepath.write_text(viz.manim_code)
         saved_files.append(filepath)
-        
+
         print(f"\n  \033[1m[{i}/{len(visualizations)}] {viz.concept}\033[0m")
+        print(f"      Section: {viz.section_id}")
         print(f"      File: {filepath.name}")
         print(f"      Code: {len(viz.manim_code)} chars, ~{len(viz.manim_code.splitlines())} lines")
         print(f"      Status: {viz.status}")
+        manifest_lines.append(f"{i}. {viz.concept} | section={viz.section_id} | file={filepath.name}")
+
+    # Save manifest
+    manifest_path = OUTPUT_DIR / "MANIFEST.txt"
+    manifest_path.write_text(
+        f"Paper: Attention Is All You Need (1706.03762)\n"
+        f"Generated: {datetime.now().isoformat()}\n"
+        f"TTS: ElevenLabs (eleven_flash_v2_5, voice=2fe8mwpfJcqvj9RGBsC1)\n"
+        f"Model: Claude Opus 4.5 via Martian\n"
+        f"Visualizations: {len(visualizations)}\n\n"
+        + "\n".join(manifest_lines) + "\n"
+    )
+    print(f"\n  Manifest: {manifest_path}")
     
     # Print summary
     total_time = time.time() - start_time
@@ -312,25 +436,28 @@ def render_video(filepath: Path, quality: str = "medium", has_voiceover: bool = 
     print(f"   Voiceover: {'Yes (--disable_caching)' if has_voiceover else 'No'}")
     
     # Build command - add --disable_caching for voiceover sync to work
-    # Use system Python's manim since uv env may not have manim-voiceover installed
-    # due to dependency conflicts with python-dotenv
-    SYSTEM_PYTHON = "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3"
-    
-    # Try system Python first (has manim-voiceover), fall back to uv run manim
-    if Path(SYSTEM_PYTHON).exists():
-        cmd = [SYSTEM_PYTHON, "-m", "manim", flag, str(filepath)]
-    else:
-        cmd = ["uv", "run", "manim", flag, str(filepath)]
-    
+    cmd = ["uv", "run", "manim", flag, str(filepath)]
+
     if has_voiceover:
         cmd.append("--disable_caching")
-    
+
+    # Set LaTeX env vars for dvisvgm (brew's texlive)
+    env = os.environ.copy()
+    texlive_prefix = subprocess.run(
+        ["brew", "--prefix", "texlive"], capture_output=True, text=True
+    ).stdout.strip()
+    if texlive_prefix:
+        env["TEXMFCNF"] = f"{texlive_prefix}/share/texmf-dist/web2c"
+        env["TEXMFDIST"] = f"{texlive_prefix}/share/texmf-dist"
+        env["TEXMFVAR"] = os.path.expanduser("~/.texlive/texmf-var")
+
     try:
         result = subprocess.run(
             cmd,
             cwd=str(filepath.parent),
             capture_output=True,
             text=True,
+            env=env,
         )
         
         if result.returncode == 0:

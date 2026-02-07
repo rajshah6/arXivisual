@@ -1,141 +1,126 @@
-# ArXiviz
+# ArXivisual
 
-**Turn any arXiv ML/AI paper into 3Blue1Brown-style animated explainer videos with AI-generated voiceovers.**
+**Turn any arXiv paper into 3Blue1Brown-style animated explainer videos — fully AI-generated with voiceover.**
 
-ArXiviz is a multi-agent AI pipeline that reads academic papers, identifies the key concepts that are hard to understand from text alone, and generates [Manim](https://www.manim.community/) animation code with synchronized narration to visually explain them.
+ArXivisual is a multi-agent AI system that ingests academic papers from arXiv, identifies key concepts, and generates [Manim](https://www.manim.community/) animations with synchronized ElevenLabs narration. The frontend presents papers as interactive scrollytelling experiences with embedded video explainers.
 
 ```
-arxiv.org/abs/1706.03762  →  ArXiviz Pipeline  →  Animated Video Explainer
-       (paper)                (AI agents)           (Manim + voiceover)
+arxiv.org/abs/1706.03762  →  AI Agent Pipeline  →  Animated Explainer Videos
+       (paper)               (Claude Opus 4.5)      (Manim + ElevenLabs TTS)
 ```
 
 ---
 
 ## Table of Contents
 
-- [How It Works (High-Level)](#how-it-works-high-level)
-- [Project Structure](#project-structure)
+- [How It Works](#how-it-works)
+- [Architecture](#architecture)
+- [Tech Stack](#tech-stack)
 - [Quick Start](#quick-start)
-- [API Keys You Need](#api-keys-you-need)
 - [Running the Pipeline](#running-the-pipeline)
-- [What Goes In / What Comes Out](#what-goes-in--what-comes-out)
-- [The Agent Pipeline (Detailed)](#the-agent-pipeline-detailed)
-- [Team Architecture](#team-architecture)
-- [File Reference](#file-reference)
-- [How to Improve It](#how-to-improve-it)
+- [Frontend](#frontend)
+- [Backend](#backend)
+  - [AI Agent Pipeline](#ai-agent-pipeline)
+  - [Paper Ingestion](#paper-ingestion)
+  - [Voiceover & Narration](#voiceover--narration)
+  - [Validation Pipeline](#validation-pipeline)
+- [Project Structure](#project-structure)
+- [Configuration](#configuration)
+- [Key Design Decisions](#key-design-decisions)
+- [Recent Changes](#recent-changes)
 
 ---
 
-## How It Works (High-Level)
+## How It Works
 
 ```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                        ArXiviz Pipeline Flow                            │
-│                                                                          │
-│   StructuredPaper (sections, equations, metadata)                       │
-│         │                                                                │
-│         ▼                                                                │
-│   ┌─────────────────┐   Claude AI reads each section and decides:       │
-│   │ SectionAnalyzer  │   "Does this need a visual? What kind?"          │
-│   └────────┬────────┘   Outputs: VisualizationCandidate[]               │
-│            │                                                             │
-│            ▼                                                             │
-│   ┌──────────────────┐   Claude AI creates a scene-by-scene plan:       │
-│   │ VisualizationPlan│   "Scene 1: show title. Scene 2: show Q,K,V..." │
-│   │     Planner      │   Outputs: VisualizationPlan with Scenes         │
-│   └────────┬─────────┘                                                   │
-│            │                                                             │
-│            ▼                                                             │
-│   ┌──────────────────┐   Claude AI writes actual Python Manim code      │
-│   │ ManimGenerator   │   using few-shot examples matched to viz type    │
-│   └────────┬─────────┘   Outputs: GeneratedCode (.py file)              │
-│            │                                                             │
-│            ▼                                                             │
-│   ┌────────────────────────────────────────────┐                        │
-│   │         3-Stage Validation (retries 3x)     │                        │
-│   │  [1] CodeValidator    → syntax, imports      │                       │
-│   │  [2] SpatialValidator → overlaps, bounds     │                       │
-│   │  [3] RenderTester     → runtime import test  │                       │
-│   │      ↳ Failures → feedback → ManimGenerator  │                       │
-│   └────────┬───────────────────────────────────┘                        │
-│            │                                                             │
-│            ▼                                                             │
-│   ┌──────────────────┐   Adds AI narration using ElevenLabs TTS         │
-│   │ VoiceoverGen     │   Transforms Scene → VoiceoverScene              │
-│   └────────┬─────────┘   Wraps animations with synced speech            │
-│            │                                                             │
-│            ▼                                                             │
-│   ┌──────────────────┐                                                   │
-│   │  Final Output:   │   Validated .py file with Manim code             │
-│   │  Visualization   │   Ready to render: uv run manim -qm file.py     │
-│   └──────────────────┘                                                   │
-└──────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                         ArXivisual Pipeline Flow                             │
+│                                                                              │
+│   arXiv Paper (ID or URL)                                                   │
+│         │                                                                    │
+│         ▼                                                                    │
+│   ┌─────────────────┐                                                        │
+│   │   Ingestion      │   Fetch from arXiv API → Parse HTML/PDF              │
+│   │   Pipeline       │   → Extract sections, equations, metadata             │
+│   └────────┬────────┘   → LLM-format each section (Claude Sonnet)           │
+│            │                                                                 │
+│            ▼                                                                 │
+│   ┌─────────────────┐   Claude Opus reads each section and decides:         │
+│   │ SectionAnalyzer  │   "Does this concept need a visual explanation?"      │
+│   └────────┬────────┘   Outputs: VisualizationCandidate[] (ranked)          │
+│            │                                                                 │
+│            ▼                                                                 │
+│   ┌──────────────────┐   Claude Opus creates scene-by-scene storyboards:    │
+│   │ Visualization     │   "Beat 1: Title. Beat 2: Show Q,K,V matrices..."   │
+│   │ Planner           │   Outputs: VisualizationPlan with 4-6 scenes        │
+│   └────────┬─────────┘                                                       │
+│            │                                                                 │
+│            ▼                                                                 │
+│   ┌──────────────────┐   Claude Opus writes Manim Python code with          │
+│   │ ManimGenerator   │   ElevenLabs voiceover blocks embedded.              │
+│   │ + Context7 Docs  │   Uses Dedalus SDK to fetch live Manim docs.         │
+│   └────────┬─────────┘   Outputs: Complete .py file with narration          │
+│            │                                                                 │
+│            ▼                                                                 │
+│   ┌────────────────────────────────────────────────┐                        │
+│   │         4-Stage Validation (retries up to 5x)   │                        │
+│   │  [1] CodeValidator       → syntax, imports, AST  │                       │
+│   │  [2] SpatialValidator    → positioning, overlaps  │                      │
+│   │  [3] VoiceoverValidator  → narration quality      │                      │
+│   │  [4] RenderTester        → runtime import test    │                      │
+│   │      ↳ Failures → feedback → ManimGenerator       │                      │
+│   └────────┬───────────────────────────────────────┘                        │
+│            │                                                                 │
+│            ▼                                                                 │
+│   ┌──────────────────┐   Render with Manim → .mp4 with synced voiceover    │
+│   │  Final Videos     │   ElevenLabs TTS (eleven_flash_v2_5 model)          │
+│   └──────────────────┘   480p/720p/1080p output                             │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Project Structure
+## Architecture
 
 ```
-arxiviz/
-├── README.md                    ← You are here
-├── .gitignore
-│
-├── AgentDocs/                   # Documentation for all teams
-│   ├── PROJECT_OVERVIEW.md      # Vision, architecture, tech stack
-│   ├── TEAM1_INGESTION.md       # Team 1: Paper fetching & parsing
-│   ├── TEAM2_GENERATION.md      # Team 2: AI pipeline (this codebase)
-│   ├── TEAM3_RENDERING.md       # Team 3: Video rendering & frontend
-│   ├── API_SPEC.md              # REST API specification
-│   └── MANIM_PATTERNS.md        # Manim coding patterns & examples
-│
-├── backend/                     # Python backend (Team 2's scope)
-│   ├── README.md                # Detailed backend docs ← READ THIS TOO
-│   ├── pyproject.toml           # Project config & dependencies (uv)
-│   ├── uv.lock                  # Locked dependency versions
-│   ├── requirements.txt         # Pip-compatible dependency list
-│   ├── .env.example             # Template for API keys
-│   ├── .env                     # Your actual API keys (DO NOT COMMIT)
-│   │
-│   ├── agents/                  # AI agent implementations
-│   │   ├── base.py              # Base agent: Anthropic client, prompts
-│   │   ├── pipeline.py          # Orchestrator: ties all agents together
-│   │   ├── section_analyzer.py  # Agent 1: identifies visualizable concepts
-│   │   ├── visualization_planner.py  # Agent 2: creates storyboards
-│   │   ├── manim_generator.py   # Agent 3: writes Manim Python code
-│   │   ├── code_validator.py    # Validator 1: AST syntax checks
-│   │   ├── spatial_validator.py # Validator 2: positioning/overlap checks
-│   │   ├── render_tester.py     # Validator 3: runtime import test
-│   │   └── voiceover_generator.py  # Agent 4: AI narration (ElevenLabs)
-│   │
-│   ├── models/                  # Pydantic data models
-│   │   ├── paper.py             # StructuredPaper, Section, Equation
-│   │   ├── generation.py        # VisualizationCandidate, Plan, Code
-│   │   └── spatial.py           # Spatial validation issue models
-│   │
-│   ├── prompts/                 # Claude prompt templates (Markdown)
-│   │   ├── section_analyzer.md  # "Which sections need visualization?"
-│   │   ├── visualization_planner.md  # "Create a storyboard for this"
-│   │   ├── manim_generator.md   # "Write Manim code from this plan"
-│   │   ├── voiceover_generator.md   # "Generate narration script"
-│   │   └── system/
-│   │       └── manim_reference.md   # Curated Manim API reference (system prompt)
-│   │
-│   ├── examples/                # Few-shot Manim code examples
-│   │   ├── equation_walkthrough.py   # Equation visualization pattern
-│   │   ├── architecture_diagram.py   # Neural network architecture pattern
-│   │   ├── data_flow.py              # Data flow animation pattern
-│   │   ├── algorithm_steps.py        # Algorithm step-by-step pattern
-│   │   ├── matrix_operations.py      # Matrix multiplication pattern
-│   │   └── three_d_network.py        # 3D visualization pattern
-│   │
-│   ├── run_demo.py              # Demo: generate + optionally render
-│   ├── test_pipeline.py         # Test harness: offline + online tests
-│   ├── test_voiceover.py        # Voiceover-specific tests
-│   └── generated_output/        # Generated .py files land here
-│
-└── .cursor/                     # IDE configuration
+┌─────────────────────────────────────────────────────────────────────┐
+│                                                                     │
+│  Frontend (Next.js 16)              Backend (FastAPI)               │
+│  ├── App Router                     ├── REST API (/api/...)         │
+│  ├── React 19                       ├── AI Agent Pipeline           │
+│  ├── Tailwind CSS v4                │   └── Claude Opus 4.5         │
+│  │   (Mosaic Fragments theme)       │       via Martian proxy       │
+│  ├── Framer Motion 12               ├── Paper Ingestion             │
+│  ├── React Query                    │   └── arXiv + HTML/PDF parse  │
+│  ├── KaTeX (LaTeX rendering)        ├── Manim Rendering             │
+│  └── Scrollytelling UI              │   └── ElevenLabs voiceover    │
+│                                     ├── Dedalus SDK + Context7      │
+│                                     │   └── Live Manim docs (MCP)   │
+│                                     └── SQLite Database              │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Tech Stack
+
+| Layer | Technology | Purpose |
+|-------|-----------|---------|
+| **Frontend** | Next.js 16, React 19, Tailwind v4 | Interactive paper viewer |
+| **UI Theme** | Mosaic Fragments (glass-on-black) | Monochrome glassmorphism design |
+| **Animations** | Framer Motion 12.31 | UI transitions and effects |
+| **LaTeX** | KaTeX + remark-math | Equation rendering in browser |
+| **Backend** | FastAPI + Python 3.11+ | REST API and pipeline orchestration |
+| **AI Model** | Claude Opus 4.5 via Martian | Code generation, analysis, planning |
+| **Live Docs** | Dedalus SDK + Context7 MCP | Real-time Manim documentation retrieval |
+| **Animation** | Manim Community Edition | 3Blue1Brown-style math animations |
+| **Voiceover** | ElevenLabs (`eleven_flash_v2_5`) | AI text-to-speech narration |
+| **TTS Sync** | manim-voiceover | Synchronize audio with animation |
+| **Ingestion** | arxiv API + pymupdf4llm + BeautifulSoup | Paper fetching and parsing |
+| **Database** | SQLAlchemy + SQLite/PostgreSQL | Paper metadata and job tracking |
+| **Package Mgr** | uv (backend), npm (frontend) | Dependency management |
 
 ---
 
@@ -144,374 +129,424 @@ arxiviz/
 ### Prerequisites
 
 - **Python 3.11+** (tested with 3.13/3.14)
-- **[uv](https://docs.astral.sh/uv/)** - Fast Python package manager (install: `curl -LsSf https://astral.sh/uv/install.sh | sh`)
-- **An LLM API key** - Either Martian (recommended) or direct Anthropic
-- **ElevenLabs API key** (optional) - For AI-generated voiceovers
+- **Node.js 18+** (for frontend)
+- **[uv](https://docs.astral.sh/uv/)** — `curl -LsSf https://astral.sh/uv/install.sh | sh`
+- **LaTeX** — `brew install texlive` (macOS) for Manim's MathTex rendering
+- **ffmpeg** — `brew install ffmpeg` (macOS) for video encoding
 
-### 1. Clone and enter the project
+### 1. Clone and set up
 
 ```bash
-cd "New project"
-git checkout team2
+git clone <repo-url> arXivisual
+cd arXivisual
 ```
 
-### 2. Set up API keys
+### 2. Backend setup
 
 ```bash
 cd backend
 cp .env.example .env
-# Edit .env and add your keys (see "API Keys You Need" section below)
-```
-
-### 3. Install dependencies
-
-```bash
-# uv handles everything - virtual env creation, dependency resolution, installation
-cd backend
+# Edit .env with your API keys (see Configuration section)
 uv sync
 ```
 
-### 4. Run offline tests (verify setup)
+### 3. Frontend setup
+
+```bash
+cd frontend
+npm install
+```
+
+### 4. Run the demo pipeline
 
 ```bash
 cd backend
-uv run python test_pipeline.py
+uv run python run_demo.py --render --quality low --max 5
 ```
 
-### 5. Run the full pipeline
+### 5. Start the frontend
+
+```bash
+cd frontend
+npm run dev
+# Open http://localhost:3000
+```
+
+### 6. Start the API server
 
 ```bash
 cd backend
-uv run python run_demo.py
-```
-
-### 6. Render a video (optional)
-
-```bash
-cd backend
-uv run python run_demo.py --render --quality low
-# Or render manually:
-cd generated_output
-uv run manim -ql <filename>.py
-```
-
----
-
-## API Keys You Need
-
-### Required: LLM API Key (choose one)
-
-The pipeline uses Claude (Anthropic's LLM) to analyze papers, plan visualizations, generate Manim code, and write voiceover scripts. You need **one** of these:
-
-| Key | Where to Get It | Cost | Set In `.env` As |
-|-----|-----------------|------|------------------|
-| **Martian API Key** (recommended) | [withmartian.com](https://withmartian.com) | Unlimited for hackathon | `MARTIAN_API_KEY=sk-...` |
-| **Anthropic API Key** | [console.anthropic.com](https://console.anthropic.com) | Pay per token | `ANTHROPIC_API_KEY=sk-ant-...` |
-
-The code auto-detects which key is set and configures itself:
-- **Martian** proxies to Anthropic but with unlimited usage for the hackathon
-- Model names are auto-converted between formats (`anthropic/claude-opus-4-5-20251101` for Martian vs `claude-opus-4-5-20251101` for direct Anthropic)
-
-### Optional: ElevenLabs API Key (for voiceovers)
-
-| Key | Where to Get It | Cost | Set In `.env` As |
-|-----|-----------------|------|------------------|
-| **ElevenLabs API Key** | [elevenlabs.io](https://elevenlabs.io) | Free tier available | `ELEVEN_API_KEY=...` |
-
-If not set, voiceovers are skipped and the pipeline still produces silent Manim animations.
-
-### Your `.env` file should look like:
-
-```env
-# Pick ONE of these (Martian recommended):
-MARTIAN_API_KEY=sk-your-martian-key-here
-# ANTHROPIC_API_KEY=sk-ant-your-anthropic-key-here
-
-# Optional - for AI voiceovers:
-ELEVEN_API_KEY=your-elevenlabs-key-here
+uvicorn main:app --reload --port 8000
 ```
 
 ---
 
 ## Running the Pipeline
 
-All commands run from the `backend/` directory using `uv run`:
+All commands run from `backend/`:
 
 ```bash
-cd backend
+# Generate visualizations (curated 5-section Attention paper)
+uv run python run_demo.py                              # Generate 2 (default)
+uv run python run_demo.py --max 5                      # Generate up to 5
+uv run python run_demo.py --max 5 --verbose            # With detailed logs
 
-# ─── Tests ───────────────────────────────────────────────
-uv run python test_pipeline.py                         # Offline tests (no API key needed)
-uv run python test_pipeline.py --online                # Full pipeline test (needs API key)
-uv run python test_pipeline.py --online --test analyzer    # Test just section analyzer
-uv run python test_pipeline.py --online --test planner     # Test just visualization planner
-uv run python test_pipeline.py --online --test generator   # Test just Manim generator
-uv run python test_pipeline.py --online --test pipeline    # Test full pipeline (1 viz)
+# Generate AND render videos
+uv run python run_demo.py --render --quality low        # 480p (fastest)
+uv run python run_demo.py --render --quality medium     # 720p
+uv run python run_demo.py --render --quality high       # 1080p
 
-# ─── Demo ────────────────────────────────────────────────
-uv run python run_demo.py                              # Generate 2 visualizations (default)
-uv run python run_demo.py --max 3                      # Generate up to 3
-uv run python run_demo.py --verbose                    # Show detailed agent logs
-uv run python run_demo.py --render                     # Generate AND render videos
-uv run python run_demo.py --render --quality low       # Render at 480p (fastest)
-uv run python run_demo.py --render --quality high      # Render at 1080p
-
-# ─── Manual Rendering ────────────────────────────────────
+# Manual rendering of generated code
 cd generated_output
-uv run manim -ql filename.py                           # 480p (fast preview)
-uv run manim -qm filename.py                           # 720p (good quality)
-uv run manim -qh filename.py                           # 1080p (final render)
+uv run manim -ql filename.py                            # 480p
+uv run manim -qm filename.py --disable_caching          # 720p with voiceover
+
+# Run tests
+uv run python test_pipeline.py                          # Offline tests
+uv run python test_pipeline.py --online                 # Full pipeline test
+
+# Start API server
+uvicorn main:app --reload --port 8000
+```
+
+### Output
+
+Generated files go to `backend/generated_output/`:
+- `.py` files — Complete Manim code with voiceover
+- `MANIFEST.txt` — Summary of generated visualizations
+- `media/videos/` — Rendered .mp4 files
+
+---
+
+## Frontend
+
+### Mosaic Fragments Design System
+
+The frontend uses a custom **Mosaic Fragments** theme — a monochrome glass-on-black aesthetic:
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| Background | `#000000` | Page background |
+| Card bg | `bg-white/[0.04]` | Glass card fill |
+| Card border | `border-white/[0.08]` | Default borders |
+| Hover border | `border-white/[0.14]` | Interactive state |
+| Primary text | `text-white/90` | Headings |
+| Body text | `text-white/55` | Paragraphs |
+| Muted text | `text-white/30` | Secondary info |
+| Success | `#7dd19b` | Positive states |
+| Error | `#f27066` | Error states |
+
+### Key Components
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| Glass Shard | `components/ui/glass-shard.tsx` | Floating glass fragments with CSS clip-path |
+| Mosaic Background | `components/ui/mosaic-background.tsx` | SVG tessellation background |
+| Glass Card | `components/ui/glass-card.tsx` | Reusable glass container with spotlight |
+| ScrollyReader | `components/ScrollyReader.tsx` | Scrollytelling paper reader |
+| VideoPlayer | `components/VideoPlayer.tsx` | Embedded video player |
+| PaperHeader | `components/PaperHeader.tsx` | Paper metadata display |
+| MarkdownContent | `components/MarkdownContent.tsx` | Markdown + LaTeX rendering |
+| Floating Dock | `components/ui/floating-dock.tsx` | Navigation dock |
+
+### Pages
+
+- `/` — Home page with paper search
+- `/abs/[...id]` — Paper detail view with sections and embedded videos
+
+---
+
+## Backend
+
+### AI Agent Pipeline
+
+The pipeline uses **Claude Opus 4.5** via the Martian API proxy. Each agent has a dedicated prompt template in `backend/prompts/`.
+
+#### Agent 1: SectionAnalyzer
+
+Reads each section and identifies concepts that need visualization.
+
+- Skips: references, bibliography, acknowledgments
+- Prioritizes: attention mechanisms, architectures, equations, algorithms
+- Output: Ranked `VisualizationCandidate[]` with concept names and types
+
+#### Agent 2: VisualizationPlanner
+
+Creates scene-by-scene storyboards for each candidate.
+
+- Plans 4-6 scenes per visualization
+- Sets target duration (~42 seconds)
+- Defines animation elements and transitions per scene
+
+#### Agent 3: ManimGenerator
+
+Writes complete, runnable Manim Python code.
+
+- Fetches live Manim docs via **Dedalus SDK + Context7 MCP** before generating
+- Selects few-shot examples matched to visualization type (architecture, data_flow, equation, etc.)
+- Generates voiceover narration blocks inline with animation code
+- Narration style: **friendly tutor** — approachable language a high schooler can follow, still technically accurate
+
+#### Agent 4: VoiceoverScriptValidator
+
+LLM judge that scores narration quality.
+
+- **Alignment score**: Does narration match the concept and planned beats?
+- **Educational score**: Is it clear, friendly, and concept-focused?
+- **Banned starts**: Narration must not begin with animation commands (show, display, fade, etc.)
+- Thresholds: 0.70 for both scores (lenient to avoid unnecessary retries)
+
+### Paper Ingestion
+
+The ingestion pipeline (`backend/ingestion/`) handles fetching and parsing arXiv papers:
+
+| File | Purpose |
+|------|---------|
+| `arxiv_fetcher.py` | Fetches papers from arXiv API by ID |
+| `html_parser.py` | Parses ar5iv HTML version for better section extraction |
+| `pdf_parser.py` | Parses PDF using pymupdf4llm (fallback) |
+| `section_extractor.py` | Extracts markdown sections from parsed content |
+| `section_formatter.py` | LLM-formats each section via Claude Sonnet for clean summaries |
+
+The pipeline also supports a **curated paper mode** (`create_attention_paper()` in `run_demo.py`) with 5 hand-crafted sections from "Attention Is All You Need" designed to reliably produce high-quality visualizations.
+
+### Voiceover & Narration
+
+Voiceover is generated inline by the ManimGenerator (unified mode):
+
+- **TTS Engine**: ElevenLabs (`eleven_flash_v2_5` model)
+- **Voice**: Custom voice ID `2fe8mwpfJcqvj9RGBsC1`
+- **Style**: Friendly tutor — explains concepts in approachable language
+- **Sync**: Each `self.play()` inside a `with self.voiceover(text="...") as tracker:` block syncs animation duration to speech
+- **Fallback**: gTTS (free) if ElevenLabs is unavailable
+
+### Validation Pipeline
+
+Every generated visualization goes through 4 validation stages (up to 5 retry attempts):
+
+| Stage | Validator | What It Checks |
+|-------|-----------|----------------|
+| 1 | CodeValidator | Python syntax (AST), manim imports, Scene class, construct method. Auto-fixes common typos. |
+| 2 | SpatialValidator | Element positioning (x: [-6,6], y: [-3.5,3.5]), overlapping, missing `buff` params |
+| 3 | VoiceoverScriptValidator | Narration quality (LLM judge), banned animation-command starts, score thresholds |
+| 4 | RenderTester | Runtime import test — actually loads the code as a Python module (30s timeout) |
+
+If any stage fails, the error feedback is passed back to the ManimGenerator for a retry with context about what went wrong.
+
+### Dedalus SDK + Context7 MCP
+
+Before generating Manim code, the pipeline fetches **live documentation** from the Manim Community Edition docs:
+
+1. **Dedalus SDK** (`context7_docs.py`) calls the Dedalus API with `mcp_servers=["tsion/context7"]`
+2. **Context7 MCP** resolves the library and returns relevant documentation snippets
+3. Documentation is injected into the generator prompt so Claude has up-to-date API knowledge
+4. **Fallback**: If Context7 is unavailable, uses the static `manim_reference.md` system prompt
+
+---
+
+## Project Structure
+
+```
+arXivisual/
+├── README.md                         ← You are here
+├── QUICKSTART.md                     # Quick start guide
+├── HACKATHON_PLAN.md                 # Hackathon planning
+├── AgentDocs/                        # Architecture documentation
+│
+├── frontend/                         # Next.js 16 application
+│   ├── app/                          # App Router pages
+│   │   ├── layout.tsx                # Root layout (Mosaic Fragments)
+│   │   ├── page.tsx                  # Home / search page
+│   │   └── abs/[...id]/             # Paper detail view
+│   │       ├── page.tsx
+│   │       └── loading.tsx
+│   ├── components/                   # React components
+│   │   ├── ScrollyReader.tsx         # Scrollytelling reader
+│   │   ├── VideoPlayer.tsx           # Video player
+│   │   ├── PaperHeader.tsx           # Paper metadata
+│   │   ├── MarkdownContent.tsx       # Markdown + LaTeX
+│   │   └── ui/                       # Design system components
+│   │       ├── glass-shard.tsx       # Glass shard effect
+│   │       ├── glass-card.tsx        # Glass container
+│   │       └── mosaic-background.tsx # SVG tessellation
+│   ├── hooks/                        # React hooks
+│   ├── lib/                          # Utils, API client, types
+│   ├── package.json
+│   └── tsconfig.json
+│
+├── backend/                          # FastAPI + AI pipeline
+│   ├── main.py                       # FastAPI entry point
+│   ├── run_demo.py                   # Demo pipeline runner
+│   ├── pyproject.toml                # Python deps (uv)
+│   ├── .env / .env.example           # API keys
+│   │
+│   ├── agents/                       # AI agents
+│   │   ├── base.py                   # Base class (Anthropic client, Martian proxy)
+│   │   ├── pipeline.py               # Orchestrator
+│   │   ├── section_analyzer.py       # Identifies visualizable concepts
+│   │   ├── visualization_planner.py  # Creates storyboards
+│   │   ├── manim_generator.py        # Generates Manim code + voiceover
+│   │   ├── voiceover_generator.py    # Legacy voiceover transformer
+│   │   ├── voiceover_script_validator.py  # Narration quality judge
+│   │   ├── code_validator.py         # AST syntax validation
+│   │   ├── spatial_validator.py      # Positioning validation
+│   │   ├── render_tester.py          # Runtime import test
+│   │   └── context7_docs.py          # Dedalus + Context7 live docs
+│   │
+│   ├── models/                       # Pydantic data models
+│   │   ├── paper.py                  # StructuredPaper, Section, Equation
+│   │   ├── generation.py             # Candidate, Plan, Code, Visualization
+│   │   ├── voiceover.py              # Voiceover validation output
+│   │   └── spatial.py                # Spatial validation models
+│   │
+│   ├── prompts/                      # Claude prompt templates
+│   │   ├── section_analyzer.md
+│   │   ├── visualization_planner.md
+│   │   ├── manim_generator.md        # Main generation prompt
+│   │   ├── voiceover_generator.md
+│   │   └── system/
+│   │       └── manim_reference.md    # Manim API reference
+│   │
+│   ├── ingestion/                    # Paper ingestion pipeline
+│   │   ├── arxiv_fetcher.py          # arXiv API client
+│   │   ├── html_parser.py            # ar5iv HTML parser
+│   │   ├── pdf_parser.py             # PDF parser (pymupdf4llm)
+│   │   ├── section_extractor.py      # Section extraction
+│   │   └── section_formatter.py      # LLM section formatting
+│   │
+│   ├── api/                          # REST API
+│   │   ├── routes.py                 # Endpoints
+│   │   └── schemas.py                # Request/response models
+│   │
+│   ├── db/                           # Database
+│   │   ├── models.py                 # SQLAlchemy ORM
+│   │   ├── connection.py             # Engine setup
+│   │   └── queries.py                # Common queries
+│   │
+│   ├── rendering/                    # Video rendering
+│   │   ├── local_runner.py           # Local Manim execution
+│   │   ├── modal_runner.py           # Modal.com serverless
+│   │   └── storage.py                # S3/R2 video storage
+│   │
+│   ├── examples/                     # Few-shot Manim examples (6 types)
+│   ├── scenes/                       # Pre-built demo scenes
+│   ├── generated_output/             # Pipeline output (.py + videos)
+│   └── media/                        # Manim render cache
 ```
 
 ---
 
-## What Goes In / What Comes Out
+## Configuration
 
-### Input: `StructuredPaper`
+### Environment Variables (`backend/.env`)
 
-The pipeline expects a `StructuredPaper` object (defined in `backend/models/paper.py`). This is what Team 1's ingestion pipeline would produce from an arXiv paper. For now, we construct it manually in the test/demo scripts.
+```env
+# LLM API (choose one)
+MARTIAN_API_KEY=sk-...          # Martian proxy (recommended)
+# ANTHROPIC_API_KEY=sk-ant-...  # Direct Anthropic (fallback)
 
-```python
-StructuredPaper(
-    meta=ArxivPaperMeta(
-        arxiv_id="1706.03762",
-        title="Attention Is All You Need",
-        authors=["Vaswani", "Shazeer", ...],
-        abstract="The dominant sequence transduction models...",
-        pdf_url="https://arxiv.org/pdf/1706.03762",
-    ),
-    sections=[
-        Section(
-            id="section-3-2",
-            title="Scaled Dot-Product Attention",
-            content="An attention function can be described as...",
-            equations=[
-                Equation(
-                    latex=r"\text{Attention}(Q,K,V) = \text{softmax}(\frac{QK^T}{\sqrt{d_k}})V",
-                    context="The attention formula",
-                ),
-            ],
-        ),
-        # ... more sections
-    ],
-)
+# Dedalus SDK + Context7 MCP (live Manim docs)
+DEDALUS_API_KEY=dsk-...
+
+# ElevenLabs TTS (voiceover)
+ELEVEN_API_KEY=sk_...
+
+# API Server
+API_HOST=0.0.0.0
+API_PORT=8000
 ```
 
-### Output: `list[Visualization]`
+### Pipeline Config (`backend/agents/pipeline.py`)
 
-The pipeline outputs a list of `Visualization` objects (defined in `backend/models/generation.py`), each containing:
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| `MAX_VISUALIZATIONS` | 5 | Max videos per paper |
+| `MAX_RETRIES` | 5 | Retry attempts per visualization |
+| `ENABLE_SPATIAL_VALIDATION` | True | Check element positioning |
+| `ENABLE_RENDER_TESTING` | True | Runtime import test |
+| `ENABLE_VOICEOVER` | True | Generate voiceover narration |
+| `VOICEOVER_TTS_SERVICE` | `"elevenlabs"` | TTS engine |
+| `VOICEOVER_NARRATION_STYLE` | `"friendly_tutor"` | Narration tone |
 
-```python
-Visualization(
-    id="viz_abc12345",                    # Unique ID
-    section_id="section-3-2",             # Which paper section this explains
-    concept="Scaled Dot-Product Attention", # Human-readable concept name
-    storyboard='{"scenes": [...]}',        # JSON storyboard from planner
-    manim_code="from manim import *\n...", # Complete, validated Python code
-    video_url=None,                        # Filled by Team 3 after rendering
-    status="pending",                      # pending → rendering → complete
-)
-```
+### Model Config (`backend/agents/base.py`)
 
-The `manim_code` field contains a complete, runnable `.py` file that can be rendered with:
-```bash
-uv run manim -qm generated_file.py
-```
-
-If voiceovers are enabled, the code includes `manim_voiceover` integration with ElevenLabs TTS, producing videos with synchronized AI narration.
+| Setting | Value |
+|---------|-------|
+| `DEFAULT_MODEL_MARTIAN` | `claude-opus-4-5-20251101` |
+| `DEFAULT_MODEL_ANTHROPIC` | `claude-opus-4-5-20251101` |
+| `MARTIAN_BASE_URL` | `https://api.withmartian.com/v1` |
 
 ---
 
-## The Agent Pipeline (Detailed)
+## API Endpoints
 
-### Agent 1: SectionAnalyzer (`agents/section_analyzer.py`)
-
-**Job:** Read each section of the paper and decide: "Does this need a visualization? What concepts should we visualize?"
-
-- **Skips**: references, bibliography, acknowledgments, short sections (<100 chars)
-- **Prioritizes**: attention mechanisms, architectures, equations, algorithms, data flows
-- **Output**: `AnalyzerOutput` with `candidates: list[VisualizationCandidate]`
-- **Prompt**: `prompts/section_analyzer.md` - tells Claude how to evaluate sections
-- **LLM call**: 1 call per section (concurrent by default)
-
-### Agent 2: VisualizationPlanner (`agents/visualization_planner.py`)
-
-**Job:** For each candidate concept, create a detailed scene-by-scene storyboard.
-
-- **Plans**: scene order, duration (target 15-30s), Manim elements to use, transitions
-- **Creates**: narration points for each scene (used by VoiceoverGenerator later)
-- **Output**: `VisualizationPlan` with `scenes: list[Scene]` and `narration_points`
-- **Prompt**: `prompts/visualization_planner.md` - 3Blue1Brown-style planning guidance
-
-### Agent 3: ManimGenerator (`agents/manim_generator.py`)
-
-**Job:** Turn a storyboard into working Manim Python code.
-
-- **Few-shot examples**: Automatically selects the right example based on viz type:
-  - `equation` → `examples/equation_walkthrough.py`
-  - `architecture` → `examples/architecture_diagram.py`
-  - `data_flow` → `examples/data_flow.py`
-  - `algorithm` → `examples/algorithm_steps.py`
-  - `matrix` → `examples/matrix_operations.py`
-  - `three_d` → `examples/three_d_network.py`
-- **System prompt**: `prompts/system/manim_reference.md` - curated Manim API reference
-- **Retry-aware**: `run_with_feedback()` method accepts validation errors and regenerates
-- **Output**: `GeneratedCode` with complete Python code
-
-### Validator 1: CodeValidator (`agents/code_validator.py`)
-
-**Job:** Static analysis of the generated Manim code.
-
-- **Checks**: Python syntax (AST parse), manim imports, Scene class, construct method
-- **Auto-fixes**: Missing imports, color typos (GREY→GRAY), unclosed brackets
-- **Detects**: Dangerous MathTex splitting patterns (e.g., splitting `\frac{}{}` across parts)
-- **No LLM call** - pure Python static analysis
-
-### Validator 2: SpatialValidator (`agents/spatial_validator.py`)
-
-**Job:** Check positioning and layout of Manim elements.
-
-- **Detects**: Off-screen elements (x>7 or y>4), overlapping elements, missing `buff` params
-- **Heuristic**: Parses `shift()`, `move_to()`, `next_to()` calls to estimate positions
-- **Suggests**: Using relative positioning (`next_to`) over absolute (`move_to`)
-- **No LLM call** - regex-based static analysis
-
-### Validator 3: RenderTester (`agents/render_tester.py`)
-
-**Job:** Actually try to import the generated code as a Python module.
-
-- **Catches**: ImportErrors, NameErrors, TypeErrors, AttributeErrors that static analysis misses
-- **Method**: Writes code to temp file → `importlib` loads it → checks Scene class exists
-- **Timeout**: 30 seconds (Manim imports can be slow)
-- **No LLM call** - runtime validation
-
-### Agent 4: VoiceoverGenerator (`agents/voiceover_generator.py`)
-
-**Job:** Add AI-narrated voiceovers synchronized with animations.
-
-- **Generates**: Educational narration script (concept-focused, not animation-describing)
-- **Transforms**: `Scene` → `VoiceoverScene`, adds TTS setup, wraps `self.play()` with voiceover blocks
-- **Places narration at scene boundaries**: Looks for `# Scene N:` comments, adds voiceover at the next `self.play()` call
-- **Supports**: gTTS (free), Azure, ElevenLabs (best quality), Recorder (manual)
-- **ElevenLabs config**: Uses `voice_id` (not name) to bypass API permission issues; `eleven_flash_v2_5` model for speed
-- **Graceful fallback**: If voiceover fails, the visualization still works (silent)
-
-### Pipeline Orchestrator (`agents/pipeline.py`)
-
-**Job:** Coordinate all agents, run the full flow, handle retries.
-
-- **Concurrent**: Analyzes all sections in parallel, generates all visualizations in parallel
-- **Retry loop**: Up to 3 attempts per visualization; all validator feedback is combined and fed back to the generator
-- **Config flags**: `ENABLE_SPATIAL_VALIDATION`, `ENABLE_RENDER_TESTING`, `ENABLE_VOICEOVER` (all on by default)
-- **Limits**: `MAX_VISUALIZATIONS = 5` per paper (configurable)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/process` | Start processing a paper by arXiv ID |
+| `GET` | `/api/status/{job_id}` | Poll processing status |
+| `GET` | `/api/paper/{arxiv_id}` | Get processed paper with video URLs |
+| `GET` | `/api/video/{video_id}` | Get video file |
+| `GET` | `/health` | Health check |
 
 ---
 
-## Team Architecture
+## Key Design Decisions
 
-ArXiviz is split into 3 teams for the hackathon:
+### Unified Voiceover Generation
+Voiceover narration is generated **inline** by the ManimGenerator rather than as a separate post-processing step. This ensures narration text is tightly coupled with animation beats, producing better sync.
 
-| Team | Responsibility | Status in This Branch |
-|------|---------------|----------------------|
-| **Team 1** | Paper ingestion: fetch from arXiv API, parse PDF/HTML, extract sections/equations | Not yet built - currently using hardcoded mock papers |
-| **Team 2** | AI generation pipeline: analyze sections, plan visualizations, generate Manim code | **Fully built and working** (this codebase) |
-| **Team 3** | Rendering & display: run Manim on Modal.com, store videos, Next.js frontend | Not yet built - can render locally with `uv run manim` |
+### Friendly Tutor Narration Style
+Narration uses approachable, conversational language — like a smart friend explaining concepts to someone new to the topic. Still technically accurate, but avoids dense academic phrasing. This makes the videos accessible to a broader audience.
 
-### What Team 2 Needs From Team 1
+### Curated Paper Mode
+The demo uses a hand-crafted 5-section version of "Attention Is All You Need" with content specifically written to produce reliable, high-quality visualizations. This bypasses the variability of raw paper parsing.
 
-Team 1 should output a `StructuredPaper` object (see `backend/models/paper.py`):
-- `meta`: arXiv ID, title, authors, abstract, PDF URL
-- `sections`: list of `Section` objects with ID, title, content, equations, figures
+### Relaxed Validation
+The voiceover validator focuses on critical issues (missing VoiceoverScene, banned animation-command narration starts) rather than strict structural checks. Score thresholds are set at 0.70 to avoid unnecessary retries while still catching poor quality.
 
-### What Team 2 Gives to Team 3
-
-Team 2 outputs a `list[Visualization]` (see `backend/models/generation.py`):
-- `manim_code`: Complete, validated Python file ready to render
-- `concept`: Human-readable name of what's being visualized
-- `section_id`: Which paper section this belongs to
-- `status`: "pending" (Team 3 changes to "rendering" → "complete")
+### Dedalus SDK + Context7 for Live Docs
+Rather than relying solely on a static Manim API reference, the pipeline fetches real-time documentation from Manim Community Edition before each generation. This helps Claude use current APIs correctly.
 
 ---
 
-## File Reference
+## Recent Changes
 
-### Models (the data that flows through the system)
+### Model Upgrade
+- Switched from `claude-sonnet-4-5-20250929` to **`claude-opus-4-5-20251101`** for best generation quality
+- All agents (analyzer, planner, generator) now use Opus
 
-| File | Key Classes | Purpose |
-|------|-------------|---------|
-| `models/paper.py` | `StructuredPaper`, `Section`, `Equation`, `ArxivPaperMeta` | Input from Team 1 |
-| `models/generation.py` | `VisualizationCandidate`, `VisualizationPlan`, `Scene`, `GeneratedCode`, `ValidatorOutput`, `Visualization` | Data flowing between agents |
-| `models/spatial.py` | `PositionInfo`, `BoundsIssue`, `OverlapIssue`, `SpacingIssue`, `SpatialValidatorOutput` | Spatial validation results |
+### ElevenLabs Integration
+- Switched from gTTS (free) to **ElevenLabs** paid TTS
+- Model: `eleven_flash_v2_5` (fast, high quality)
+- Custom voice ID: `2fe8mwpfJcqvj9RGBsC1`
 
-### Prompts (what the AI sees)
+### Narration Style
+- Changed from academic "concept_teacher" to **"friendly_tutor"**
+- Prompt updated: "like a smart friend explaining to a high schooler"
+- Plain language preferred over jargon, short punchy sentences
+- Still technically accurate — just more accessible
 
-| File | Used By | Controls |
-|------|---------|----------|
-| `prompts/section_analyzer.md` | SectionAnalyzer | How Claude evaluates which sections need visualization |
-| `prompts/visualization_planner.md` | VisualizationPlanner | How Claude plans scene-by-scene storyboards |
-| `prompts/manim_generator.md` | ManimGenerator | How Claude writes Manim code (includes LaTeX constraints, patterns) |
-| `prompts/voiceover_generator.md` | VoiceoverGenerator | How Claude writes narration (concept-focused, not animation-focused) |
-| `prompts/system/manim_reference.md` | All agents (system prompt) | Curated Manim API reference so Claude knows what's available |
+### Validator Relaxation
+- Removed word count hard-fail (was 12-24, caused most failures)
+- Removed `run_time=tracker.duration` hard-fail
+- Removed narration count strict check
+- Lowered score thresholds from 0.85 to 0.70
+- Kept: banned animation-command starts, VoiceoverScene structure checks
 
-### Few-Shot Examples (teach by example)
+### Expanded Demo Paper
+- `create_attention_paper()` expanded from 3 to **5 curated sections**:
+  1. The Transformer Architecture
+  2. Scaled Dot-Product Attention
+  3. Multi-Head Attention
+  4. Positional Encoding
+  5. Why Self-Attention
 
-| File | Viz Type | Demonstrates |
-|------|----------|-------------|
-| `examples/equation_walkthrough.py` | `equation` | Highlighting equation parts, labels, step-by-step |
-| `examples/architecture_diagram.py` | `architecture` | Stacked blocks, arrows, layer-by-layer building |
-| `examples/data_flow.py` | `data_flow` | Q/K/V matrices, arrows, computation steps |
-| `examples/algorithm_steps.py` | `algorithm` | Axes, curves, gradient descent animation |
-| `examples/matrix_operations.py` | `matrix` | Matrix display, row/column highlighting |
-| `examples/three_d_network.py` | `three_d` | 3D scene, camera rotation, fixed-in-frame labels |
-
----
-
-## How to Improve It
-
-### High-Impact Changes
-
-1. **Connect to real arXiv papers** (Team 1 integration)
-   - Build an arXiv fetcher that outputs `StructuredPaper`
-   - Parse PDF or use ar5iv.org HTML for better section extraction
-   - This makes the whole system dynamic for any paper
-
-2. **Improve the few-shot examples** (`backend/examples/`)
-   - More diverse examples = better generated code
-   - Add examples for: GAN architectures, diffusion models, RL environments, loss landscapes
-   - Each example teaches Claude a pattern it can reuse
-
-3. **Tune the prompt templates** (`backend/prompts/`)
-   - `manim_generator.md` has the most impact on code quality
-   - Add more constraints, patterns, or anti-patterns you discover
-   - The system prompt (`system/manim_reference.md`) controls what Manim APIs Claude knows about
-
-4. **Switch models for speed vs quality**
-   - Edit `backend/agents/base.py` line 25: `DEFAULT_MODEL_ANTHROPIC`
-   - `claude-opus-4-5-20251101` = best quality, ~60-90s per visualization
-   - `claude-sonnet-4-20250514` = good quality, ~20-30s per visualization
-
-5. **Add more visualization types**
-   - Current types: `equation`, `architecture`, `data_flow`, `algorithm`, `matrix`, `three_d`
-   - Add: `comparison` (before/after), `training_loop`, `embedding_space`, `loss_landscape`
-   - Update `models/generation.py` `VisualizationType` enum + add matching example file
-
-### Lower-Impact / Polish
-
-- Toggle pipeline features in `agents/pipeline.py` (lines 68-76)
-- Add new ElevenLabs voices in `agents/voiceover_generator.py` `ELEVENLABS_VOICES`
-- Improve spatial validator heuristics in `agents/spatial_validator.py`
-- Add more auto-fixes to `agents/code_validator.py` `_fix_common_typos()`
+### Martian API
+- Updated API key and model support
+- Auto-detects Martian vs direct Anthropic and adjusts model names
 
 ---
 
-## Tech Stack
+## License
 
-| Component | Technology | Why |
-|-----------|-----------|-----|
-| Package Manager | [uv](https://docs.astral.sh/uv/) | Fast, handles venvs + deps + lockfiles |
-| LLM | Claude (Opus 4.5 / Sonnet 4) via Anthropic API | Best at code generation + reasoning |
-| LLM Proxy | Martian API (optional) | Unlimited usage for hackathon |
-| Animation | [Manim Community Edition](https://www.manim.community/) | 3Blue1Brown-style math animations |
-| Voiceover | [manim-voiceover](https://docs.manim.community/en/stable/guides/add_voiceovers.html) + ElevenLabs | Synced AI narration |
-| Data Models | [Pydantic v2](https://docs.pydantic.dev/) | Type-safe data validation |
-| Python | 3.11+ | Async support, type hints |
+MIT

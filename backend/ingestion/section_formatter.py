@@ -68,7 +68,7 @@ Return ONLY the formatted summary text. No preamble, no "Here is the summary:", 
 async def format_section(
     section: Section,
     paper_title: str,
-    model: str = "moonshotai/kimi-k2.5",
+    model: str = "claude-sonnet-4-5-20250929",
 ) -> str:
     """
     Format a single section's content using an LLM via Martian.
@@ -76,7 +76,7 @@ async def format_section(
     Args:
         section: The section to format
         paper_title: Title of the paper (for context)
-        model: Martian model identifier (e.g. "moonshotai/kimi-k2.5")
+        model: Martian model identifier (e.g. "claude-sonnet-4-5-20250929")
 
     Returns:
         Formatted summary string
@@ -117,7 +117,7 @@ Raw content:
 async def format_sections(
     sections: list[Section],
     meta: ArxivPaperMeta,
-    model: str = "moonshotai/kimi-k2.5",
+    model: str = "claude-sonnet-4-5-20250929",
     max_concurrent: int = 5,
 ) -> list[Section]:
     """
@@ -128,7 +128,7 @@ async def format_sections(
     Args:
         sections: List of sections to format
         meta: Paper metadata for context
-        model: Martian model identifier (e.g. "moonshotai/kimi-k2.5")
+        model: Martian model identifier (e.g. "claude-sonnet-4-5-20250929")
         max_concurrent: Max concurrent API calls
 
     Returns:

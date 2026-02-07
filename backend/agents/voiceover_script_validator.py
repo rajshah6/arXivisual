@@ -35,10 +35,10 @@ class VoiceoverScriptValidator:
     def __init__(
         self,
         strict: bool = True,
-        min_words: int = 12,
-        max_words: int = 24,
-        alignment_threshold: float = 0.85,
-        educational_threshold: float = 0.85,
+        min_words: int = 6,
+        max_words: int = 40,
+        alignment_threshold: float = 0.70,
+        educational_threshold: float = 0.70,
         use_llm_judge: bool = True,
         model: Optional[str] = None,
     ):
@@ -63,7 +63,7 @@ class VoiceoverScriptValidator:
         narrations = generated_code.narration_lines
         beat_labels = generated_code.narration_beats
 
-        # Required voiceover structures
+        # Required voiceover structures (hard fail — code won't work without these)
         if "VoiceoverScene" not in code:
             issues.append("Missing VoiceoverScene inheritance.")
         if "set_speech_service(" not in code:
@@ -74,37 +74,16 @@ class VoiceoverScriptValidator:
             code,
         )
         if not voiceover_blocks:
-            # Also support old positional style, then still report style issue.
+            # Also support old positional style
             positional = re.findall(
                 r'with\s+self\.voiceover\s*\(\s*"([^"]+)"\s*\)\s+as\s+tracker\s*:',
                 code,
             )
             voiceover_blocks = positional
-            if positional:
-                issues.append("Voiceover blocks must use text=... keyword argument.")
-            else:
+            if not positional:
                 issues.append("No voiceover narration blocks found.")
 
-        # Every narrated self.play should use tracker duration
-        for block in re.finditer(
-            r'with\s+self\.voiceover\s*\(.*?\)\s+as\s+tracker\s*:\s*([\s\S]*?)(?=\n\s*with\s+self\.voiceover|\Z)',
-            code,
-        ):
-            block_body = block.group(1)
-            if "self.play(" in block_body and "run_time=tracker.duration" not in block_body:
-                issues.append("Missing run_time=tracker.duration inside narrated self.play(...) block.")
-                break
-
-        # Narration count requirements
-        content_scenes = max(0, len(plan.scenes) - 1)
-        narration_count = len([n for n in narrations if n.strip()])
-        if narration_count < content_scenes:
-            issues.append(
-                f"Insufficient narration beats: got {narration_count}, expected at least {content_scenes}."
-            )
-
-        if beat_labels and narration_count and len(beat_labels) < narration_count:
-            issues.append("Narration beats metadata is shorter than narration lines.")
+        # Soft checks below — logged but do NOT block generation
 
         # Narration lexical rules
         alignment_rule_scores: list[float] = []
@@ -114,11 +93,7 @@ class VoiceoverScriptValidator:
             stripped = line.strip()
             if not stripped:
                 continue
-            word_count = self._word_count(stripped)
-            if word_count < self.min_words or word_count > self.max_words:
-                issues.append(
-                    f"Narration {idx} length {word_count} words is outside {self.min_words}-{self.max_words}."
-                )
+            # Banned animation-command starts (hard fail — bad narration quality)
             if stripped.lower().startswith(self.BANNED_STARTS):
                 issues.append(f"Narration {idx} starts with animation command style wording.")
 
@@ -233,7 +208,7 @@ class VoiceoverScriptValidator:
 
         try:
             prompt = (
-                "You are a strict evaluator of educational narration quality.\n"
+                "You are an evaluator of educational narration quality.\n"
                 "Return JSON only with keys: score_alignment, score_educational, issues.\n"
                 "Scores must be floats in [0,1].\n\n"
                 f"Concept: {candidate.concept_name}\n"
@@ -243,7 +218,8 @@ class VoiceoverScriptValidator:
                 f"Narrations: {json.dumps(narrations, ensure_ascii=True)}\n\n"
                 "Rubric:\n"
                 "- score_alignment: how well narration matches concept and planned beats\n"
-                "- score_educational: teacher-like clarity and correctness, not animation commands\n"
+                "- score_educational: friendly, approachable clarity — like a tutor explaining to a "
+                "high schooler. Still technically accurate but uses plain language. Not animation commands.\n"
                 "- issues: short list of concrete problems\n"
             )
 

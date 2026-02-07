@@ -73,13 +73,14 @@ class VoiceoverGenerator(BaseAgent):
     TTS_SETUP = {
         "gtts": "self.set_speech_service(GTTSService())",
         "azure": 'self.set_speech_service(AzureService(voice="en-US-AriaNeural"))',
-        "elevenlabs": 'self.set_speech_service(ElevenLabsService(voice_id="pNInz6obpgDQGcFmaJgB", model="eleven_flash_v2_5", transcription_model=None))',  # Adam voice
+        "elevenlabs": 'self.set_speech_service(ElevenLabsService(voice_id="2fe8mwpfJcqvj9RGBsC1", model="eleven_flash_v2_5", transcription_model=None))',  # Custom voice
         "recorder": "self.set_speech_service(RecorderService())",
     }
     
     # Available ElevenLabs voices with their IDs (use voice_id to bypass API permission issues)
     # Using voice_id instead of voice_name avoids needing "voices_read" API permission
     ELEVENLABS_VOICES = {
+        "Custom": "2fe8mwpfJcqvj9RGBsC1",     # User's preferred voice
         "Adam": "pNInz6obpgDQGcFmaJgB",       # Deep, warm male voice
         "Antoni": "ErXwobaYiN019PkySvjV",     # Young male voice  
         "Arnold": "VR6AewLTigWG4xSOukaG",     # Authoritative male voice
@@ -95,21 +96,21 @@ class VoiceoverGenerator(BaseAgent):
         self,
         model: str | None = None,
         tts_service: str = "elevenlabs",
-        voice_name: str = "Adam",
+        voice_name: str = "Custom",
     ):
         """
         Initialize the Voiceover Generator.
-        
+
         Args:
             model: LLM model to use for script generation
             tts_service: TTS service to use (gtts, azure, elevenlabs, recorder)
             voice_name: Voice name for ElevenLabs (default: "Adam")
                        See ELEVENLABS_VOICES for available options.
-        
+
         Note:
             For ElevenLabs, set ELEVEN_API_KEY environment variable.
             For Azure, set AZURE_SUBSCRIPTION_KEY and AZURE_SERVICE_REGION.
-            
+
             ElevenLabs uses voice_id internally to avoid needing "voices_read" permission.
         """
         super().__init__(prompt_file="voiceover_generator.md", model=model)

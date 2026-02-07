@@ -68,11 +68,12 @@ class ManimGenerator(BaseAgent):
     TTS_SETUP = {
         "gtts": "self.set_speech_service(GTTSService())",
         "azure": 'self.set_speech_service(AzureService(voice="en-US-AriaNeural"))',
-        "elevenlabs": 'self.set_speech_service(ElevenLabsService(voice_id="pNInz6obpgDQGcFmaJgB", model="eleven_flash_v2_5", transcription_model=None))',
+        "elevenlabs": 'self.set_speech_service(ElevenLabsService(voice_id="2fe8mwpfJcqvj9RGBsC1", model="eleven_flash_v2_5", transcription_model=None))',
         "recorder": "self.set_speech_service(RecorderService())",
     }
 
     ELEVENLABS_VOICES = {
+        "Custom": "2fe8mwpfJcqvj9RGBsC1",
         "Adam": "pNInz6obpgDQGcFmaJgB",
         "Antoni": "ErXwobaYiN019PkySvjV",
         "Arnold": "VR6AewLTigWG4xSOukaG",
@@ -285,7 +286,7 @@ class ManimGenerator(BaseAgent):
         plan: VisualizationPlan,
         voiceover_enabled: bool = True,
         tts_service: str = "elevenlabs",
-        voice_name: str = "Adam",
+        voice_name: str = "Custom",
         narration_style: str = "concept_teacher",
         target_duration_seconds: tuple[int, int] = (30, 45),
     ) -> GeneratedCode:
@@ -335,7 +336,7 @@ class ManimGenerator(BaseAgent):
         error_message: str,
         voiceover_enabled: bool = True,
         tts_service: str = "elevenlabs",
-        voice_name: str = "Adam",
+        voice_name: str = "Custom",
         narration_style: str = "concept_teacher",
         target_duration_seconds: tuple[int, int] = (30, 45),
     ) -> GeneratedCode:
@@ -402,7 +403,7 @@ The previous code had issues. Fix them and regenerate complete code.
         plan: VisualizationPlan,
         voiceover_enabled: bool = True,
         tts_service: str = "elevenlabs",
-        voice_name: str = "Adam",
+        voice_name: str = "Custom",
         narration_style: str = "concept_teacher",
         target_duration_seconds: tuple[int, int] = (30, 45),
     ) -> GeneratedCode:

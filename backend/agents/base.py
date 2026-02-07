@@ -23,7 +23,7 @@ MARTIAN_BASE_URL = "https://api.withmartian.com/v1"
 
 # Default models - Kimi K2.5 via Martian for cost savings
 DEFAULT_MODEL_ANTHROPIC = "claude-opus-4-5-20251101"  # fallback if no Martian key
-DEFAULT_MODEL_MARTIAN = "moonshotai/kimi-k2.5"
+DEFAULT_MODEL_MARTIAN = "claude-opus-4-5-20251101"
 
 # Flag to track if we're using Martian
 _using_martian = False

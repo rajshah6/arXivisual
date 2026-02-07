@@ -64,6 +64,7 @@ if __name__ == "__main__":
     import uvicorn
 
     host = os.getenv("API_HOST", "0.0.0.0")
-    port = int(os.getenv("API_PORT", "8000"))
+    # Support PORT (Render, Railway, Fly) and API_PORT (local)
+    port = int(os.getenv("PORT") or os.getenv("API_PORT", "8000"))
 
     uvicorn.run("main:app", host=host, port=port, reload=True)

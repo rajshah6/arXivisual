@@ -34,7 +34,7 @@ export const HoverEffect = ({
           <AnimatePresence>
             {hoveredIndex === idx && (
               <motion.span
-                className="absolute inset-0 h-full w-full bg-gradient-to-br from-[#58c4dd]/10 to-[#cd8b62]/10 block rounded-2xl"
+                className="absolute inset-0 h-full w-full bg-white/[0.04] block rounded-2xl"
                 layoutId="hoverBackground"
                 initial={{ opacity: 0 }}
                 animate={{
@@ -51,7 +51,7 @@ export const HoverEffect = ({
           <Card>
             <div className="flex items-start gap-4">
               {item.icon && (
-                <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-[#58c4dd]/20 to-[#cd8b62]/20 flex items-center justify-center ring-1 ring-[#58c4dd]/20 shrink-0">
+                <div className="h-10 w-10 rounded-xl bg-white/[0.06] flex items-center justify-center border border-white/[0.08] shrink-0">
                   {item.icon}
                 </div>
               )}
@@ -77,7 +77,7 @@ export const Card = ({
   return (
     <div
       className={cn(
-        "rounded-2xl h-full w-full p-4 overflow-hidden bg-[#141421] border border-[#58c4dd]/10 group-hover:border-[#58c4dd]/30 relative z-20 transition-colors duration-200",
+        "rounded-2xl h-full w-full p-4 overflow-hidden bg-white/[0.04] border border-white/[0.08] group-hover:border-white/[0.14] relative z-20 transition-colors duration-200",
         className
       )}
     >
@@ -96,7 +96,7 @@ export const CardTitle = ({
   children: React.ReactNode;
 }) => {
   return (
-    <h4 className={cn("text-[#f4f1eb] font-semibold tracking-wide", className)}>
+    <h4 className={cn("text-white/90 font-semibold tracking-wide", className)}>
       {children}
     </h4>
   );
@@ -112,7 +112,7 @@ export const CardDescription = ({
   return (
     <p
       className={cn(
-        "mt-2 text-[#f4f1eb]/60 tracking-wide leading-relaxed text-sm",
+        "mt-2 text-white/45 tracking-wide leading-relaxed text-sm",
         className
       )}
     >

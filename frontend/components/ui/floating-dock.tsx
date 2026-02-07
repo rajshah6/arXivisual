@@ -23,7 +23,7 @@ export const FloatingDock = ({
   className?: string;
 }) => {
   const mouseX = useMotionValue(Infinity);
-  
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -31,7 +31,7 @@ export const FloatingDock = ({
       onMouseMove={(e) => mouseX.set(e.pageX)}
       onMouseLeave={() => mouseX.set(Infinity)}
       className={cn(
-        "mx-auto flex h-16 gap-4 items-end rounded-2xl bg-[#141421]/90 backdrop-blur-xl px-4 pb-3 ring-1 ring-[#58c4dd]/20",
+        "mx-auto flex h-16 gap-4 items-end rounded-2xl bg-black/80 backdrop-blur-2xl px-4 pb-3 border border-white/[0.08]",
         className
       )}
     >
@@ -93,8 +93,8 @@ function IconContainer({
       className={cn(
         "aspect-square rounded-xl flex items-center justify-center cursor-pointer relative transition-colors duration-200",
         isActive
-          ? "bg-gradient-to-br from-[#58c4dd]/30 to-[#cd8b62]/30 ring-2 ring-[#58c4dd]/50"
-          : "bg-[#1c1c2e] hover:bg-[#58c4dd]/20 ring-1 ring-[#58c4dd]/10"
+          ? "bg-white/[0.12] border-2 border-white/[0.20]"
+          : "bg-white/[0.03] hover:bg-white/[0.08] border border-white/[0.06]"
       )}
     >
       <AnimatePresence>
@@ -103,7 +103,7 @@ function IconContainer({
             initial={{ opacity: 0, y: 10, x: "-50%" }}
             animate={{ opacity: 1, y: 0, x: "-50%" }}
             exit={{ opacity: 0, y: 2, x: "-50%" }}
-            className="px-3 py-1.5 whitespace-pre rounded-lg bg-[#141421] border border-[#58c4dd]/20 text-[#f4f1eb] text-xs absolute left-1/2 -top-10"
+            className="px-3 py-1.5 whitespace-pre rounded-lg bg-black/90 backdrop-blur-xl border border-white/[0.10] text-white/80 text-xs absolute left-1/2 -top-10"
           >
             {title}
           </motion.div>
@@ -111,7 +111,7 @@ function IconContainer({
       </AnimatePresence>
       <div className={cn(
         "transition-colors duration-200",
-        isActive ? "text-[#58c4dd]" : "text-[#f4f1eb]/70"
+        isActive ? "text-white/90" : "text-white/40"
       )}>
         {icon}
       </div>

@@ -102,7 +102,6 @@ export function SectionViewer({ sections }: { sections: SectionModel[] }) {
   // Keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't capture if user is typing in an input
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         return;
       }
@@ -144,10 +143,10 @@ export function SectionViewer({ sections }: { sections: SectionModel[] }) {
   return (
     <div className="relative">
       {/* Progress bar at top */}
-      <div className="sticky top-0 z-30 bg-[#1c1c2e]/80 backdrop-blur-xl border-b border-[#58c4dd]/10">
-        <div className="h-1 bg-[#141421]">
+      <div className="sticky top-0 z-30 bg-black/80 backdrop-blur-2xl border-b border-white/[0.06]">
+        <div className="h-1 bg-white/[0.03]">
           <motion.div
-            className="h-full bg-gradient-to-r from-[#58c4dd] to-[#cd8b62]"
+            className="h-full bg-gradient-to-r from-white/40 to-white/20"
             initial={{ width: 0 }}
             animate={{ width: `${progress}%` }}
             transition={{ duration: 0.4, ease: "easeOut" }}
@@ -155,8 +154,8 @@ export function SectionViewer({ sections }: { sections: SectionModel[] }) {
         </div>
         <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="text-sm text-[#f4f1eb]/50">Section</span>
-            <span className="font-mono text-[#f4f1eb] font-medium">
+            <span className="text-sm text-white/30">Section</span>
+            <span className="font-mono text-white/90 font-medium">
               {activeIndex + 1} / {sections.length}
             </span>
           </div>
@@ -165,10 +164,10 @@ export function SectionViewer({ sections }: { sections: SectionModel[] }) {
               onClick={goPrev}
               disabled={activeIndex === 0}
               className={cn(
-                "p-2 rounded-lg ring-1 transition-all duration-200",
+                "p-2 rounded-lg border transition-all duration-200",
                 activeIndex === 0
-                  ? "ring-[#58c4dd]/5 text-[#f4f1eb]/20 cursor-not-allowed"
-                  : "ring-[#58c4dd]/20 text-[#f4f1eb]/70 hover:bg-[#58c4dd]/10 hover:text-[#58c4dd]"
+                  ? "border-white/[0.04] text-white/15 cursor-not-allowed"
+                  : "border-white/[0.08] text-white/50 hover:bg-white/[0.06] hover:text-white/80"
               )}
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -179,10 +178,10 @@ export function SectionViewer({ sections }: { sections: SectionModel[] }) {
               onClick={goNext}
               disabled={activeIndex === sections.length - 1}
               className={cn(
-                "p-2 rounded-lg ring-1 transition-all duration-200",
+                "p-2 rounded-lg border transition-all duration-200",
                 activeIndex === sections.length - 1
-                  ? "ring-[#58c4dd]/5 text-[#f4f1eb]/20 cursor-not-allowed"
-                  : "ring-[#58c4dd]/20 text-[#f4f1eb]/70 hover:bg-[#58c4dd]/10 hover:text-[#58c4dd]"
+                  ? "border-white/[0.04] text-white/15 cursor-not-allowed"
+                  : "border-white/[0.08] text-white/50 hover:bg-white/[0.06] hover:text-white/80"
               )}
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -202,12 +201,12 @@ export function SectionViewer({ sections }: { sections: SectionModel[] }) {
               <motion.div
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
-                className="rounded-2xl bg-[#141421] p-4 ring-1 ring-[#58c4dd]/10"
+                className="rounded-2xl bg-white/[0.03] p-4 border border-white/[0.06] backdrop-blur-xl"
               >
-                <div className="text-xs font-medium text-[#f4f1eb]/50 uppercase tracking-wider mb-3">
+                <div className="text-xs font-medium text-white/30 uppercase tracking-wider mb-3">
                   Sections
                 </div>
-                <nav className="space-y-1 max-h-[60vh] overflow-y-auto scrollbar-thin scrollbar-thumb-[#58c4dd]/20">
+                <nav className="space-y-1 max-h-[60vh] overflow-y-auto scrollbar-thin scrollbar-thumb-white/10">
                   {sections.map((section, idx) => {
                     const isActive = idx === activeIndex;
                     return (
@@ -217,16 +216,16 @@ export function SectionViewer({ sections }: { sections: SectionModel[] }) {
                         className={cn(
                           "w-full text-left px-3 py-2 rounded-lg text-sm transition-all duration-200 flex items-center gap-2",
                           isActive
-                            ? "bg-gradient-to-r from-[#58c4dd]/20 to-[#cd8b62]/20 text-[#f4f1eb] ring-1 ring-[#58c4dd]/30"
-                            : "text-[#f4f1eb]/50 hover:text-[#f4f1eb]/80 hover:bg-[#58c4dd]/5"
+                            ? "bg-white/[0.08] text-white/90 border border-white/[0.12]"
+                            : "text-white/40 hover:text-white/60 hover:bg-white/[0.03]"
                         )}
                       >
                         <span
                           className={cn(
-                            "w-6 h-6 rounded-md flex items-center justify-center text-xs font-medium ring-1 shrink-0",
+                            "w-6 h-6 rounded-md flex items-center justify-center text-xs font-medium border shrink-0",
                             isActive
-                              ? "bg-[#58c4dd]/20 text-[#58c4dd] ring-[#58c4dd]/30"
-                              : "bg-[#1c1c2e] text-[#f4f1eb]/40 ring-[#58c4dd]/10"
+                              ? "bg-white/[0.10] text-white/80 border-white/[0.15]"
+                              : "bg-white/[0.03] text-white/30 border-white/[0.06]"
                           )}
                         >
                           {idx + 1}
@@ -243,12 +242,12 @@ export function SectionViewer({ sections }: { sections: SectionModel[] }) {
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.2 }}
-                className="mt-4 rounded-xl bg-[#141421] p-4 ring-1 ring-[#58c4dd]/10 space-y-4"
+                className="mt-4 rounded-xl bg-white/[0.03] p-4 border border-white/[0.06] space-y-4"
               >
                 {/* Mobile swipe hint */}
                 <div className="lg:hidden">
-                  <div className="text-xs font-medium text-[#f4f1eb]/50 mb-2">Navigation</div>
-                  <div className="flex items-center gap-2 text-xs text-[#f4f1eb]/40">
+                  <div className="text-xs font-medium text-white/30 mb-2">Navigation</div>
+                  <div className="flex items-center gap-2 text-xs text-white/25">
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
                     </svg>
@@ -258,22 +257,22 @@ export function SectionViewer({ sections }: { sections: SectionModel[] }) {
 
                 {/* Desktop keyboard hints */}
                 <div className="hidden lg:block">
-                  <div className="text-xs font-medium text-[#f4f1eb]/50 mb-3">Keyboard Shortcuts</div>
-                  <div className="grid grid-cols-2 gap-2 text-xs text-[#f4f1eb]/40">
+                  <div className="text-xs font-medium text-white/30 mb-3">Keyboard Shortcuts</div>
+                  <div className="grid grid-cols-2 gap-2 text-xs text-white/25">
                     <div className="flex items-center gap-1.5">
-                      <kbd className="px-1.5 py-0.5 rounded bg-[#58c4dd]/10 font-mono text-[10px] text-[#58c4dd]">←</kbd>
+                      <kbd className="px-1.5 py-0.5 rounded bg-white/[0.06] font-mono text-[10px] text-white/40">&#8592;</kbd>
                       <span>Previous</span>
                     </div>
                     <div className="flex items-center gap-1.5">
-                      <kbd className="px-1.5 py-0.5 rounded bg-[#58c4dd]/10 font-mono text-[10px] text-[#58c4dd]">→</kbd>
+                      <kbd className="px-1.5 py-0.5 rounded bg-white/[0.06] font-mono text-[10px] text-white/40">&#8594;</kbd>
                       <span>Next</span>
                     </div>
                     <div className="flex items-center gap-1.5">
-                      <kbd className="px-1.5 py-0.5 rounded bg-[#58c4dd]/10 font-mono text-[10px] text-[#58c4dd]">Home</kbd>
+                      <kbd className="px-1.5 py-0.5 rounded bg-white/[0.06] font-mono text-[10px] text-white/40">Home</kbd>
                       <span>First</span>
                     </div>
                     <div className="flex items-center gap-1.5">
-                      <kbd className="px-1.5 py-0.5 rounded bg-[#58c4dd]/10 font-mono text-[10px] text-[#58c4dd]">End</kbd>
+                      <kbd className="px-1.5 py-0.5 rounded bg-white/[0.06] font-mono text-[10px] text-white/40">End</kbd>
                       <span>Last</span>
                     </div>
                   </div>
@@ -298,27 +297,27 @@ export function SectionViewer({ sections }: { sections: SectionModel[] }) {
                 className="space-y-6 cursor-grab active:cursor-grabbing"
               >
                 {/* Section header */}
-                <div className="rounded-2xl bg-gradient-to-br from-[#58c4dd]/5 to-[#cd8b62]/5 p-6 ring-1 ring-[#58c4dd]/10">
+                <div className="rounded-2xl bg-white/[0.04] backdrop-blur-xl border border-white/[0.08] p-6">
                   <div className="flex items-start gap-4">
                     <motion.div
                       initial={{ scale: 0.8 }}
                       animate={{ scale: 1 }}
-                      className="h-12 w-12 rounded-xl bg-gradient-to-br from-[#58c4dd]/20 to-[#cd8b62]/20 flex items-center justify-center ring-1 ring-[#58c4dd]/20 shrink-0"
+                      className="h-12 w-12 rounded-xl bg-white/[0.06] border border-white/[0.10] flex items-center justify-center shrink-0"
                     >
-                      <span className="text-lg font-bold text-[#58c4dd]">{activeIndex + 1}</span>
+                      <span className="text-lg font-bold text-white/70">{activeIndex + 1}</span>
                     </motion.div>
                     <div>
-                      <h2 className="text-2xl sm:text-3xl font-medium text-[#f4f1eb] tracking-tight">
+                      <h2 className="text-2xl sm:text-3xl font-medium text-white/90 tracking-tight">
                         {activeSection.title}
                       </h2>
-                      <div className="mt-2 flex items-center gap-3 text-sm text-[#f4f1eb]/50">
+                      <div className="mt-2 flex items-center gap-3 text-sm text-white/30">
                         <span>
                           {activeSection.content.split(/\s+/).length} words
                         </span>
                         {activeSection.videoUrl && (
                           <>
-                            <span className="w-1 h-1 rounded-full bg-[#f4f1eb]/30" />
-                            <span className="text-[#58c4dd]">Has visualization</span>
+                            <span className="w-1 h-1 rounded-full bg-white/20" />
+                            <span className="text-white/50">Has visualization</span>
                           </>
                         )}
                       </div>
@@ -326,20 +325,18 @@ export function SectionViewer({ sections }: { sections: SectionModel[] }) {
                   </div>
                 </div>
 
-                {/* Video section - prominent placement */}
+                {/* Video section */}
                 {activeSection.videoUrl && (
                   <motion.div
                     initial={{ opacity: 0, scale: 0.98 }}
                     animate={{ opacity: 1, scale: 1 }}
                     transition={{ delay: 0.1 }}
-                    className="rounded-2xl overflow-hidden ring-1 ring-[#58c4dd]/20 shadow-2xl shadow-[#58c4dd]/10"
+                    className="rounded-2xl overflow-hidden border border-white/[0.08] shadow-2xl shadow-black/40"
                   >
-                    <div className="bg-gradient-to-r from-[#58c4dd]/10 to-[#cd8b62]/10 px-4 py-3 border-b border-[#58c4dd]/10">
+                    <div className="bg-white/[0.03] px-4 py-3 border-b border-white/[0.06]">
                       <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full bg-[#fc6255]/80" />
-                        <div className="w-3 h-3 rounded-full bg-[#f9c74f]/80" />
-                        <div className="w-3 h-3 rounded-full bg-[#83c167]/80" />
-                        <span className="ml-3 text-sm text-[#f4f1eb]/60">Manim Visualization</span>
+                        <div className="w-2 h-2 rounded-full bg-white/20" />
+                        <span className="text-xs text-white/40 font-mono tracking-wider uppercase">Visualization</span>
                       </div>
                     </div>
                     <VideoPlayer src={activeSection.videoUrl} title="Concept Visualization" />
@@ -351,10 +348,10 @@ export function SectionViewer({ sections }: { sections: SectionModel[] }) {
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   transition={{ delay: 0.2 }}
-                  className="rounded-2xl bg-[#141421] p-6 sm:p-8 ring-1 ring-[#58c4dd]/10"
+                  className="rounded-2xl bg-white/[0.03] p-6 sm:p-8 border border-white/[0.06]"
                 >
                   <div className="prose prose-invert prose-lg max-w-none">
-                    <div className="text-[#f4f1eb]/70 leading-relaxed">
+                    <div className="text-white/55 leading-relaxed">
                       <MarkdownContent content={unifiedContent} />
                     </div>
                   </div>
@@ -369,11 +366,11 @@ export function SectionViewer({ sections }: { sections: SectionModel[] }) {
                       "group flex items-center gap-3 px-5 py-3 rounded-xl transition-all duration-200",
                       activeIndex === 0
                         ? "opacity-40 cursor-not-allowed"
-                        : "bg-[#141421] hover:bg-[#58c4dd]/10 ring-1 ring-[#58c4dd]/10 hover:ring-[#58c4dd]/30"
+                        : "bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.06] hover:border-white/[0.12]"
                     )}
                   >
                     <svg
-                      className="w-5 h-5 text-[#f4f1eb]/70 group-hover:-translate-x-1 transition-transform"
+                      className="w-5 h-5 text-white/50 group-hover:-translate-x-1 transition-transform"
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
@@ -381,9 +378,9 @@ export function SectionViewer({ sections }: { sections: SectionModel[] }) {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                     </svg>
                     <div className="text-left">
-                      <div className="text-xs text-[#f4f1eb]/50">Previous</div>
-                      <div className="text-sm text-[#f4f1eb]/80 max-w-[150px] truncate">
-                        {activeIndex > 0 ? sections[activeIndex - 1].title : "—"}
+                      <div className="text-xs text-white/30">Previous</div>
+                      <div className="text-sm text-white/60 max-w-[150px] truncate">
+                        {activeIndex > 0 ? sections[activeIndex - 1].title : "\u2014"}
                       </div>
                     </div>
                   </button>
@@ -395,17 +392,17 @@ export function SectionViewer({ sections }: { sections: SectionModel[] }) {
                       "group flex items-center gap-3 px-5 py-3 rounded-xl transition-all duration-200",
                       activeIndex === sections.length - 1
                         ? "opacity-40 cursor-not-allowed"
-                        : "bg-gradient-to-r from-[#58c4dd]/10 to-[#cd8b62]/10 hover:from-[#58c4dd]/20 hover:to-[#cd8b62]/20 ring-1 ring-[#58c4dd]/20"
+                        : "bg-white/[0.05] hover:bg-white/[0.08] border border-white/[0.08] hover:border-white/[0.14]"
                     )}
                   >
                     <div className="text-right">
-                      <div className="text-xs text-[#f4f1eb]/50">Next</div>
-                      <div className="text-sm text-[#f4f1eb]/80 max-w-[150px] truncate">
-                        {activeIndex < sections.length - 1 ? sections[activeIndex + 1].title : "—"}
+                      <div className="text-xs text-white/30">Next</div>
+                      <div className="text-sm text-white/60 max-w-[150px] truncate">
+                        {activeIndex < sections.length - 1 ? sections[activeIndex + 1].title : "\u2014"}
                       </div>
                     </div>
                     <svg
-                      className="w-5 h-5 text-[#f4f1eb]/70 group-hover:translate-x-1 transition-transform"
+                      className="w-5 h-5 text-white/50 group-hover:translate-x-1 transition-transform"
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"

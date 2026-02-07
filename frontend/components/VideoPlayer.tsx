@@ -36,7 +36,6 @@ export function VideoPlayer({
   }, [currentTime, duration]);
 
   useEffect(() => {
-    // Reset state when src changes.
     setIsPlaying(false);
     setIsReady(false);
     setHadError(false);
@@ -76,7 +75,7 @@ export function VideoPlayer({
   return (
     <div
       className={[
-        "relative overflow-hidden rounded-xl bg-black ring-1 ring-white/10",
+        "relative overflow-hidden rounded-xl bg-black border border-white/[0.06]",
         className ?? "",
       ].join(" ")}
     >
@@ -105,7 +104,7 @@ export function VideoPlayer({
         type="button"
         onClick={togglePlay}
         aria-label={isPlaying ? "Pause video" : "Play video"}
-        className="absolute inset-0 grid place-items-center bg-black/25 transition hover:bg-black/35"
+        className="absolute inset-0 grid place-items-center bg-black/30 transition hover:bg-black/40"
       >
         {!isPlaying && (
           <div className="grid h-14 w-14 place-items-center rounded-full bg-white/90 text-black shadow-[0_18px_45px_-25px_rgba(0,0,0,0.9)]">
@@ -122,7 +121,7 @@ export function VideoPlayer({
       </button>
 
       {/* Top-left label */}
-      <div className="pointer-events-none absolute left-3 top-3 rounded-lg bg-black/45 px-2.5 py-1 text-[11px] text-white/80 ring-1 ring-white/10">
+      <div className="pointer-events-none absolute left-3 top-3 rounded-lg bg-black/50 backdrop-blur-md px-2.5 py-1 text-[11px] text-white/60 border border-white/[0.06]">
         {title}
       </div>
 
@@ -131,12 +130,12 @@ export function VideoPlayer({
 
       <div className="absolute inset-x-3 bottom-3">
         {hadError ? (
-          <div className="rounded-lg bg-rose-500/10 px-3 py-2 text-xs text-rose-200 ring-1 ring-rose-400/20">
-            Couldn’t load this video. The URL may be temporary or blocked.
+          <div className="rounded-lg bg-[#f27066]/10 px-3 py-2 text-xs text-[#f27066] border border-[#f27066]/20">
+            Couldn&apos;t load this video. The URL may be temporary or blocked.
           </div>
         ) : (
           <div className="flex items-center gap-3">
-            <div className="rounded-md bg-black/45 px-2 py-1 text-[11px] text-white/75 ring-1 ring-white/10">
+            <div className="rounded-md bg-black/50 backdrop-blur-sm px-2 py-1 text-[11px] text-white/60 border border-white/[0.06]">
               {formatTime(currentTime)} / {formatTime(duration)}
             </div>
             <div
@@ -146,21 +145,21 @@ export function VideoPlayer({
               aria-valuemax={100}
               aria-valuenow={Math.round(progressPct)}
               onClick={onSeek}
-              className="group h-2 flex-1 cursor-pointer rounded-full bg-white/15 ring-1 ring-white/10"
+              className="group h-2 flex-1 cursor-pointer rounded-full bg-white/[0.08] border border-white/[0.06]"
             >
               <div
-                className="h-full rounded-full bg-gradient-to-r from-blue-400 to-violet-400 transition-[width] duration-100"
+                className="h-full rounded-full bg-gradient-to-r from-white/50 to-white/30 transition-[width] duration-100"
                 style={{ width: `${progressPct}%` }}
               />
               <div
-                className="mt-1 text-[10px] text-white/45"
+                className="mt-1 text-[10px] text-white/30"
                 style={{ display: "none" }}
               >
                 {progress.toFixed(1)}%
               </div>
             </div>
-            <div className="rounded-md bg-black/45 px-2 py-1 text-[11px] text-white/60 ring-1 ring-white/10">
-              {isReady ? "HD" : "Loading…"}
+            <div className="rounded-md bg-black/50 backdrop-blur-sm px-2 py-1 text-[11px] text-white/40 border border-white/[0.06]">
+              {isReady ? "HD" : "Loading..."}
             </div>
           </div>
         )}

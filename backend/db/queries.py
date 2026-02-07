@@ -219,6 +219,54 @@ async def update_visualization_status(
     return viz
 
 
+async def create_standalone_visualization(
+    db: AsyncSession,
+    viz_id: str,
+    concept: str,
+    manim_code: str,
+    video_url: str,
+    status: str = "complete",
+) -> Visualization:
+    """
+    Create a standalone visualization without a paper_id.
+    
+    Used for direct Manim file uploads that aren't associated with a paper.
+    """
+    viz = Visualization(
+        id=viz_id,
+        paper_id=None,  # Standalone, not associated with a paper
+        section_id=None,
+        concept=concept,
+        manim_code=manim_code,
+        video_url=video_url,
+        status=status,
+    )
+    db.add(viz)
+    await db.commit()
+    await db.refresh(viz)
+    return viz
+
+
+async def list_all_visualizations(db: AsyncSession) -> list[Visualization]:
+    """
+    List all visualizations in the database.
+    
+    Returns all visualizations ordered by creation date (newest first).
+    """
+    result = await db.execute(
+        select(Visualization).order_by(Visualization.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def get_visualization(db: AsyncSession, viz_id: str) -> Optional[Visualization]:
+    """Get a visualization by its ID."""
+    result = await db.execute(
+        select(Visualization).where(Visualization.id == viz_id)
+    )
+    return result.scalar_one_or_none()
+
+
 # === Seeding ===
 
 async def seed_mock_paper(db: AsyncSession):

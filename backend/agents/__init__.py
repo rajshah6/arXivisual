@@ -12,23 +12,14 @@ Usage:
     visualizations = await generate_visualizations(paper)
 """
 
-# Handle both package and direct imports
-try:
-    from .base import BaseAgent
-    from .section_analyzer import SectionAnalyzer
-    from .visualization_planner import VisualizationPlanner
-    from .manim_generator import ManimGenerator
-    from .code_validator import CodeValidator
-    from .voiceover_script_validator import VoiceoverScriptValidator
-    from .pipeline import generate_visualizations, generate_single_visualization
-except ImportError:
-    from base import BaseAgent
-    from section_analyzer import SectionAnalyzer
-    from visualization_planner import VisualizationPlanner
-    from manim_generator import ManimGenerator
-    from code_validator import CodeValidator
-    from voiceover_script_validator import VoiceoverScriptValidator
-    from pipeline import generate_visualizations, generate_single_visualization
+# Use relative imports for package usage
+from .base import BaseAgent
+from .section_analyzer import SectionAnalyzer
+from .visualization_planner import VisualizationPlanner
+from .manim_generator import ManimGenerator
+from .code_validator import CodeValidator
+from .voiceover_script_validator import VoiceoverScriptValidator
+from .pipeline import generate_visualizations, generate_single_visualization
 
 __all__ = [
     "BaseAgent",

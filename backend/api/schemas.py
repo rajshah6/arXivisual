@@ -159,3 +159,32 @@ class HealthResponse(BaseModel):
         description="Status of dependent services",
         examples=[{"database": "connected", "redis": "connected", "modal": "configured"}]
     )
+
+
+# === Upload Manim Schemas ===
+
+class UploadManimResponse(BaseModel):
+    """Response for POST /api/upload-manim."""
+    visualization_id: str = Field(..., description="Unique ID of the created visualization")
+    video_id: str = Field(..., description="ID of the rendered video (same as visualization_id)")
+    video_url: str = Field(..., description="URL to access the rendered video")
+    concept: str = Field(..., description="Human-readable concept name for this visualization")
+    status: VisualizationStatus = Field(..., description="Rendering status")
+    message: str = Field(..., description="Status message")
+
+
+class VisualizationListItem(BaseModel):
+    """Individual visualization in the list response."""
+    id: str = Field(..., description="Visualization ID")
+    concept: str = Field(..., description="Human-readable concept being visualized")
+    video_url: Optional[str] = Field(None, description="URL to rendered video, null if not ready")
+    status: VisualizationStatus = Field(..., description="Rendering status")
+    paper_id: Optional[str] = Field(None, description="Associated paper ID, if any")
+    section_id: Optional[str] = Field(None, description="Associated section ID, if any")
+    created_at: datetime = Field(..., description="When the visualization was created")
+
+
+class VisualizationListResponse(BaseModel):
+    """Response for GET /api/visualizations."""
+    visualizations: list[VisualizationListItem] = Field(..., description="List of all visualizations")
+    total: int = Field(..., description="Total number of visualizations")

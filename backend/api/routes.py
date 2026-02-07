@@ -5,7 +5,7 @@ Now using SQLite database and local Manim rendering.
 """
 
 import uuid
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +27,9 @@ from .schemas import (
     VisualizationStatus,
     RenderRequest,
     RenderResponse,
+    UploadManimResponse,
+    VisualizationListItem,
+    VisualizationListResponse,
 )
 from db.connection import get_db
 from db import queries
@@ -265,6 +268,109 @@ async def render_manim(request: RenderRequest):
             status_code=500,
             detail=f"Unexpected error: {str(e)}"
         )
+
+
+@router.post("/upload-manim", response_model=UploadManimResponse)
+async def upload_manim_file(
+    file: UploadFile = File(..., description="Manim Python file (.py) to render"),
+    concept: str = Form(default="uploaded_visualization", description="Human-readable name for this visualization"),
+    quality: str = Form(default="low_quality", description="Render quality: low_quality, medium_quality, or high_quality"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Upload a Manim Python file and render it to MP4.
+
+    This endpoint accepts a .py file containing Manim code, renders it,
+    stores the video, and saves the visualization metadata to the database.
+
+    Returns the video URL which can be accessed via GET /api/video/{video_id}.
+    """
+    # Validate file type
+    if not file.filename or not file.filename.endswith(".py"):
+        raise HTTPException(
+            status_code=400,
+            detail="File must be a Python file (.py)"
+        )
+
+    try:
+        # Read the file contents
+        content = await file.read()
+        manim_code = content.decode("utf-8")
+
+        # Generate a unique visualization ID
+        viz_id = f"viz_{uuid.uuid4().hex[:12]}"
+
+        # Extract scene name for response
+        scene_name = extract_scene_name(manim_code)
+
+        # Render the visualization
+        video_url = await process_visualization(
+            viz_id=viz_id,
+            manim_code=manim_code,
+            quality=quality
+        )
+
+        # Save to database
+        await queries.create_standalone_visualization(
+            db=db,
+            viz_id=viz_id,
+            concept=concept,
+            manim_code=manim_code,
+            video_url=video_url,
+            status="complete"
+        )
+
+        return UploadManimResponse(
+            visualization_id=viz_id,
+            video_id=viz_id,
+            video_url=video_url,
+            concept=concept,
+            status=VisualizationStatus.complete,
+            message=f"Successfully rendered {scene_name} from {file.filename}"
+        )
+
+    except UnicodeDecodeError:
+        raise HTTPException(
+            status_code=400,
+            detail="File must be a valid UTF-8 encoded Python file"
+        )
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Rendering failed: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error: {str(e)}"
+        )
+
+
+@router.get("/visualizations", response_model=VisualizationListResponse)
+async def list_visualizations(db: AsyncSession = Depends(get_db)):
+    """
+    List all visualizations in the database.
+
+    Returns all rendered visualizations with their video URLs,
+    including both paper-associated and standalone uploads.
+    """
+    visualizations = await queries.list_all_visualizations(db)
+
+    return VisualizationListResponse(
+        visualizations=[
+            VisualizationListItem(
+                id=v.id,
+                concept=v.concept,
+                video_url=v.video_url,
+                status=VisualizationStatus(v.status),
+                paper_id=v.paper_id,
+                section_id=v.section_id,
+                created_at=v.created_at or datetime.utcnow(),
+            )
+            for v in visualizations
+        ],
+        total=len(visualizations),
+    )
 
 
 @router.get("/health", response_model=HealthResponse)

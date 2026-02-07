@@ -58,7 +58,7 @@ class Visualization(Base):
     __tablename__ = "visualizations"
 
     id = Column(String, primary_key=True)
-    paper_id = Column(String, ForeignKey("papers.id"), nullable=False)
+    paper_id = Column(String, ForeignKey("papers.id"), nullable=True)  # Nullable for standalone uploads
     section_id = Column(String, ForeignKey("sections.id"), nullable=True)
     concept = Column(String, nullable=False)  # Human-readable concept name
     storyboard = Column(JSON, nullable=True)  # Animation storyboard data

@@ -37,4 +37,3 @@ dedalus-labs>=0.2.0
 # Tests
 pytest>=7.0.0
 pytest-asyncio>=0.21.0
-python-multipart>=0.0.6

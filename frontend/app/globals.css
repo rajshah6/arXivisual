@@ -61,12 +61,6 @@ html {
   border-color: rgba(255, 255, 255, 0.14);
 }
 
-/* Mosaic tessellation background pattern */
-.mosaic-bg {
-  background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M30 0 L60 30 L30 60 L0 30Z' fill='none' stroke='rgba(255,255,255,0.025)' stroke-width='0.5'/%3E%3Cpath d='M0 0 L30 0 L30 30 L0 30Z' fill='none' stroke='rgba(255,255,255,0.015)' stroke-width='0.5'/%3E%3Cpath d='M30 0 L60 0 L60 30Z' fill='none' stroke='rgba(255,255,255,0.02)' stroke-width='0.5'/%3E%3C/svg%3E");
-  background-size: 60px 60px;
-}
-
 /* Glass shard animations */
 @keyframes shard-float {
   0%, 100% { transform: translateY(0) rotate(var(--shard-rotate, 0deg)); }
@@ -195,7 +189,7 @@ html {
 
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
-  .mosaic-bg {
-    background-image: none;
+  canvas {
+    animation: none;
   }
 }

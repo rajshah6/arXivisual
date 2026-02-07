@@ -35,7 +35,7 @@ export const MOCK_PAPER: Paper = {
       level: 1,
       order_index: 0,
       equations: [],
-      video_url: "/videos/demo/TransformerArchitectureOverview.mp4",
+      video_url: "/videos/demo/TransformerEncoderdecoderArchitecture.mp4",
     },
     {
       id: "section-3-2",
@@ -59,7 +59,7 @@ export const MOCK_PAPER: Paper = {
       equations: [
         "\\text{MultiHead}(Q, K, V) = \\text{Concat}(\\text{head}_1, \\ldots, \\text{head}_h)W^O",
       ],
-      video_url: "/videos/demo/MultiheadAttentionMechanism.mp4",
+      video_url: "/videos/demo/MultiheadAttention.mp4",
     },
     {
       id: "section-3-5",

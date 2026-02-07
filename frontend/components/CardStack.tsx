@@ -119,15 +119,22 @@ function SlideCard({
 
   // --- contentY: scroll content within the card during content phase ---
   const contentY = useTransform(scrollYProgress, (v) => {
-    if (v < segStart || v >= contentEnd) return 0;
-
-    const contentPhaseProgress = (v - segStart) / (contentEnd - segStart);
     const contentHeight = contentHeightsRef.current?.[index] || 0;
     const cardViewportHeight =
       typeof window !== "undefined" ? window.innerHeight - 96 : 600;
     const maxScroll = Math.max(0, contentHeight - cardViewportHeight);
 
-    return -contentPhaseProgress * maxScroll;
+    // Before this card's segment: content at top
+    if (v < segStart) return 0;
+
+    // Content phase: scroll from 0 to -maxScroll
+    if (v >= segStart && v < contentEnd) {
+      const contentPhaseProgress = (v - segStart) / (contentEnd - segStart);
+      return -contentPhaseProgress * maxScroll;
+    }
+
+    // Exit phase + after: stay at bottom so scrolling back doesn't snap
+    return -maxScroll;
   });
 
   // z-index: computed inline, no useState

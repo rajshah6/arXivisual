@@ -110,14 +110,13 @@ def check_spatial_bounds(code: str) -> str:
     MAX_X = 7.1
     MAX_Y = 4.0
 
-    # Check for explicit coordinate values
-    coord_patterns = [
+    # Check for explicit coordinate values (x, y pairs)
+    xy_patterns = [
         (r"\.move_to\(\s*\[?\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)", "move_to"),
-        (r"\.shift\(\s*(?:RIGHT|LEFT|UP|DOWN)\s*\*\s*(-?[\d.]+)", "shift"),
         (r"Dot\(\s*\[?\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)", "Dot position"),
     ]
 
-    for pattern, label in coord_patterns:
+    for pattern, label in xy_patterns:
         for match in re.finditer(pattern, code):
             groups = match.groups()
             if len(groups) >= 2:
@@ -133,6 +132,28 @@ def check_spatial_bounds(code: str) -> str:
                         )
                 except ValueError:
                     pass
+
+    # Check for single-axis shifts (RIGHT, LEFT, UP, DOWN)
+    shift_pattern = r"\.shift\(\s*(RIGHT|LEFT|UP|DOWN)\s*\*\s*(-?[\d.]+)"
+    for match in re.finditer(shift_pattern, code):
+        direction, value_str = match.groups()
+        try:
+            value = float(value_str)
+            # Map direction to axis
+            if direction in ("RIGHT", "LEFT"):
+                # x-axis
+                if abs(value) > MAX_X:
+                    warnings.append(
+                        f"shift: {direction}*{value} exceeds frame width ({MAX_X})"
+                    )
+            elif direction in ("UP", "DOWN"):
+                # y-axis
+                if abs(value) > MAX_Y:
+                    warnings.append(
+                        f"shift: {direction}*{value} exceeds frame height ({MAX_Y})"
+                    )
+        except ValueError:
+            pass
 
     return json.dumps({
         "in_bounds": len(warnings) == 0,
@@ -252,7 +273,7 @@ async def fetch_manim_docs_via_dedalus(
                 "then call get-library-docs with the returned ID and the user's query. "
                 "Return ONLY the raw documentation text, no extra commentary."
             ),
-            max_tokens=2048,
+            max_tokens=max_tokens,
             max_steps=6,
         )
 
@@ -342,7 +363,7 @@ async def fetch_manim_docs_via_dedalus_with_tools(
                 "to validate any provided code. Return the documentation text "
                 "and any validation results."
             ),
-            max_tokens=2048,
+            max_tokens=max_tokens,
             max_steps=8,
         )
 

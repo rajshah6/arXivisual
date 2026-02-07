@@ -258,13 +258,19 @@ class ManimGenerator(BaseAgent):
                     "(Dedalus SDK + Context7 MCP)",
                     len(live_docs),
                 )
-                # Context7 docs are PRIMARY -- use them as the main reference,
-                # with only a minimal static preamble for structure
+                # Merge original system prompt with live docs
+                # Keep the base system prompt's instructions and add live docs as primary reference
                 return (
-                    "# Manim API Reference (live, via Context7 MCP + Dedalus SDK)\n\n"
-                    "The following documentation was fetched in real-time from "
-                    "Context7 using the Dedalus MCP gateway. Use these references "
-                    "as the authoritative source for Manim APIs.\n\n"
+                    self.system_prompt
+                    + "\n\n"
+                    + "=" * 80
+                    + "\n"
+                    + "# LIVE MANIM API REFERENCE (Context7 MCP + Dedalus SDK)\n"
+                    + "=" * 80
+                    + "\n\n"
+                    + "The following documentation was fetched in real-time from "
+                    + "Context7 using the Dedalus MCP gateway. Use these references "
+                    + "as the PRIMARY and authoritative source for Manim APIs.\n\n"
                     + live_docs
                 )
         except Exception as exc:

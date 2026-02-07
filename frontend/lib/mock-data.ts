@@ -95,3 +95,112 @@ export const MOCK_STATUS: ProcessingStatus = {
   sections_total: 5,
   current_step: "Complete",
 };
+
+// ── GPT-3 Demo Paper ─────────────────────────────────────────────────
+
+export const GPT3_PAPER_ID = "2005.14165";
+
+/** All demo paper IDs that have hardcoded data */
+export const DEMO_PAPER_IDS = new Set([DEMO_PAPER_ID, GPT3_PAPER_ID]);
+
+/** Returns the hardcoded Paper for a demo ID, or null if not a demo paper. */
+export function getDemoPaper(arxivId: string): Paper | null {
+  if (arxivId === DEMO_PAPER_ID) return { ...MOCK_PAPER };
+  if (arxivId === GPT3_PAPER_ID) return { ...GPT3_MOCK_PAPER };
+  return null;
+}
+
+export const GPT3_MOCK_PAPER: Paper = {
+  paper_id: GPT3_PAPER_ID,
+  title: "Language Models are Few-Shot Learners",
+  authors: [
+    "Tom B. Brown",
+    "Benjamin Mann",
+    "Nick Ryder",
+    "Melanie Subbiah",
+    "Jared Kaplan",
+    "Prafulla Dhariwal",
+    "Arvind Neelakantan",
+    "Pranav Shyam",
+    "Girish Sastry",
+    "Amanda Askell",
+    "Sandhini Agarwal",
+    "Ariel Herbert-Voss",
+    "Gretchen Krueger",
+    "Tom Henighan",
+    "Rewon Child",
+    "Aditya Ramesh",
+    "Daniel M. Ziegler",
+    "Jeffrey Wu",
+    "Clemens Winter",
+    "Christopher Hesse",
+    "Mark Chen",
+    "Eric Sigler",
+    "Mateusz Litwin",
+    "Scott Gray",
+    "Benjamin Chess",
+    "Jack Clark",
+    "Christopher Berner",
+    "Sam McCandlish",
+    "Alec Radford",
+    "Ilya Sutskever",
+    "Dario Amodei",
+  ],
+  abstract:
+    "Recent work has demonstrated substantial gains on many NLP tasks and benchmarks by pre-training on a large corpus of text followed by fine-tuning on a specific task. While typically task-agnostic in architecture, this method still requires task-specific fine-tuning datasets of thousands or tens of thousands of examples. By contrast, humans can generally perform a new language task from only a few examples or from simple instructions \u2014 something which current NLP systems still largely struggle to do. Here we show that scaling up language models greatly improves task-agnostic, few-shot performance, sometimes even reaching competitiveness with prior state-of-the-art fine-tuning approaches.",
+  pdf_url: "https://arxiv.org/pdf/2005.14165.pdf",
+  html_url: "https://arxiv.org/abs/2005.14165",
+  sections: [
+    {
+      id: "gpt3-section-1",
+      title: "In-Context Learning vs Fine-Tuning",
+      content:
+        'GPT-3 introduced a radical idea: instead of **fine-tuning** a model on thousands of labeled examples, you can teach it new tasks simply by showing examples *inside the prompt*. This is called **in-context learning**.\n\nTraditional fine-tuning updates a model\u2019s weights for each new task, requiring expensive retraining and large datasets. In-context learning skips this entirely \u2014 the model reads a few demonstrations at inference time and generalizes on the spot, with zero parameter updates.\n\n**Key takeaway:** In-context learning replaces the "train a new model per task" paradigm with "describe the task in the prompt" \u2014 making GPT-3 a general-purpose few-shot learner.',
+      level: 1,
+      order_index: 0,
+      equations: [],
+      video_url: "/videos/demo/in_context_learning_vs_fine_tuning.mp4",
+    },
+    {
+      id: "gpt3-section-2",
+      title: "The Few-Shot Learning Mechanism",
+      content:
+        'Few-shot learning in GPT-3 works by structuring the prompt as a sequence of **demonstration pairs** followed by a new query. For example: *"Translate English to French: sea otter \u2192 loutre de mer, cheese \u2192 fromage, hello \u2192"*. The model completes the pattern.\n\nThis mechanism has inherent **uncertainty** \u2014 with only a handful of examples, the model may latch onto spurious patterns or fail on edge cases. Performance varies significantly depending on prompt formatting, example selection, and task complexity.\n\n**Key takeaway:** Few-shot prompting leverages the model\u2019s pattern-completion ability, but its reliability depends heavily on how examples are chosen and structured.',
+      level: 1,
+      order_index: 1,
+      equations: [],
+      video_url: "/videos/demo/few_shot_learning_mechanism_uncertainty.mp4",
+    },
+    {
+      id: "gpt3-section-3",
+      title: "In-Context Learning at Scale",
+      content:
+        'One of GPT-3\u2019s most striking findings is that **in-context learning ability emerges with scale**. Small language models barely benefit from in-context examples, but as models grow larger, their ability to learn from prompt examples improves dramatically.\n\nThe authors tested models ranging from 125M to 175B parameters. On tasks like arithmetic, unscrambling words, and reading comprehension, the gap between zero-shot and few-shot performance **widens** as model size increases \u2014 meaning larger models extract more signal from the same examples.\n\n**Key takeaway:** In-context learning is not just a trick \u2014 it is an **emergent capability** that becomes increasingly powerful with model scale.',
+      level: 1,
+      order_index: 2,
+      equations: [],
+      video_url: "/videos/demo/in_context_learning_scaling.mp4",
+    },
+    {
+      id: "gpt3-section-4",
+      title: "Few-Shot Performance Scaling",
+      content:
+        'GPT-3 demonstrated a remarkably consistent **scaling law** for few-shot performance: across dozens of benchmarks, larger models achieve better results with the same number of in-context examples. The relationship follows an approximate power law:\n\n$$L(N) \\propto N^{-\\alpha}$$\n\nwhere $L$ is the loss, $N$ is the number of parameters, and $\\alpha$ is a task-dependent scaling exponent. On some tasks like translation and question answering, the 175B model with just a few examples matched or exceeded fine-tuned models trained on thousands of labeled samples.\n\n**Key takeaway:** The scaling law $L(N) \\propto N^{-\\alpha}$ means predictable improvement \u2014 doubling parameters yields a consistent reduction in few-shot error across tasks.',
+      level: 1,
+      order_index: 3,
+      equations: ["L(N) \\propto N^{-\\alpha}"],
+      video_url: "/videos/demo/few_shot_performance_scaling.mp4",
+    },
+    {
+      id: "gpt3-section-5",
+      title: "Training Data Mixture and Weighted Sampling",
+      content:
+        "GPT-3 was trained on a carefully curated mixture of datasets, not just raw internet text. The training corpus blended **Common Crawl** (filtered and deduplicated), **WebText2**, **Books1**, **Books2**, and **Wikipedia** \u2014 totaling roughly 570 GB of filtered text.\n\nCritically, datasets were **not sampled proportionally** to their size. Higher-quality sources like Wikipedia and books were upsampled (seen more than once per epoch), while the massive Common Crawl was downsampled to reduce noise. This weighted sampling strategy proved essential for model quality.\n\n**Key takeaway:** Data quality trumps quantity \u2014 GPT-3\u2019s weighted sampling ensured the model trained more on cleaner, higher-quality sources despite their smaller size.",
+      level: 1,
+      order_index: 4,
+      equations: [],
+      video_url:
+        "/videos/demo/training_data_mixture_and_weighted_sampling.mp4",
+    },
+  ],
+};

@@ -9,7 +9,7 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { MosaicBackground } from "@/components/ui/mosaic-background";
 import { ShardField } from "@/components/ui/glass-shard";
 import type { Paper, ProcessingStatus } from "@/lib/types";
-import { DEMO_PAPER_ID } from "@/lib/mock-data";
+import { DEMO_PAPER_IDS } from "@/lib/mock-data";
 import {
   getPaper,
   processArxivPaper,
@@ -86,7 +86,7 @@ export default function PaperPage({
     }
 
     // Demo paper: run simulated 5-second processing
-    if (arxivId === DEMO_PAPER_ID) {
+    if (DEMO_PAPER_IDS.has(arxivId)) {
       demoSimRunning.current = true;
       setState({
         type: "processing",

@@ -4,7 +4,7 @@
  * Supports toggling between mock data and real API via environment variable.
  */
 
-import { DEMO_PAPER_ID, MOCK_PAPER, MOCK_STATUS } from "./mock-data";
+import { DEMO_PAPER_IDS, getDemoPaper, MOCK_PAPER, MOCK_STATUS } from "./mock-data";
 import type { Paper, ProcessingStatus, Section } from "./types";
 
 // Toggle between mock and real API
@@ -143,8 +143,9 @@ export async function getProcessingStatus(jobId: string): Promise<StatusResponse
  */
 export async function getPaper(arxivId: string): Promise<Paper | null> {
   // Demo paper fast path — always works, no backend needed
-  if (arxivId === DEMO_PAPER_ID) {
-    return { ...MOCK_PAPER };
+  const demoPaper = getDemoPaper(arxivId);
+  if (demoPaper) {
+    return demoPaper;
   }
 
   if (USE_MOCK) {

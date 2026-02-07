@@ -3,7 +3,6 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { TextGenerateEffect } from "@/components/ui/text-generate-effect";
 import { PlaceholdersAndVanishInput } from "@/components/ui/placeholders-and-vanish-input";
 import { MosaicBackground } from "@/components/ui/mosaic-background";
 import { ShardField } from "@/components/ui/glass-shard";
@@ -88,79 +87,55 @@ export default function Home() {
 
   return (
     <main className="min-h-dvh relative overflow-hidden bg-black">
-      {/* Mosaic background */}
-      <MosaicBackground />
+      {/* Mosaic background with arXiv logo */}
+      <MosaicBackground showLogo />
 
       {/* Floating glass shards */}
       <ShardField />
 
-      <div className="relative z-10 mx-auto w-full max-w-6xl px-6 py-8 sm:py-12">
-        {/* Header */}
-        <motion.header
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
-          className="flex items-center justify-between"
-        >
-          <div className="flex items-center gap-4">
-            <MosaicLogo />
-            <div className="leading-tight">
-              <div className="text-lg font-semibold text-white/90">ArXiviz</div>
-              <div className="text-sm text-white/30">
-                Mathematical visualizations
+      <div className="relative z-10 mx-auto w-full max-w-6xl px-6">
+        {/* ── First viewport: Logo (clear) + search bar below ── */}
+        <section className="min-h-dvh flex flex-col">
+          {/* Header */}
+          <motion.header
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6 }}
+            className="flex items-center justify-between py-8 sm:py-12"
+          >
+            <div className="flex items-center gap-4">
+              <MosaicLogo />
+              <div className="leading-tight">
+                <div className="text-lg font-semibold text-white/90">ArXiviz</div>
+                <div className="text-sm text-white/30">
+                  Mathematical visualizations
+                </div>
               </div>
             </div>
-          </div>
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.4 }}
-            className="hidden items-center gap-3 sm:flex"
-          >
-            <div className="flex items-center gap-2 rounded-full bg-white/[0.04] px-4 py-2 border border-white/[0.08]">
-              <span className="text-white/40 text-sm">◇</span>
-              <span className="text-sm text-white/40">Powered by Manim</span>
-            </div>
-          </motion.div>
-        </motion.header>
-
-        {/* Hero Section */}
-        <section className="pt-16 sm:pt-24 pb-8">
-          <div className="max-w-4xl mx-auto text-center">
-            {/* Decorative line */}
-            <motion.div
-              initial={{ scaleX: 0 }}
-              animate={{ scaleX: 1 }}
-              transition={{ duration: 0.8, delay: 0.2 }}
-              className="w-24 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent mx-auto mb-8"
-            />
-
-            {/* Main Headline */}
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              transition={{ duration: 0.6, delay: 0.3 }}
+              transition={{ delay: 0.4 }}
+              className="hidden items-center gap-3 sm:flex"
             >
-              <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl tracking-tight text-white/90">
-                <TextGenerateEffect
-                  words="Transform research into"
-                  className="inline font-light"
-                  duration={0.4}
-                />
-                <span className="block mt-3">
-                  <span className="font-light text-white/60">visual</span>
-                  {" "}
-                  <span className="font-medium text-white/90">understanding</span>
-                </span>
-              </h1>
+              <div className="flex items-center gap-2 rounded-full bg-white/[0.04] px-4 py-2 border border-white/[0.08]">
+                <span className="text-white/40 text-sm">◇</span>
+                <span className="text-sm text-white/40">Powered by Manim</span>
+              </div>
             </motion.div>
+          </motion.header>
 
+          {/* Spacer — keeps the logo area clear */}
+          <div className="flex-1" />
+
+          {/* Search area — pinned to lower portion of viewport */}
+          <div className="max-w-4xl mx-auto w-full text-center pb-16 sm:pb-24">
             {/* Subtitle */}
             <motion.p
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.9 }}
-              className="mt-8 text-lg sm:text-xl text-white/40 max-w-2xl mx-auto leading-relaxed font-light"
+              transition={{ duration: 0.6, delay: 0.5 }}
+              className="text-lg sm:text-xl text-white/40 max-w-2xl mx-auto leading-relaxed font-light"
             >
               Paste any arXiv paper. Watch as we transform complex mathematics
               into elegant{" "}
@@ -172,8 +147,8 @@ export default function Home() {
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 1.1 }}
-              className="mt-12 max-w-xl mx-auto"
+              transition={{ duration: 0.6, delay: 0.8 }}
+              className="mt-10 max-w-xl mx-auto"
             >
               <div className="relative">
                 {/* Decorative brackets */}
@@ -200,7 +175,7 @@ export default function Home() {
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
-                transition={{ delay: 1.3 }}
+                transition={{ delay: 1.0 }}
                 className="mt-4 h-6 text-sm"
               >
                 {parsedId ? (
@@ -221,7 +196,7 @@ export default function Home() {
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              transition={{ duration: 0.6, delay: 1.4 }}
+              transition={{ duration: 0.6, delay: 1.2 }}
               className="mt-8 flex flex-wrap items-center justify-center gap-3"
             >
               <span className="text-sm text-white/30">Try these:</span>

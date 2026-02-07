@@ -36,6 +36,9 @@ dependencies = [
 
     # LLM
     "openai>=1.12.0",
+
+    # Dedalus SDK + MCP Gateway (Context7 live docs)
+    "dedalus-labs>=0.2.0",
 ]
 
 [project.optional-dependencies]

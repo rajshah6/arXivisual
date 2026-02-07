@@ -1,5 +1,13 @@
-"""Manim Generator Agent - Generates Manim Python code from visualization plans."""
+"""Manim Generator Agent - Generates Manim Python code from visualization plans.
 
+Uses the official Dedalus SDK with Context7 MCP (via DedalusRunner + mcp_servers)
+to fetch live Manim documentation as the PRIMARY doc source. The static
+manim_reference.md is kept only as a last-resort fallback.
+
+Hackathon Track: Dedalus "Best use of tool calling"
+"""
+
+import logging
 import re
 import sys
 from pathlib import Path
@@ -12,6 +20,7 @@ try:
         GeneratedCode,
         VisualizationType,
     )
+    from .context7_docs import get_manim_docs
 except ImportError:
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from agents.base import BaseAgent
@@ -20,6 +29,9 @@ except ImportError:
         GeneratedCode,
         VisualizationType,
     )
+    from agents.context7_docs import get_manim_docs
+
+logger = logging.getLogger(__name__)
 
 
 class ManimGenerator(BaseAgent):
@@ -204,6 +216,70 @@ class ManimGenerator(BaseAgent):
             tts_setup_snippet=tts_setup_snippet,
         )
 
+    async def _enrich_system_prompt_with_live_docs(
+        self,
+        plan: VisualizationPlan,
+    ) -> str:
+        """
+        Fetch live Manim docs via Dedalus SDK + Context7 MCP as the PRIMARY
+        documentation source, with static manim_reference.md as fallback only.
+
+        This is the key integration point for the Dedalus "Best use of
+        tool calling" hackathon track:
+        - Official Dedalus SDK (AsyncDedalus + DedalusRunner)
+        - Context7 MCP via mcp_servers=["tsion/context7"]
+        - Local tool functions combined with MCP servers
+        - Static docs used ONLY when all live sources fail
+        """
+        # Build a topic query based on the visualization plan
+        viz_type = plan.visualization_type.value if hasattr(plan.visualization_type, "value") else str(plan.visualization_type)
+        topic_parts = [
+            "manim",
+            viz_type,
+            plan.concept_name,
+        ]
+        # Add scene-specific topics
+        if viz_type in ("three_d", "3d"):
+            topic_parts.extend(["ThreeDScene", "camera", "3D objects"])
+        elif viz_type in ("equation", "matrix"):
+            topic_parts.extend(["MathTex", "Matrix", "equations"])
+        elif viz_type in ("architecture", "data_flow"):
+            topic_parts.extend(["VGroup", "Arrow", "RoundedRectangle", "arrange"])
+        else:
+            topic_parts.extend(["Scene", "animations", "Create", "FadeIn"])
+
+        topic = " ".join(topic_parts)
+
+        try:
+            live_docs = await get_manim_docs(topic=topic, max_tokens=5000, use_dedalus=True)
+            if live_docs and len(live_docs) > 100:
+                logger.info(
+                    "  Enriched prompt with %d chars of live Manim docs "
+                    "(Dedalus SDK + Context7 MCP)",
+                    len(live_docs),
+                )
+                # Merge original system prompt with live docs
+                # Keep the base system prompt's instructions and add live docs as primary reference
+                return (
+                    self.system_prompt
+                    + "\n\n"
+                    + "=" * 80
+                    + "\n"
+                    + "# LIVE MANIM API REFERENCE (Context7 MCP + Dedalus SDK)\n"
+                    + "=" * 80
+                    + "\n\n"
+                    + "The following documentation was fetched in real-time from "
+                    + "Context7 using the Dedalus MCP gateway. Use these references "
+                    + "as the PRIMARY and authoritative source for Manim APIs.\n\n"
+                    + live_docs
+                )
+        except Exception as exc:
+            logger.warning("  Live doc fetch failed (%s), falling back to static docs", exc)
+
+        # Fallback: static manim_reference.md (only used when live sources fail)
+        logger.info("  Using static manim_reference.md as fallback")
+        return self.system_prompt
+
     async def run(
         self,
         plan: VisualizationPlan,
@@ -213,7 +289,14 @@ class ManimGenerator(BaseAgent):
         narration_style: str = "concept_teacher",
         target_duration_seconds: tuple[int, int] = (30, 45),
     ) -> GeneratedCode:
-        """Generate Manim code from a plan, optionally with built-in voiceovers."""
+        """Generate Manim code from a plan, optionally with built-in voiceovers.
+
+        Uses the Dedalus SDK + Context7 MCP as the primary documentation source.
+        Static docs are only used as a last-resort fallback.
+        """
+        # Fetch live Manim docs via Dedalus + Context7 before generating
+        enriched_system_prompt = await self._enrich_system_prompt_with_live_docs(plan)
+
         prompt = self._build_prompt(
             plan=plan,
             voiceover_enabled=voiceover_enabled,
@@ -226,7 +309,7 @@ class ManimGenerator(BaseAgent):
         response = self.client.messages.create(
             model=self.model,
             max_tokens=self.max_tokens,
-            system=self.system_prompt,
+            system=enriched_system_prompt,
             messages=[{"role": "user", "content": prompt}],
         )
 
@@ -256,7 +339,13 @@ class ManimGenerator(BaseAgent):
         narration_style: str = "concept_teacher",
         target_duration_seconds: tuple[int, int] = (30, 45),
     ) -> GeneratedCode:
-        """Regenerate code with feedback from previous failures."""
+        """Regenerate code with feedback from previous failures.
+
+        Also uses Dedalus SDK + Context7 MCP for live documentation.
+        """
+        # Fetch live docs for the feedback loop too
+        enriched_system_prompt = await self._enrich_system_prompt_with_live_docs(plan)
+
         base_prompt = self._build_prompt(
             plan=plan,
             voiceover_enabled=voiceover_enabled,
@@ -289,7 +378,7 @@ The previous code had issues. Fix them and regenerate complete code.
         response = self.client.messages.create(
             model=self.model,
             max_tokens=self.max_tokens,
-            system=self.system_prompt,
+            system=enriched_system_prompt,
             messages=[{"role": "user", "content": prompt}],
         )
 

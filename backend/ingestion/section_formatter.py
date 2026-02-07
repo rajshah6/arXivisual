@@ -8,11 +8,18 @@ summaries using OpenAI's API. Runs after section_extractor in the pipeline.
 import asyncio
 import logging
 import os
+from pathlib import Path
 from typing import Optional
 
+from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
 from models.paper import Section, ArxivPaperMeta
+
+# Load .env so MARTIAN_API_KEY is available when called from any entry point
+_env_path = Path(__file__).parent.parent / ".env"
+if _env_path.exists():
+    load_dotenv(_env_path)
 
 logger = logging.getLogger(__name__)
 

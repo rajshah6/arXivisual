@@ -99,14 +99,16 @@ export const MOCK_STATUS: ProcessingStatus = {
 // ── GPT-3 Demo Paper ─────────────────────────────────────────────────
 
 export const GPT3_PAPER_ID = "2005.14165";
+export const GPT4_PAPER_ID = "2303.08774";
 
 /** All demo paper IDs that have hardcoded data */
-export const DEMO_PAPER_IDS = new Set([DEMO_PAPER_ID, GPT3_PAPER_ID]);
+export const DEMO_PAPER_IDS = new Set([DEMO_PAPER_ID, GPT3_PAPER_ID, GPT4_PAPER_ID]);
 
 /** Returns the hardcoded Paper for a demo ID, or null if not a demo paper. */
 export function getDemoPaper(arxivId: string): Paper | null {
   if (arxivId === DEMO_PAPER_ID) return { ...MOCK_PAPER };
   if (arxivId === GPT3_PAPER_ID) return { ...GPT3_MOCK_PAPER };
+  if (arxivId === GPT4_PAPER_ID) return { ...GPT4_MOCK_PAPER };
   return null;
 }
 
@@ -201,6 +203,76 @@ export const GPT3_MOCK_PAPER: Paper = {
       equations: [],
       video_url:
         "/videos/demo/training_data_mixture_and_weighted_sampling.mp4",
+    },
+  ],
+};
+
+// ── GPT-4 Demo Paper ─────────────────────────────────────────────────
+
+export const GPT4_MOCK_PAPER: Paper = {
+  paper_id: GPT4_PAPER_ID,
+  title: "GPT-4 Technical Report",
+  authors: [
+    "OpenAI",
+    "Josh Achiam",
+    "Steven Adler",
+    "Sandhini Agarwal",
+    "Lama Ahmad",
+    "Ilge Akkaya",
+    "Florencia Leoni Aleman",
+    "Diogo Almeida",
+    "Janko Altenschmidt",
+    "Sam Altman",
+    "Shyamal Anadkat",
+    "Red Avila",
+    "Igor Babuschkin",
+    "Suchir Balaji",
+  ],
+  abstract:
+    "We report the development of GPT-4, a large-scale, multimodal model which can accept image and text inputs and produce text outputs. While less capable than humans in many real-world scenarios, GPT-4 exhibits human-level performance on various professional and academic benchmarks, including passing a simulated bar exam with a score around the top 10% of test takers. GPT-4 is a Transformer-based model pre-trained to predict the next token in a document, using both publicly available data and data licensed from third-party providers.",
+  pdf_url: "https://arxiv.org/pdf/2303.08774.pdf",
+  html_url: "https://arxiv.org/abs/2303.08774",
+  sections: [
+    {
+      id: "gpt4-section-1",
+      title: "Unidirectional vs Bidirectional Context",
+      content:
+        'GPT-4, like its predecessors, uses a **unidirectional** (left-to-right) architecture \u2014 it reads text from beginning to end and predicts the next token based only on what came before. This contrasts with **bidirectional** models like BERT, which look at surrounding context in both directions.\n\nWhy does this matter? Unidirectional processing makes GPT-4 a natural *generator* \u2014 it can produce coherent text, code, and reasoning step by step. Bidirectional models are better at *understanding* existing text but struggle with open-ended generation.\n\n**Key takeaway:** GPT-4\u2019s left-to-right design is what makes it a powerful text generator \u2014 each token is produced by attending only to prior context, enabling fluent autoregressive output.',
+      level: 1,
+      order_index: 0,
+      equations: [],
+      video_url: "/videos/demo/unidirectional_vs_bidirectional_context.mp4",
+    },
+    {
+      id: "gpt4-section-2",
+      title: "In-Context Learning vs Fine-Tuning",
+      content:
+        'GPT-4 pushes **in-context learning** further than GPT-3 by accepting both text and image inputs, opening up entirely new task categories without any fine-tuning. You can show it a photo of a diagram and ask questions about it \u2014 all within a single prompt.\n\nWith context windows up to 32k tokens, GPT-4 can absorb far more demonstration examples and reference material than its predecessors. This longer context means richer in-context learning \u2014 effectively giving the model a larger "working memory" for each task.\n\n**Key takeaway:** GPT-4\u2019s multimodal inputs and extended context window make in-context learning more versatile and powerful, reducing the need for fine-tuning even further.',
+      level: 1,
+      order_index: 1,
+      equations: [],
+      video_url: "/videos/demo/gpt4_in_context_learning_vs_fine_tuning.mp4",
+    },
+    {
+      id: "gpt4-section-3",
+      title: "Few-Shot vs Fine-Tuning Performance",
+      content:
+        "GPT-4\u2019s few-shot capabilities crossed a remarkable threshold: on many professional benchmarks, it **matched or exceeded fine-tuned specialist models** without any task-specific training. It scored in the top 10% on the simulated bar exam and achieved high marks on the SAT, GRE, and AP exams.\n\nThis was a turning point \u2014 previous models could do well on narrow NLP benchmarks, but GPT-4 demonstrated broad competence across domains from law to biology to mathematics, all using the same frozen model weights with only prompt-based guidance.\n\n**Key takeaway:** GPT-4 demonstrated that a single general-purpose model with few-shot prompting can rival fine-tuned specialists across a wide range of professional and academic tasks.",
+      level: 1,
+      order_index: 2,
+      equations: [],
+      video_url:
+        "/videos/demo/in_context_learning_few_shot_vs_fine_tuning.mp4",
+    },
+    {
+      id: "gpt4-section-4",
+      title: "Scaling Laws for Few-Shot Learning",
+      content:
+        'A breakthrough in the GPT-4 project was **predictable scaling**: the team accurately forecast GPT-4\u2019s final performance using only small-scale training runs. By fitting a scaling law to models 1,000\u201310,000x smaller, they could predict the loss on the full model:\n\n$$L(C) = aC^{-\\alpha} + b$$\n\nwhere $L$ is the loss, $C$ is the compute budget, and $a$, $\\alpha$, $b$ are fitted constants. This meant the team could estimate GPT-4\u2019s capabilities *before* spending millions on training.\n\n**Key takeaway:** Predictable scaling laws $L(C) = aC^{-\\alpha} + b$ let researchers forecast model performance from small experiments \u2014 transforming AI development from guesswork into engineering.',
+      level: 1,
+      order_index: 3,
+      equations: ["L(C) = aC^{-\\alpha} + b"],
+      video_url: "/videos/demo/scaling_laws_for_few_shot_learning.mp4",
     },
   ],
 };

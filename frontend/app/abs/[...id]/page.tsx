@@ -9,7 +9,7 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { MosaicBackground } from "@/components/ui/mosaic-background";
 import { ShardField } from "@/components/ui/glass-shard";
 import type { Paper, ProcessingStatus } from "@/lib/types";
-import { DEMO_PAPER_IDS } from "@/lib/mock-data";
+import { DEMO_PAPER_IDS, getDemoPaper } from "@/lib/mock-data";
 import {
   getPaper,
   processArxivPaper,
@@ -87,6 +87,8 @@ export default function PaperPage({
 
     // Demo paper: run simulated 5-second processing
     if (DEMO_PAPER_IDS.has(arxivId)) {
+      const demoData = getDemoPaper(arxivId);
+      const sectionCount = demoData?.sections.length ?? 5;
       demoSimRunning.current = true;
       setState({
         type: "processing",
@@ -95,7 +97,7 @@ export default function PaperPage({
           status: "processing",
           progress: 0,
           sections_completed: 0,
-          sections_total: 5,
+          sections_total: sectionCount,
           current_step: DEMO_STEPS[0].label,
         },
       });
@@ -148,6 +150,7 @@ export default function PaperPage({
   useEffect(() => {
     if (state.type !== "processing" || !demoSimRunning.current) return;
 
+    const totalSections = state.status.sections_total;
     const startTime = Date.now();
     const timer = setInterval(async () => {
       const elapsed = Date.now() - startTime;
@@ -168,8 +171,8 @@ export default function PaperPage({
             job_id: "demo",
             status: "processing",
             progress: 1,
-            sections_completed: 5,
-            sections_total: 5,
+            sections_completed: totalSections,
+            sections_total: totalSections,
             current_step: "Complete",
           },
         });
@@ -189,8 +192,8 @@ export default function PaperPage({
           job_id: "demo",
           status: "processing",
           progress,
-          sections_completed: Math.floor(progress * 5),
-          sections_total: 5,
+          sections_completed: Math.floor(progress * totalSections),
+          sections_total: totalSections,
           current_step: currentStep,
         },
       });

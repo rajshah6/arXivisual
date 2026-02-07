@@ -29,7 +29,7 @@ export function PaperHeader({
   return (
     <header className={`space-y-4 ${className}`}>
       {/* Title */}
-      <h1 className="text-balance text-2xl font-semibold tracking-tight text-white sm:text-3xl lg:text-4xl">
+      <h1 className="text-balance text-2xl font-semibold tracking-tight text-white/90 sm:text-3xl lg:text-4xl">
         {paper.title}
       </h1>
 
@@ -38,7 +38,7 @@ export function PaperHeader({
         {paper.authors.map((author, i) => (
           <span
             key={i}
-            className="rounded-full bg-white/5 px-3 py-1 text-sm text-white/70 ring-1 ring-white/10"
+            className="rounded-full bg-white/[0.04] px-3 py-1 text-sm text-white/55 border border-white/[0.06]"
           >
             {author}
           </span>
@@ -47,14 +47,14 @@ export function PaperHeader({
 
       {/* Paper ID and links */}
       <div className="flex flex-wrap items-center gap-3 text-sm">
-        <span className="rounded-lg bg-white/5 px-3 py-1.5 font-mono text-white/60 ring-1 ring-white/10">
+        <span className="rounded-lg bg-white/[0.04] px-3 py-1.5 font-mono text-white/50 border border-white/[0.06]">
           arXiv:{paper.paper_id}
         </span>
         <a
           href={arxivUrl}
           target="_blank"
           rel="noreferrer"
-          className="rounded-lg bg-white/5 px-3 py-1.5 text-white/70 ring-1 ring-white/10 transition hover:bg-white/10 hover:text-white"
+          className="rounded-lg bg-white/[0.04] px-3 py-1.5 text-white/55 border border-white/[0.06] transition hover:bg-white/[0.07] hover:text-white/80 hover:border-white/[0.12]"
         >
           View on arXiv
         </a>
@@ -62,7 +62,7 @@ export function PaperHeader({
           href={pdfUrl}
           target="_blank"
           rel="noreferrer"
-          className="rounded-lg bg-white/5 px-3 py-1.5 text-white/70 ring-1 ring-white/10 transition hover:bg-white/10 hover:text-white"
+          className="rounded-lg bg-white/[0.04] px-3 py-1.5 text-white/55 border border-white/[0.06] transition hover:bg-white/[0.07] hover:text-white/80 hover:border-white/[0.12]"
         >
           Download PDF
         </a>
@@ -71,7 +71,7 @@ export function PaperHeader({
             href={paper.html_url}
             target="_blank"
             rel="noreferrer"
-            className="rounded-lg bg-white/5 px-3 py-1.5 text-white/70 ring-1 ring-white/10 transition hover:bg-white/10 hover:text-white"
+            className="rounded-lg bg-white/[0.04] px-3 py-1.5 text-white/55 border border-white/[0.06] transition hover:bg-white/[0.07] hover:text-white/80 hover:border-white/[0.12]"
           >
             HTML Version
           </a>
@@ -80,11 +80,11 @@ export function PaperHeader({
 
       {/* Abstract */}
       {showAbstract && paper.abstract && (
-        <div className="rounded-xl bg-white/5 p-5 ring-1 ring-white/10">
-          <div className="mb-2 text-xs font-medium uppercase tracking-wide text-white/50">
+        <div className="rounded-xl bg-white/[0.04] p-5 border border-white/[0.06]">
+          <div className="mb-2 text-xs font-medium uppercase tracking-wide text-white/30">
             Abstract
           </div>
-          <p className="text-sm leading-7 text-white/75 sm:text-base">
+          <p className="text-sm leading-7 text-white/55 sm:text-base">
             {displayAbstract}
           </p>
         </div>
@@ -112,17 +112,17 @@ export function CompactPaperHeader({
   return (
     <Wrapper
       onClick={onClick}
-      className={`w-full text-left rounded-xl bg-white/5 p-4 ring-1 ring-white/10 transition ${
-        onClick ? "hover:bg-white/10 cursor-pointer" : ""
+      className={`w-full text-left rounded-xl bg-white/[0.04] p-4 border border-white/[0.06] transition ${
+        onClick ? "hover:bg-white/[0.07] hover:border-white/[0.12] cursor-pointer" : ""
       } ${className}`}
     >
-      <div className="text-xs text-white/50 font-mono">
+      <div className="text-xs text-white/30 font-mono">
         arXiv:{paper.paper_id}
       </div>
-      <h3 className="mt-1 text-sm font-medium text-white/90 line-clamp-2">
+      <h3 className="mt-1 text-sm font-medium text-white/80 line-clamp-2">
         {paper.title}
       </h3>
-      <div className="mt-2 text-xs text-white/60 line-clamp-1">
+      <div className="mt-2 text-xs text-white/40 line-clamp-1">
         {paper.authors.slice(0, 3).join(", ")}
         {paper.authors.length > 3 && ` +${paper.authors.length - 3} more`}
       </div>
@@ -148,17 +148,17 @@ export function PaperStats({ paper, className = "" }: PaperStatsProps) {
 
   return (
     <div className={`flex flex-wrap gap-4 ${className}`}>
-      <div className="rounded-lg bg-white/5 px-3 py-2 ring-1 ring-white/10">
-        <div className="text-lg font-semibold text-white">{sectionCount}</div>
-        <div className="text-xs text-white/60">Sections</div>
+      <div className="rounded-lg bg-white/[0.04] px-3 py-2 border border-white/[0.06]">
+        <div className="text-lg font-semibold text-white/90">{sectionCount}</div>
+        <div className="text-xs text-white/40">Sections</div>
       </div>
-      <div className="rounded-lg bg-white/5 px-3 py-2 ring-1 ring-white/10">
-        <div className="text-lg font-semibold text-white">{equationCount}</div>
-        <div className="text-xs text-white/60">Equations</div>
+      <div className="rounded-lg bg-white/[0.04] px-3 py-2 border border-white/[0.06]">
+        <div className="text-lg font-semibold text-white/90">{equationCount}</div>
+        <div className="text-xs text-white/40">Equations</div>
       </div>
-      <div className="rounded-lg bg-white/5 px-3 py-2 ring-1 ring-white/10">
-        <div className="text-lg font-semibold text-blue-400">{videoCount}</div>
-        <div className="text-xs text-white/60">Visualizations</div>
+      <div className="rounded-lg bg-white/[0.04] px-3 py-2 border border-white/[0.06]">
+        <div className="text-lg font-semibold text-white/90">{videoCount}</div>
+        <div className="text-xs text-white/40">Visualizations</div>
       </div>
     </div>
   );

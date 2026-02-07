@@ -58,26 +58,26 @@ export function ScrollyReader({
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.5 }}
-            className="rounded-2xl bg-white/[0.04] p-6 ring-1 ring-white/10 backdrop-blur-sm"
+            className="rounded-2xl bg-white/[0.04] p-6 border border-white/[0.08] backdrop-blur-xl"
           >
             <div className="flex items-center justify-between">
-              <div className="text-sm font-semibold text-white">Outline</div>
-              <div className="text-xs text-white/40">
+              <div className="text-sm font-semibold text-white/80">Outline</div>
+              <div className="text-xs text-white/30">
                 {activeIndex + 1} / {items.length}
               </div>
             </div>
 
             {/* Progress bar */}
-            <div className="mt-4 h-1 rounded-full bg-white/10 overflow-hidden">
+            <div className="mt-4 h-1 rounded-full bg-white/[0.05] overflow-hidden">
               <motion.div
-                className="h-full rounded-full bg-gradient-to-r from-blue-500 to-violet-500"
+                className="h-full rounded-full bg-gradient-to-r from-white/40 to-white/20"
                 initial={{ width: 0 }}
                 animate={{ width: `${progress * 100}%` }}
                 transition={{ duration: 0.3 }}
               />
             </div>
 
-            <p className="mt-4 text-sm leading-6 text-white/50">
+            <p className="mt-4 text-sm leading-6 text-white/35">
               Click to navigate. The active section highlights as you scroll.
             </p>
 
@@ -96,10 +96,10 @@ export function ScrollyReader({
                         whileHover={{ x: 2 }}
                         whileTap={{ scale: 0.98 }}
                         className={cn(
-                          "group w-full rounded-lg px-3 py-2.5 text-left text-sm ring-1 transition-all duration-200",
+                          "group w-full rounded-lg px-3 py-2.5 text-left text-sm border transition-all duration-200",
                           isActive
-                            ? "bg-gradient-to-r from-blue-500/10 to-violet-500/10 text-white ring-white/20"
-                            : "bg-transparent text-white/60 ring-transparent hover:bg-white/[0.04] hover:text-white/80 hover:ring-white/10"
+                            ? "bg-white/[0.08] text-white/90 border-white/[0.15]"
+                            : "bg-transparent text-white/45 border-transparent hover:bg-white/[0.04] hover:text-white/70 hover:border-white/[0.08]"
                         )}
                       >
                         <div className="flex items-center justify-between gap-3">
@@ -108,10 +108,10 @@ export function ScrollyReader({
                           </span>
                           <span
                             className={cn(
-                              "shrink-0 rounded-md px-2 py-0.5 text-[10px] font-medium ring-1 transition-all duration-200",
+                              "shrink-0 rounded-md px-2 py-0.5 text-[10px] font-medium border transition-all duration-200",
                               isActive
-                                ? "bg-blue-500/20 text-blue-300 ring-blue-400/30"
-                                : "bg-white/5 text-white/40 ring-white/10 group-hover:text-white/60"
+                                ? "bg-white/[0.10] text-white/70 border-white/[0.12]"
+                                : "bg-white/[0.03] text-white/30 border-white/[0.06] group-hover:text-white/50"
                             )}
                           >
                             {it.index + 1}
@@ -125,16 +125,16 @@ export function ScrollyReader({
             </nav>
           </motion.div>
 
-          {/* Keyboard shortcuts hint */}
+          {/* Tip */}
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4, delay: 0.2 }}
-            className="mt-4 rounded-xl bg-black/20 p-4 ring-1 ring-white/10"
+            className="mt-4 rounded-xl bg-white/[0.03] p-4 border border-white/[0.06]"
           >
             <div className="flex items-center gap-2">
-              <span className="text-xs font-medium text-white/50">Tip:</span>
-              <span className="text-xs text-white/40">
+              <span className="text-xs font-medium text-white/30">Tip:</span>
+              <span className="text-xs text-white/25">
                 Scroll to navigate through sections
               </span>
             </div>
@@ -160,11 +160,11 @@ export function ScrollyReader({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.5 }}
-          className="mt-10 flex items-center justify-center gap-3 text-sm text-white/40"
+          className="mt-10 flex items-center justify-center gap-3 text-sm text-white/25"
         >
-          <div className="h-px flex-1 bg-gradient-to-r from-transparent to-white/10" />
+          <div className="h-px flex-1 bg-gradient-to-r from-transparent to-white/[0.06]" />
           <span>End of paper</span>
-          <div className="h-px flex-1 bg-gradient-to-l from-transparent to-white/10" />
+          <div className="h-px flex-1 bg-gradient-to-l from-transparent to-white/[0.06]" />
         </motion.div>
       </div>
     </div>

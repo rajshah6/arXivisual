@@ -15,10 +15,6 @@ export type ScrollySectionModel = {
   videoUrl?: string;
 };
 
-/**
- * Merge content and equations into a single markdown string.
- * Equations are intelligently integrated - either inline or as display blocks.
- */
 function mergeContentWithEquations(content: string, equations?: string[]): string {
   if (!equations || equations.length === 0) {
     return content;
@@ -30,12 +26,12 @@ function mergeContentWithEquations(content: string, equations?: string[]): strin
   for (const eq of equations) {
     const normalizedEq = eq.replace(/\s+/g, '');
     const normalizedContent = result.replace(/\s+/g, '');
-    
-    const alreadyPresent = 
+
+    const alreadyPresent =
       normalizedContent.includes(normalizedEq) ||
       normalizedContent.includes(`$${normalizedEq}$`) ||
       normalizedContent.includes(`$$${normalizedEq}$$`);
-    
+
     if (!alreadyPresent) {
       equationsToAppend.push(eq);
     }
@@ -52,7 +48,7 @@ function mergeContentWithEquations(content: string, equations?: string[]): strin
       }
       return `$$${trimmed}$$`;
     }).join('\n\n');
-    
+
     result = `${result}\n\n${equationBlocks}`;
   }
 
@@ -73,7 +69,6 @@ export function ScrollySection({
   const [isActive, setIsActive] = useState(false);
   const activeRef = useRef(false);
 
-  // Mouse position for spotlight effect
   const mouseX = useMotionValue(0);
   const mouseY = useMotionValue(0);
 
@@ -140,10 +135,10 @@ export function ScrollySection({
       transition={{ duration: 0.6, ease: "easeOut" }}
       onMouseMove={handleMouseMove}
       className={cn(
-        "group relative rounded-2xl ring-1 backdrop-blur-sm overflow-hidden scroll-mt-24",
+        "group relative rounded-2xl border backdrop-blur-sm overflow-hidden scroll-mt-24",
         isActive
-          ? "bg-white/[0.08] ring-white/25 shadow-lg shadow-blue-500/5"
-          : "bg-white/[0.04] ring-white/10",
+          ? "bg-white/[0.06] border-white/[0.15]"
+          : "bg-white/[0.03] border-white/[0.06]",
         "transition-all duration-500 ease-out"
       )}
     >
@@ -154,7 +149,7 @@ export function ScrollySection({
           background: useMotionTemplate`
             radial-gradient(
               500px circle at ${mouseX}px ${mouseY}px,
-              ${isActive ? "rgba(59, 130, 246, 0.12)" : "rgba(120, 119, 198, 0.08)"},
+              ${isActive ? "rgba(255, 255, 255, 0.06)" : "rgba(255, 255, 255, 0.04)"},
               transparent 40%
             )
           `,
@@ -163,10 +158,7 @@ export function ScrollySection({
 
       {/* Active indicator bar */}
       <motion.div
-        className={cn(
-          "absolute left-0 top-0 bottom-0 w-1 rounded-l-2xl",
-          "bg-gradient-to-b from-blue-500 to-violet-500"
-        )}
+        className="absolute left-0 top-0 bottom-0 w-1 rounded-l-2xl bg-gradient-to-b from-white/40 to-white/10"
         initial={{ scaleY: 0 }}
         animate={{ scaleY: isActive ? 1 : 0 }}
         transition={{ duration: 0.3 }}
@@ -179,16 +171,16 @@ export function ScrollySection({
           <motion.div
             whileHover={{ scale: 1.1 }}
             className={cn(
-              "mt-1 grid h-10 w-10 shrink-0 place-items-center rounded-xl transition-all duration-300",
+              "mt-1 grid h-10 w-10 shrink-0 place-items-center rounded-xl border transition-all duration-300",
               isActive
-                ? "bg-gradient-to-br from-blue-500/20 to-violet-500/20 ring-1 ring-blue-400/30"
-                : "bg-white/[0.06] ring-1 ring-white/10"
+                ? "bg-white/[0.10] border-white/[0.15]"
+                : "bg-white/[0.04] border-white/[0.06]"
             )}
           >
             <span
               className={cn(
                 "text-sm font-semibold transition-colors duration-300",
-                isActive ? "text-blue-300" : "text-white/60"
+                isActive ? "text-white/80" : "text-white/40"
               )}
             >
               {(index ?? 0) + 1}
@@ -209,11 +201,11 @@ export function ScrollySection({
             </motion.h2>
 
             {/* Section content */}
-            <div className="mt-4 text-sm leading-7 text-white/65 sm:text-base sm:leading-8">
+            <div className="mt-4 text-sm leading-7 text-white/55 sm:text-base sm:leading-8">
               <MarkdownContent content={unifiedContent} />
             </div>
 
-            {/* Video player with enhanced styling */}
+            {/* Video player */}
             {section.videoUrl && (
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
@@ -221,7 +213,7 @@ export function ScrollySection({
                 transition={{ delay: 0.2, duration: 0.4 }}
                 className="mt-6"
               >
-                <div className="rounded-xl overflow-hidden ring-1 ring-white/10 bg-black/30">
+                <div className="rounded-xl overflow-hidden border border-white/[0.06] bg-black/30">
                   <VideoPlayer src={section.videoUrl} title="Visualization" />
                 </div>
               </motion.div>
@@ -231,7 +223,7 @@ export function ScrollySection({
       </div>
 
       {/* Bottom gradient for depth */}
-      <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+      <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-white/[0.06] to-transparent" />
     </motion.section>
   );
 }

@@ -178,8 +178,8 @@ export function PlaceholdersAndVanishInput({
   return (
     <form
       className={cn(
-        "w-full relative max-w-xl mx-auto bg-[#141421] h-14 rounded-xl overflow-hidden shadow-[0px_2px_3px_-1px_rgba(0,0,0,0.1),_0px_1px_0px_0px_rgba(25,28,33,0.02),_0px_0px_0px_1px_rgba(25,28,33,0.08)] transition duration-200 ring-1 ring-[#58c4dd]/20",
-        value && "ring-[#58c4dd]/40 shadow-[0_0_20px_rgba(88,196,221,0.1)]"
+        "w-full relative max-w-xl mx-auto bg-white/[0.04] h-14 rounded-xl overflow-hidden transition duration-200 border border-white/[0.08] backdrop-blur-sm",
+        value && "border-white/[0.14] shadow-[0_0_20px_rgba(255,255,255,0.03)]"
       )}
       onSubmit={handleSubmit}
     >
@@ -197,7 +197,7 @@ export function PlaceholdersAndVanishInput({
         type="text"
         disabled={inputDisabled}
         className={cn(
-          "w-full relative text-sm sm:text-base z-50 border-none bg-transparent text-[#f4f1eb] h-full rounded-xl focus:outline-none focus:ring-0 pl-4 sm:pl-6 pr-24 font-mono",
+          "w-full relative text-sm sm:text-base z-50 border-none bg-transparent text-white/90 h-full rounded-xl focus:outline-none focus:ring-0 pl-4 sm:pl-6 pr-24 font-mono",
           animating && "text-transparent"
         )}
       />
@@ -205,7 +205,7 @@ export function PlaceholdersAndVanishInput({
       <button
         disabled={!value || disabled}
         type="submit"
-        className="absolute right-2 top-1/2 z-50 -translate-y-1/2 h-10 w-10 rounded-lg disabled:bg-white/5 bg-gradient-to-r from-[#58c4dd] to-[#cd8b62] transition duration-200 flex items-center justify-center hover:shadow-[0_0_15px_rgba(88,196,221,0.3)]"
+        className="absolute right-2 top-1/2 z-50 -translate-y-1/2 h-10 w-10 rounded-lg disabled:bg-white/[0.03] bg-white/[0.10] border border-white/[0.12] transition duration-200 flex items-center justify-center hover:bg-white/[0.15] hover:border-white/[0.20]"
       >
         <motion.svg
           xmlns="http://www.w3.org/2000/svg"
@@ -217,7 +217,7 @@ export function PlaceholdersAndVanishInput({
           strokeWidth="2"
           strokeLinecap="round"
           strokeLinejoin="round"
-          className="text-[#1c1c2e] h-5 w-5"
+          className="text-white/70 h-5 w-5"
         >
           <path stroke="none" d="M0 0h24v24H0z" fill="none" />
           <motion.path
@@ -240,7 +240,7 @@ export function PlaceholdersAndVanishInput({
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: -15, opacity: 0 }}
               transition={{ duration: 0.3, ease: "linear" }}
-              className="text-[#f4f1eb]/30 text-sm sm:text-base font-normal pl-4 sm:pl-6 text-left w-[calc(100%-2rem)] truncate"
+              className="text-white/20 text-sm sm:text-base font-normal pl-4 sm:pl-6 text-left w-[calc(100%-2rem)] truncate"
             >
               {placeholders[currentPlaceholder]}
             </motion.p>

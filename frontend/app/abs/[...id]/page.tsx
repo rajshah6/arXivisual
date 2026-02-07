@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useEffect, useState, useCallback, use } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { SectionViewer, type SectionModel } from "@/components/SectionViewer";
-import { HoverEffect } from "@/components/ui/card-hover-effect";
+import { GlassCard } from "@/components/ui/glass-card";
+import { MosaicBackground } from "@/components/ui/mosaic-background";
+import { ShardField } from "@/components/ui/glass-shard";
 import type { Paper, ProcessingStatus } from "@/lib/types";
 import {
   getPaper,
@@ -30,7 +32,6 @@ type PageState =
   | { type: "ready"; paper: Paper }
   | { type: "error"; message: string };
 
-// Helper to clamp heading levels
 function clampLevel(level: number): 1 | 2 | 3 {
   if (level <= 1) return 1;
   if (level === 2) return 2;
@@ -51,7 +52,6 @@ export default function PaperPage({
   const [jobId, setJobId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"overview" | "reader">("overview");
 
-  // Fetch the paper or start processing
   const loadPaper = useCallback(async () => {
     if (!arxivId) {
       setState({ type: "error", message: "No arXiv ID provided" });
@@ -74,7 +74,6 @@ export default function PaperPage({
     }
   }, [arxivId]);
 
-  // Start processing the paper
   const startProcessing = useCallback(async () => {
     if (!arxivId) return;
 
@@ -101,7 +100,6 @@ export default function PaperPage({
     }
   }, [arxivId]);
 
-  // Poll for processing status
   useEffect(() => {
     if (state.type !== "processing" || !jobId) return;
 
@@ -135,19 +133,14 @@ export default function PaperPage({
     return () => clearInterval(pollInterval);
   }, [state.type, jobId, arxivId]);
 
-  // Initial load
   useEffect(() => {
     loadPaper();
   }, [loadPaper]);
 
   return (
-    <main className="min-h-dvh relative overflow-hidden bg-[#1c1c2e]">
-      {/* Grid background */}
-      <div className="absolute inset-0 grid-3b1b" />
-      
-      {/* Gradient orbs */}
-      <div className="absolute top-0 left-1/4 w-[500px] h-[500px] bg-[#58c4dd]/5 rounded-full blur-[120px] pointer-events-none" />
-      <div className="absolute bottom-0 right-1/4 w-[400px] h-[400px] bg-[#cd8b62]/5 rounded-full blur-[100px] pointer-events-none" />
+    <main className="min-h-dvh relative overflow-hidden bg-black">
+      <MosaicBackground />
+      <ShardField />
 
       <div className="relative z-10">
         {/* Fixed Header */}
@@ -155,27 +148,27 @@ export default function PaperPage({
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          className="sticky top-0 z-40 bg-[#1c1c2e]/80 backdrop-blur-2xl border-b border-[#58c4dd]/10"
+          className="sticky top-0 z-40 bg-black/80 backdrop-blur-2xl border-b border-white/[0.06]"
         >
           <div className="mx-auto w-full max-w-7xl px-6 py-4">
             <div className="flex items-center justify-between gap-4">
               <Link
                 href="/"
-                className="group inline-flex items-center gap-2 rounded-xl bg-[#58c4dd]/5 px-4 py-2.5 text-sm text-[#f4f1eb]/80 ring-1 ring-[#58c4dd]/20 transition-all hover:bg-[#58c4dd]/10 hover:ring-[#58c4dd]/30"
+                className="group inline-flex items-center gap-2 rounded-xl bg-white/[0.04] px-4 py-2.5 text-sm text-white/60 border border-white/[0.08] transition-all hover:bg-white/[0.07] hover:border-white/[0.12]"
               >
                 <motion.span
                   aria-hidden
-                  className="transition-transform group-hover:-translate-x-1 text-[#58c4dd]"
+                  className="transition-transform group-hover:-translate-x-1 text-white/50"
                 >
-                  ←
+                  &larr;
                 </motion.span>
                 Back
               </Link>
 
               <div className="flex-1 flex items-center justify-center">
-                <div className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#58c4dd]/5 ring-1 ring-[#58c4dd]/20">
-                  <div className="w-2 h-2 rounded-full bg-[#83c167] animate-pulse" />
-                  <span className="text-sm font-mono text-[#f4f1eb]/70">{arxivId || "Loading..."}</span>
+                <div className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/[0.04] border border-white/[0.08]">
+                  <div className="w-2 h-2 rounded-full bg-white/30 animate-pulse" />
+                  <span className="text-sm font-mono text-white/50">{arxivId || "Loading..."}</span>
                 </div>
               </div>
 
@@ -186,7 +179,7 @@ export default function PaperPage({
                   href={absUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="rounded-xl bg-[#58c4dd]/5 px-4 py-2.5 text-sm text-[#f4f1eb]/80 ring-1 ring-[#58c4dd]/20 transition hover:bg-[#58c4dd]/10"
+                  className="rounded-xl bg-white/[0.04] px-4 py-2.5 text-sm text-white/60 border border-white/[0.08] transition hover:bg-white/[0.07]"
                 >
                   arXiv
                 </motion.a>
@@ -196,7 +189,7 @@ export default function PaperPage({
                   href={pdfUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="rounded-xl bg-gradient-to-r from-[#58c4dd]/20 to-[#cd8b62]/20 px-4 py-2.5 text-sm text-[#f4f1eb]/80 ring-1 ring-[#58c4dd]/30 transition hover:from-[#58c4dd]/30 hover:to-[#cd8b62]/30"
+                  className="rounded-xl bg-white/[0.06] px-4 py-2.5 text-sm text-white/60 border border-white/[0.10] transition hover:bg-white/[0.09]"
                 >
                   PDF
                 </motion.a>
@@ -242,7 +235,7 @@ export default function PaperPage({
   );
 }
 
-// === Overview Mode - Beautiful landing for the paper ===
+// === Overview Mode ===
 function OverviewMode({
   paper,
   onStartReading,
@@ -260,23 +253,17 @@ function OverviewMode({
     {
       title: "Sections",
       description: `${paper.sections.length} sections to explore`,
-      icon: (
-        <span className="text-2xl text-[#58c4dd]">§</span>
-      ),
+      icon: <span className="text-2xl text-white/50">&sect;</span>,
     },
     {
       title: "Visualizations",
       description: `${sectionsWithVideo.length} animated explanations`,
-      icon: (
-        <span className="text-2xl text-[#cd8b62]">▶</span>
-      ),
+      icon: <span className="text-2xl text-white/50">&#9654;</span>,
     },
     {
       title: "Equations",
       description: `${totalEquations} mathematical expressions`,
-      icon: (
-        <span className="text-2xl text-[#f9c74f]">∑</span>
-      ),
+      icon: <span className="text-2xl text-white/50">&sum;</span>,
     },
   ];
 
@@ -296,16 +283,16 @@ function OverviewMode({
           transition={{ delay: 0.1 }}
           className="text-center space-y-6"
         >
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-[#58c4dd]/10 to-[#cd8b62]/10 ring-1 ring-[#58c4dd]/20">
-            <span className="w-2 h-2 rounded-full bg-[#58c4dd]" />
-            <span className="text-sm text-[#f4f1eb]/70">Research Paper</span>
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/[0.04] border border-white/[0.08]">
+            <span className="w-2 h-2 rounded-full bg-white/30" />
+            <span className="text-sm text-white/50">Research Paper</span>
           </div>
 
-          <h1 className="text-3xl sm:text-4xl lg:text-5xl font-medium text-[#f4f1eb] leading-tight tracking-tight max-w-4xl mx-auto">
+          <h1 className="text-3xl sm:text-4xl lg:text-5xl font-medium text-white/90 leading-tight tracking-tight max-w-4xl mx-auto">
             {paper.title}
           </h1>
 
-          <p className="text-[#f4f1eb]/50 max-w-2xl mx-auto">
+          <p className="text-white/40 max-w-2xl mx-auto">
             {paper.authors.join(", ")}
           </p>
 
@@ -313,7 +300,7 @@ function OverviewMode({
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
             onClick={onStartReading}
-            className="mt-4 inline-flex items-center gap-3 px-8 py-4 rounded-2xl bg-gradient-to-r from-[#58c4dd] to-[#cd8b62] text-[#1c1c2e] font-semibold shadow-xl shadow-[#58c4dd]/25 ring-1 ring-white/20 transition hover:shadow-[#58c4dd]/40"
+            className="mt-4 inline-flex items-center gap-3 px-8 py-4 rounded-2xl bg-white/[0.08] hover:bg-white/[0.12] text-white font-medium border border-white/[0.15] hover:border-white/[0.25] backdrop-blur-xl shadow-xl shadow-white/[0.03] transition-all duration-300"
           >
             Start Reading
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -327,37 +314,45 @@ function OverviewMode({
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
+          className="grid grid-cols-1 md:grid-cols-3 gap-4"
         >
-          <HoverEffect items={stats} />
+          {stats.map((stat, i) => (
+            <GlassCard key={i} delay={0.2 + i * 0.1} className="p-6">
+              <div className="flex items-start gap-4">
+                <div className="h-10 w-10 rounded-xl bg-white/[0.06] border border-white/[0.08] flex items-center justify-center">
+                  {stat.icon}
+                </div>
+                <div>
+                  <h4 className="text-white/90 font-medium">{stat.title}</h4>
+                  <p className="mt-1 text-sm text-white/40">{stat.description}</p>
+                </div>
+              </div>
+            </GlassCard>
+          ))}
         </motion.div>
 
         {/* Abstract section */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
-          className="rounded-3xl bg-gradient-to-br from-[#58c4dd]/5 to-[#cd8b62]/5 p-8 ring-1 ring-[#58c4dd]/10"
-        >
-          <h2 className="text-lg font-semibold text-[#f4f1eb] mb-4 flex items-center gap-3">
-            <span className="w-8 h-8 rounded-lg bg-[#58c4dd]/20 flex items-center justify-center text-[#58c4dd]">
-              ∴
+        <GlassCard delay={0.3} className="p-8">
+          <h2 className="text-lg font-medium text-white/80 mb-4 flex items-center gap-3">
+            <span className="w-8 h-8 rounded-lg bg-white/[0.06] border border-white/[0.08] flex items-center justify-center text-white/40">
+              &there4;
             </span>
             Abstract
           </h2>
-          <p className="text-[#f4f1eb]/60 leading-relaxed text-lg">
+          <p className="text-white/50 leading-relaxed text-lg">
             {paper.abstract}
           </p>
-        </motion.div>
+        </GlassCard>
 
-        {/* Table of contents preview */}
+        {/* Table of contents */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.4 }}
         >
-          <h2 className="text-lg font-semibold text-[#f4f1eb] mb-6 flex items-center gap-3">
-            <span className="w-8 h-8 rounded-lg bg-[#cd8b62]/20 flex items-center justify-center text-[#cd8b62]">
-              ≡
+          <h2 className="text-lg font-medium text-white/80 mb-6 flex items-center gap-3">
+            <span className="w-8 h-8 rounded-lg bg-white/[0.06] border border-white/[0.08] flex items-center justify-center text-white/40">
+              &equiv;
             </span>
             Table of Contents
           </h2>
@@ -372,19 +367,19 @@ function OverviewMode({
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.4 + idx * 0.05 }}
                   onClick={onStartReading}
-                  className="group relative text-left p-4 rounded-xl bg-[#141421] ring-1 ring-[#58c4dd]/10 hover:ring-[#58c4dd]/30 hover:bg-[#58c4dd]/5 transition-all duration-200"
+                  className="group relative text-left p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:border-white/[0.12] hover:bg-white/[0.05] transition-all duration-200"
                 >
                   <div className="flex items-start gap-3">
-                    <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#58c4dd]/20 to-[#cd8b62]/20 flex items-center justify-center text-sm font-semibold text-[#f4f1eb]/70 ring-1 ring-[#58c4dd]/20 shrink-0">
+                    <span className="w-7 h-7 rounded-lg bg-white/[0.06] border border-white/[0.08] flex items-center justify-center text-sm font-semibold text-white/50 shrink-0">
                       {idx + 1}
                     </span>
                     <div className="min-w-0">
-                      <h3 className="font-medium text-[#f4f1eb]/80 group-hover:text-[#f4f1eb] transition-colors truncate">
+                      <h3 className="font-medium text-white/60 group-hover:text-white/80 transition-colors truncate">
                         {section.title}
                       </h3>
-                      <div className="mt-1 flex items-center gap-2 text-xs text-[#f4f1eb]/40">
+                      <div className="mt-1 flex items-center gap-2 text-xs text-white/25">
                         {section.video_url && (
-                          <span className="flex items-center gap-1 text-[#58c4dd]">
+                          <span className="flex items-center gap-1 text-white/40">
                             <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
                               <path d="M8 5v14l11-7z" />
                             </svg>
@@ -409,28 +404,30 @@ function OverviewMode({
           transition={{ delay: 0.5 }}
           className="text-center py-8"
         >
-          <div className="inline-flex flex-col items-center gap-4 p-8 rounded-3xl bg-gradient-to-br from-[#58c4dd]/10 to-[#cd8b62]/10 ring-1 ring-[#58c4dd]/20">
-            <div className="text-5xl">π</div>
-            <h3 className="text-xl font-semibold text-[#f4f1eb]">Ready to dive in?</h3>
-            <p className="text-[#f4f1eb]/50 max-w-md">
+          <GlassCard className="inline-flex flex-col items-center gap-4 p-8">
+            <div className="text-4xl text-white/30" style={{ clipPath: "polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)" }}>
+              <div className="w-12 h-12 bg-white/[0.06] border border-white/[0.10]" />
+            </div>
+            <h3 className="text-xl font-medium text-white/80">Ready to dive in?</h3>
+            <p className="text-white/40 max-w-md">
               Navigate through sections seamlessly with our interactive reader, complete with visualizations and equations.
             </p>
             <motion.button
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={onStartReading}
-              className="mt-2 px-6 py-3 rounded-xl bg-[#58c4dd]/10 text-[#f4f1eb] font-medium ring-1 ring-[#58c4dd]/20 hover:bg-[#58c4dd]/20 transition-all"
+              className="mt-2 px-6 py-3 rounded-xl bg-white/[0.06] text-white/80 font-medium border border-white/[0.10] hover:bg-white/[0.10] transition-all"
             >
               Begin Reading Experience
             </motion.button>
-          </div>
+          </GlassCard>
         </motion.div>
       </div>
     </motion.div>
   );
 }
 
-// === Reader Mode - Full section-by-section experience ===
+// === Reader Mode ===
 function ReaderMode({
   paper,
   onBack,
@@ -457,11 +454,11 @@ function ReaderMode({
       transition={{ duration: 0.4 }}
     >
       {/* Back to overview button */}
-      <div className="sticky top-[73px] z-30 bg-[#1c1c2e]/80 backdrop-blur-xl border-b border-[#58c4dd]/5">
+      <div className="sticky top-[73px] z-30 bg-black/80 backdrop-blur-2xl border-b border-white/[0.04]">
         <div className="max-w-6xl mx-auto px-6 py-2 flex items-center justify-between">
           <button
             onClick={onBack}
-            className="group flex items-center gap-2 text-sm text-[#f4f1eb]/60 hover:text-[#58c4dd] transition-colors"
+            className="group flex items-center gap-2 text-sm text-white/40 hover:text-white/70 transition-colors"
           >
             <svg
               className="w-4 h-4 group-hover:-translate-x-1 transition-transform"
@@ -473,7 +470,7 @@ function ReaderMode({
             </svg>
             Back to Overview
           </button>
-          <h2 className="text-sm font-medium text-[#f4f1eb]/80 truncate max-w-md">
+          <h2 className="text-sm font-medium text-white/50 truncate max-w-md">
             {paper.title}
           </h2>
         </div>
@@ -494,15 +491,14 @@ function LoadingState({ message }: { message: string }) {
         animate={{ opacity: 1, scale: 1 }}
         className="relative"
       >
-        <div className="h-20 w-20 rounded-2xl bg-gradient-to-br from-[#58c4dd]/20 to-[#cd8b62]/20 ring-1 ring-[#58c4dd]/20" />
-        <div className="absolute inset-0 h-20 w-20 animate-spin rounded-2xl border-4 border-transparent border-t-[#58c4dd]" style={{ animationDuration: '2s' }} />
-        <div className="absolute inset-2 h-16 w-16 animate-spin rounded-xl border-4 border-transparent border-t-[#cd8b62]" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }} />
+        <div className="h-20 w-20 rounded-2xl bg-white/[0.05] border border-white/[0.10] backdrop-blur-xl" />
+        <div className="absolute inset-0 h-20 w-20 animate-spin rounded-2xl border-2 border-transparent border-t-white/30" style={{ animationDuration: '2s' }} />
       </motion.div>
       <motion.p
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.2 }}
-        className="mt-8 text-[#f4f1eb]/60"
+        className="mt-8 text-white/40"
       >
         {message}
       </motion.p>
@@ -528,15 +524,18 @@ function NotFoundState({
           initial={{ scale: 0 }}
           animate={{ scale: 1 }}
           transition={{ delay: 0.2, type: "spring", stiffness: 200 }}
-          className="mx-auto h-24 w-24 rounded-3xl bg-gradient-to-br from-[#58c4dd]/20 to-[#cd8b62]/20 grid place-items-center ring-1 ring-[#58c4dd]/20 shadow-2xl shadow-[#58c4dd]/10"
+          className="mx-auto h-24 w-24 grid place-items-center"
+          style={{ clipPath: "polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)" }}
         >
-          <span className="text-4xl text-[#58c4dd]">∫</span>
+          <div className="w-full h-full bg-white/[0.05] border border-white/[0.10] grid place-items-center">
+            <span className="text-3xl text-white/40">&int;</span>
+          </div>
         </motion.div>
 
-        <h2 className="mt-8 text-2xl font-medium text-[#f4f1eb]">Paper Not Yet Processed</h2>
-        <p className="mt-4 text-[#f4f1eb]/50 leading-relaxed">
-          This paper (<span className="font-mono text-[#58c4dd] bg-[#58c4dd]/10 px-2 py-0.5 rounded">{arxivId}</span>) hasn't been visualized yet.
-          We'll parse the content and generate beautiful Manim animations for key concepts.
+        <h2 className="mt-8 text-2xl font-medium text-white/80">Paper Not Yet Processed</h2>
+        <p className="mt-4 text-white/40 leading-relaxed">
+          This paper (<span className="font-mono text-white/60 bg-white/[0.06] px-2 py-0.5 rounded">{arxivId}</span>) hasn&apos;t been visualized yet.
+          We&apos;ll parse the content and generate Manim animations for key concepts.
         </p>
 
         <div className="mt-8 space-y-4">
@@ -544,12 +543,12 @@ function NotFoundState({
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
             onClick={onProcess}
-            className="w-full sm:w-auto rounded-2xl bg-gradient-to-r from-[#58c4dd] to-[#cd8b62] px-8 py-4 text-sm font-semibold text-[#1c1c2e] shadow-xl shadow-[#58c4dd]/25 ring-1 ring-white/20 transition hover:shadow-[#58c4dd]/40"
+            className="w-full sm:w-auto rounded-2xl bg-white/[0.08] hover:bg-white/[0.12] px-8 py-4 text-sm font-medium text-white border border-white/[0.15] hover:border-white/[0.25] shadow-xl shadow-white/[0.03] transition-all duration-300"
           >
             Start Processing
           </motion.button>
 
-          <p className="text-xs text-[#f4f1eb]/30">
+          <p className="text-xs text-white/20">
             This usually takes 1-3 minutes depending on paper length
           </p>
         </div>
@@ -562,11 +561,11 @@ function ProcessingState({ status }: { status: ProcessingStatus }) {
   const progressPercent = Math.round(status.progress * 100);
 
   const steps = [
-    { label: "Fetching paper from arXiv", threshold: 10, icon: "∫" },
-    { label: "Parsing sections and content", threshold: 30, icon: "∂" },
-    { label: "Analyzing concepts for visualization", threshold: 50, icon: "∇" },
-    { label: "Generating Manim animations", threshold: 70, icon: "λ" },
-    { label: "Rendering videos", threshold: 90, icon: "∞" },
+    { label: "Fetching paper from arXiv", threshold: 10, icon: "\u222B" },
+    { label: "Parsing sections and content", threshold: 30, icon: "\u2202" },
+    { label: "Analyzing concepts for visualization", threshold: 50, icon: "\u2207" },
+    { label: "Generating Manim animations", threshold: 70, icon: "\u03BB" },
+    { label: "Rendering videos", threshold: 90, icon: "\u221E" },
   ];
 
   return (
@@ -576,28 +575,28 @@ function ProcessingState({ status }: { status: ProcessingStatus }) {
         animate={{ opacity: 1, y: 0 }}
         className="w-full max-w-2xl"
       >
-        <div className="rounded-3xl bg-gradient-to-br from-[#58c4dd]/5 to-[#cd8b62]/5 p-8 ring-1 ring-[#58c4dd]/10 backdrop-blur-sm">
+        <GlassCard animate={false} className="p-8">
           {/* Header */}
           <div className="flex items-center gap-5">
             <div className="relative">
-              <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-[#58c4dd]/20 to-[#cd8b62]/20 ring-1 ring-[#58c4dd]/20" />
-              <div className="absolute inset-0 h-16 w-16 animate-spin rounded-2xl border-4 border-transparent border-t-[#58c4dd]" style={{ animationDuration: '2s' }} />
+              <div className="h-16 w-16 rounded-2xl bg-white/[0.05] border border-white/[0.10]" />
+              <div className="absolute inset-0 h-16 w-16 animate-spin rounded-2xl border-2 border-transparent border-t-white/30" style={{ animationDuration: '2s' }} />
             </div>
             <div>
-              <h2 className="text-2xl font-medium text-[#f4f1eb]">Processing Paper</h2>
-              <p className="mt-1 text-[#f4f1eb]/50">{status.current_step || "Preparing..."}</p>
+              <h2 className="text-2xl font-medium text-white/90">Processing Paper</h2>
+              <p className="mt-1 text-white/40">{status.current_step || "Preparing..."}</p>
             </div>
           </div>
 
           {/* Progress */}
           <div className="mt-8">
             <div className="flex items-center justify-between text-sm mb-3">
-              <span className="text-[#f4f1eb]/50">Overall Progress</span>
-              <span className="font-mono text-[#f4f1eb] font-medium">{progressPercent}%</span>
+              <span className="text-white/30">Overall Progress</span>
+              <span className="font-mono text-white/80 font-medium">{progressPercent}%</span>
             </div>
-            <div className="h-3 rounded-full bg-[#141421] overflow-hidden ring-1 ring-[#58c4dd]/10">
+            <div className="h-3 rounded-full bg-white/[0.05] overflow-hidden border border-white/[0.06]">
               <motion.div
-                className="h-full rounded-full bg-gradient-to-r from-[#58c4dd] to-[#cd8b62]"
+                className="h-full rounded-full bg-gradient-to-r from-white/40 to-white/20"
                 initial={{ width: 0 }}
                 animate={{ width: `${progressPercent}%` }}
                 transition={{ duration: 0.5 }}
@@ -608,16 +607,16 @@ function ProcessingState({ status }: { status: ProcessingStatus }) {
           {/* Sections */}
           {status.sections_total > 0 && (
             <div className="mt-4 flex items-center gap-3 text-sm">
-              <span className="text-[#f4f1eb]/40">Sections processed:</span>
-              <span className="font-mono text-[#f4f1eb]/70 bg-[#58c4dd]/10 px-2 py-0.5 rounded">
+              <span className="text-white/30">Sections processed:</span>
+              <span className="font-mono text-white/60 bg-white/[0.06] px-2 py-0.5 rounded">
                 {status.sections_completed} / {status.sections_total}
               </span>
             </div>
           )}
 
           {/* Steps */}
-          <div className="mt-8 rounded-2xl bg-[#141421] p-6 ring-1 ring-[#58c4dd]/10">
-            <div className="text-xs font-medium text-[#f4f1eb]/40 uppercase tracking-wider mb-4">Pipeline Progress</div>
+          <div className="mt-8 rounded-2xl bg-white/[0.03] p-6 border border-white/[0.06]">
+            <div className="text-xs font-medium text-white/25 uppercase tracking-wider mb-4">Pipeline Progress</div>
             <ol className="space-y-3">
               {steps.map((step, i) => {
                 const isActive = progressPercent >= step.threshold;
@@ -631,27 +630,27 @@ function ProcessingState({ status }: { status: ProcessingStatus }) {
                     transition={{ delay: i * 0.1 }}
                     className="flex items-center gap-4"
                   >
-                    <span className={`text-xl transition-all duration-300 ${isActive ? 'text-[#58c4dd]' : 'text-[#f4f1eb]/20'}`}>
+                    <span className={`text-xl transition-all duration-300 ${isActive ? 'text-white/50' : 'text-white/15'}`}>
                       {step.icon}
                     </span>
-                    <span className={`flex-1 text-sm transition-colors duration-300 ${isActive ? 'text-[#f4f1eb]/80' : 'text-[#f4f1eb]/30'}`}>
+                    <span className={`flex-1 text-sm transition-colors duration-300 ${isActive ? 'text-white/60' : 'text-white/20'}`}>
                       {step.label}
                     </span>
                     {isCurrent && (
                       <span className="flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-[#58c4dd] animate-pulse" />
-                        <span className="text-xs text-[#58c4dd]">In progress</span>
+                        <span className="w-2 h-2 rounded-full bg-white/40 animate-pulse" />
+                        <span className="text-xs text-white/40">In progress</span>
                       </span>
                     )}
                     {isActive && !isCurrent && (
-                      <span className="text-[#83c167]">✓</span>
+                      <span className="text-white/50">&check;</span>
                     )}
                   </motion.li>
                 );
               })}
             </ol>
           </div>
-        </div>
+        </GlassCard>
       </motion.div>
     </div>
   );
@@ -675,19 +674,19 @@ function ErrorState({
           initial={{ scale: 0 }}
           animate={{ scale: 1 }}
           transition={{ type: "spring", stiffness: 200 }}
-          className="mx-auto h-24 w-24 rounded-3xl bg-[#fc6255]/10 grid place-items-center ring-1 ring-[#fc6255]/20"
+          className="mx-auto h-24 w-24 rounded-3xl bg-white/[0.04] border border-[#f27066]/20 grid place-items-center"
         >
-          <span className="text-4xl text-[#fc6255]">!</span>
+          <span className="text-4xl text-[#f27066]">!</span>
         </motion.div>
 
-        <h2 className="mt-8 text-2xl font-medium text-[#fc6255]">Something Went Wrong</h2>
-        <p className="mt-4 text-[#f4f1eb]/50 leading-relaxed">{message}</p>
+        <h2 className="mt-8 text-2xl font-medium text-[#f27066]">Something Went Wrong</h2>
+        <p className="mt-4 text-white/40 leading-relaxed">{message}</p>
 
         <motion.button
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
           onClick={onRetry}
-          className="mt-8 rounded-2xl bg-[#58c4dd]/10 px-8 py-4 text-sm font-semibold text-[#f4f1eb] ring-1 ring-[#58c4dd]/20 transition hover:bg-[#58c4dd]/20"
+          className="mt-8 rounded-2xl bg-white/[0.06] px-8 py-4 text-sm font-medium text-white/80 border border-white/[0.10] transition hover:bg-white/[0.10]"
         >
           Try Again
         </motion.button>

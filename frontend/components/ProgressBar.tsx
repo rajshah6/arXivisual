@@ -22,10 +22,10 @@ const sizeClasses = {
 };
 
 const themeClasses = {
-  default: "from-blue-500 to-violet-500",
-  success: "from-emerald-500 to-green-500",
-  warning: "from-amber-500 to-orange-500",
-  error: "from-rose-500 to-red-500",
+  default: "from-white/40 to-white/20",
+  success: "from-[#7dd19b] to-[#7dd19b]/60",
+  warning: "from-amber-400/70 to-amber-400/40",
+  error: "from-[#f27066] to-[#f27066]/60",
 };
 
 export function ProgressBar({
@@ -44,12 +44,12 @@ export function ProgressBar({
     <div className={className}>
       {(label || showPercent) && (
         <div className="mb-2 flex items-center justify-between text-sm">
-          {label && <span className="text-white/70">{label}</span>}
-          {showPercent && <span className="text-white/70">{percent}%</span>}
+          {label && <span className="text-white/55">{label}</span>}
+          {showPercent && <span className="text-white/55">{percent}%</span>}
         </div>
       )}
       <div
-        className={`${sizeClasses[size]} w-full overflow-hidden rounded-full bg-white/10`}
+        className={`${sizeClasses[size]} w-full overflow-hidden rounded-full bg-white/[0.06]`}
       >
         <div
           className={`h-full rounded-full bg-gradient-to-r ${themeClasses[theme]} transition-all duration-500`}
@@ -85,7 +85,7 @@ export function SegmentedProgress({
   return (
     <div className={className}>
       {label && (
-        <div className="mb-2 text-sm text-white/70">
+        <div className="mb-2 text-sm text-white/55">
           {label}: {completed} / {total}
         </div>
       )}
@@ -95,8 +95,8 @@ export function SegmentedProgress({
             key={i}
             className={`h-2 flex-1 rounded-full transition-colors duration-300 ${
               i < completed
-                ? "bg-gradient-to-r from-blue-500 to-violet-500"
-                : "bg-white/10"
+                ? "bg-gradient-to-r from-white/40 to-white/20"
+                : "bg-white/[0.06]"
             }`}
           />
         ))}
@@ -142,7 +142,7 @@ export function CircularProgress({
           fill="none"
           stroke="currentColor"
           strokeWidth={strokeWidth}
-          className="text-white/10"
+          className="text-white/[0.06]"
         />
         {/* Progress circle */}
         <circle
@@ -165,13 +165,13 @@ export function CircularProgress({
             x2="100%"
             y2="0%"
           >
-            <stop offset="0%" stopColor="#3b82f6" />
-            <stop offset="100%" stopColor="#8b5cf6" />
+            <stop offset="0%" stopColor="rgba(255, 255, 255, 0.5)" />
+            <stop offset="100%" stopColor="rgba(255, 255, 255, 0.2)" />
           </linearGradient>
         </defs>
       </svg>
       {showPercent && (
-        <span className="absolute text-sm font-medium text-white/80">
+        <span className="absolute text-sm font-medium text-white/60">
           {percent}%
         </span>
       )}

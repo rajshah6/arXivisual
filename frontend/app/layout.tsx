@@ -40,11 +40,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-dvh bg-[#1c1c2e] text-[#f4f1eb]`}
-        style={{
-          fontFamily:
-            'var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"',
-        }}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-dvh bg-black text-[#e8e8e8]`}
       >
         <div className="min-h-dvh">{children}</div>
       </body>

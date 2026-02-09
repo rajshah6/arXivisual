@@ -10,7 +10,7 @@
 
 [![ArXivisual Video](frontend/public/video.mp4)]()
 
-![ArXivisual Landing Page](frontend/public/landing.png)
+![ArXivisual Landing Page](frontend/public/landing.jpeg)
 
 ![ArXivisual Manim](frontend/public/manim.png)
 

@@ -2,7 +2,7 @@
     <img alt="Logo" src="frontend/public/icon.png" width=100 />
 </div>
 <h1 align="center">
-    ArXivisual
+  <a href="https://www.arxivisual.org/" target="_blank">ArXivisual</a>
 </h1>
 <p align="center">
    Transform research papers into visual stories

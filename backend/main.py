@@ -8,15 +8,17 @@ Docs at: http://localhost:8000/docs
 import os
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
+
+# Load environment variables BEFORE any local imports
+# (rendering/storage.py reads STORAGE_MODE at import time)
+load_dotenv()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
 from api.routes import router as api_router
 from db import init_db
-
-# Load environment variables
-load_dotenv()
 
 
 @asynccontextmanager

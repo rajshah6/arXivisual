@@ -74,6 +74,20 @@ export interface HealthResponse {
   services: Record<string, string>;
 }
 
+// === Helpers ===
+
+/**
+ * Resolve a video URL: absolute URLs (from R2 cloud) pass through,
+ * relative URLs (from local backend) get prefixed with API_BASE.
+ */
+function resolveVideoUrl(url: string | undefined | null): string | undefined {
+  if (!url) return undefined;
+  if (url.startsWith("http://") || url.startsWith("https://")) {
+    return url;
+  }
+  return `${API_BASE}${url}`;
+}
+
 // === API Functions ===
 
 /**
@@ -190,7 +204,7 @@ export async function getPaper(arxivId: string): Promise<Paper | null> {
       level: s.level,
       order_index: s.order_index,
       equations: s.equations,
-      video_url: viz?.video_url || undefined,
+      video_url: resolveVideoUrl(viz?.video_url),
     };
   });
 

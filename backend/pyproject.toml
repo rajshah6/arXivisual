@@ -34,6 +34,9 @@ dependencies = [
     "modal>=0.60.0",
     "manim-voiceover[elevenlabs]>=0.3.0",
 
+    # Cloud storage (S3-compatible — Cloudflare R2)
+    "boto3>=1.34.0",
+
     # LLM
     "openai>=1.12.0",
 

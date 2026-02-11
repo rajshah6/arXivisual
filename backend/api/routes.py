@@ -6,7 +6,7 @@ Now using SQLite database and local Manim rendering.
 
 import uuid
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -30,7 +30,7 @@ from .schemas import (
 )
 from db.connection import get_db
 from db import queries
-from rendering import process_visualization, get_video_path, extract_scene_name
+from rendering import process_visualization, get_video_path, get_video_url, extract_scene_name
 from jobs import process_paper_job
 
 router = APIRouter(prefix="/api")
@@ -206,20 +206,22 @@ async def get_video(video_id: str):
     Get a rendered visualization video.
 
     Returns the actual video file if it exists locally,
-    or video metadata if it's a placeholder.
+    or redirects to the cloud URL (R2) if available.
     """
-    # Check if video exists in local storage
+    # Try local file first
     video_path = get_video_path(video_id)
-
     if video_path and video_path.exists():
-        # Serve the actual video file
         return FileResponse(
             path=str(video_path),
             media_type="video/mp4",
             filename=f"{video_id}.mp4"
         )
 
-    # Return 404 if video doesn't exist
+    # Try cloud URL (R2 mode)
+    cloud_url = get_video_url(video_id)
+    if cloud_url and cloud_url.startswith("http"):
+        return RedirectResponse(url=cloud_url, status_code=302)
+
     raise HTTPException(
         status_code=404,
         detail=f"Video '{video_id}' not found"
@@ -304,6 +306,19 @@ async def health_check(db: AsyncSession = Depends(get_db)):
     except Exception as e:
         manim_status = f"error: {str(e)}"
 
+    # Test storage connectivity
+    from rendering.storage import STORAGE_MODE, get_backend
+    storage_status = "local"
+    if STORAGE_MODE == "r2":
+        backend = get_backend()
+        if hasattr(backend, "check_connectivity"):
+            try:
+                storage_status = "r2: connected" if backend.check_connectivity() else "r2: unreachable"
+            except Exception as e:
+                storage_status = f"r2: error ({e})"
+        else:
+            storage_status = "r2: configured"
+
     all_healthy = db_status == "connected" and "available" in manim_status
 
     return HealthResponse(
@@ -312,6 +327,7 @@ async def health_check(db: AsyncSession = Depends(get_db)):
         services={
             "database": db_status,
             "manim": manim_status,
+            "storage": storage_status,
             "redis": "not configured",
             "modal": "not configured"
         }

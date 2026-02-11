@@ -7,7 +7,7 @@ Set RENDER_MODE environment variable to "local" or "modal".
 
 import os
 from .local_runner import render_manim_local, extract_scene_name
-from .storage import save_video, get_video_path, get_video_url, list_videos
+from .storage import save_video, get_video_path, get_video_url, list_videos, get_backend
 
 # Render mode: "local" or "modal"
 RENDER_MODE = os.getenv("RENDER_MODE", "local")
@@ -21,6 +21,7 @@ __all__ = [
     "list_videos",
     "process_visualization",
     "render_manim",
+    "get_backend",
     "RENDER_MODE",
 ]
 

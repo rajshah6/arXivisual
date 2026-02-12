@@ -5,6 +5,7 @@ Run with: uvicorn main:app --reload --port 8000
 Docs at: http://localhost:8000/docs
 """
 
+import logging
 import os
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
@@ -12,6 +13,18 @@ from dotenv import load_dotenv
 # Load environment variables BEFORE any local imports
 # (rendering/storage.py reads STORAGE_MODE at import time)
 load_dotenv()
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+
+# Set specific logger levels
+logging.getLogger("rendering").setLevel(logging.INFO)
+logging.getLogger("jobs").setLevel(logging.INFO)
+logging.getLogger("agents").setLevel(logging.INFO)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

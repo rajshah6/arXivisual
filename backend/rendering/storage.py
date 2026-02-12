@@ -42,9 +42,12 @@ class LocalStorageBackend:
         if not filename.endswith(".mp4"):
             filename = f"{filename}.mp4"
         file_path = self.media_dir / filename
+        logger.debug(f"  [LocalStorage] Writing {len(video_bytes):,} bytes to {file_path}")
         file_path.write_bytes(video_bytes)
         video_id = filename.replace(".mp4", "")
-        return f"/api/video/{video_id}"
+        url = f"/api/video/{video_id}"
+        logger.debug(f"  [LocalStorage] File written successfully")
+        return url
 
     def get_video_path(self, video_id: str) -> Optional[Path]:
         file_path = self.media_dir / f"{video_id}.mp4"
@@ -109,6 +112,7 @@ class R2StorageBackend:
 
     async def save_video(self, video_bytes: bytes, filename: str) -> str:
         key = self._key(filename)
+        logger.debug(f"  [R2Storage] Uploading {len(video_bytes):,} bytes as {key}")
         for attempt in range(2):
             try:
                 await asyncio.to_thread(
@@ -120,13 +124,15 @@ class R2StorageBackend:
                     CacheControl="public, max-age=31536000",
                 )
                 url = f"{self.public_url}/{key}"
-                logger.info("Uploaded %s to R2 -> %s", key, url)
+                logger.info(f"  [R2Storage] Successfully uploaded {filename} to R2")
+                logger.info(f"  [R2Storage] URL: {url}")
                 return url
             except Exception as e:
                 if attempt == 0:
-                    logger.warning("R2 upload failed, retrying: %s", e)
+                    logger.warning(f"  [R2Storage] Upload failed, retrying: {e}")
                     await asyncio.sleep(1)
                 else:
+                    logger.error(f"  [R2Storage] Upload failed after retry: {e}")
                     raise
 
     def get_video_path(self, video_id: str) -> Optional[Path]:
@@ -191,7 +197,10 @@ _backend = _create_backend()
 
 async def save_video(video_bytes: bytes, filename: str) -> str:
     """Save video and return its URL (relative for local, absolute for R2)."""
-    return await _backend.save_video(video_bytes, filename)
+    logger.info(f"  [Storage] Saving video: {filename} ({len(video_bytes):,} bytes)")
+    url = await _backend.save_video(video_bytes, filename)
+    logger.info(f"  [Storage] Video saved: {url}")
+    return url
 
 
 def get_video_path(video_id: str) -> Optional[Path]:

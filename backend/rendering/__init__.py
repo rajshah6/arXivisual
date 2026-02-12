@@ -5,9 +5,12 @@ Supports both local (subprocess) and Modal.com (serverless) rendering.
 Set RENDER_MODE environment variable to "local" or "modal".
 """
 
+import logging
 import os
 from .local_runner import render_manim_local, extract_scene_name
 from .storage import save_video, get_video_path, get_video_url, list_videos, get_backend
+
+logger = logging.getLogger(__name__)
 
 # Render mode: "local" or "modal"
 RENDER_MODE = os.getenv("RENDER_MODE", "local")
@@ -64,13 +67,22 @@ async def process_visualization(viz_id: str, manim_code: str, quality: str = "lo
     Raises:
         RuntimeError: If rendering fails
     """
+    logger.info(f"[Processing Visualization] {viz_id}")
+    logger.info(f"[Processing Visualization] Quality setting: {quality}")
+
     # Extract scene name from code
     scene_name = extract_scene_name(manim_code)
+    logger.info(f"[Processing Visualization] Scene name: {scene_name}")
 
     # Render the video using configured backend
+    logger.info(f"[Processing Visualization] Starting rendering phase...")
     video_bytes = await render_manim(manim_code, scene_name, quality)
+    logger.info(f"[Processing Visualization] Rendering complete ({len(video_bytes):,} bytes)")
 
     # Save to storage
+    logger.info(f"[Processing Visualization] Saving to storage...")
     video_url = await save_video(video_bytes, f"{viz_id}.mp4")
+    logger.info(f"[Processing Visualization] Video saved successfully")
+    logger.info(f"[Processing Visualization] Video URL: {video_url}")
 
     return video_url

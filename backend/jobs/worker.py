@@ -6,6 +6,7 @@ Processes papers asynchronously with progress tracking.
 
 import asyncio
 import logging
+from datetime import datetime
 from db.connection import async_session_maker
 from db import queries
 from db.models import Section
@@ -23,6 +24,41 @@ from models.paper import (
 logger = logging.getLogger(__name__)
 
 
+class ProgressBar:
+    """Simple progress bar for logging output."""
+
+    def __init__(self, total: int, name: str = "Progress"):
+        self.total = total
+        self.current = 0
+        self.name = name
+        self.start_time = datetime.now()
+
+    def update(self, increment: int = 1):
+        self.current += increment
+        self._display()
+
+    def _display(self):
+        """Display progress bar in logs."""
+        if self.total == 0:
+            return
+
+        percent = self.current / self.total
+        bar_length = 30
+        filled = int(bar_length * percent)
+        bar = "█" * filled + "░" * (bar_length - filled)
+
+        elapsed = (datetime.now() - self.start_time).total_seconds()
+        if self.current > 0 and percent > 0:
+            avg_time = elapsed / self.current
+            eta_seconds = avg_time * (self.total - self.current)
+            eta_str = f" ETA: {int(eta_seconds)}s"
+        else:
+            eta_str = ""
+
+        percent_str = f"{percent*100:5.1f}%"
+        logger.info(f"  [{self.name}] {bar} {percent_str} ({self.current}/{self.total}){eta_str}")
+
+
 async def process_paper_job(job_id: str, arxiv_id: str):
     """
     Main job processing function. Called as a background task.
@@ -34,9 +70,17 @@ async def process_paper_job(job_id: str, arxiv_id: str):
     4. Render all visualizations
     5. Update job status to completed
     """
+    logger.info("=" * 60)
+    logger.info(f"STARTING JOB: {job_id}")
+    logger.info(f"ArXiv ID: {arxiv_id}")
+    logger.info("=" * 60)
+
     async with async_session_maker() as db:
         try:
             # Step 1: Ingest paper from arXiv
+            logger.info("STEP 1: Ingesting paper from arXiv")
+            logger.info("-" * 60)
+
             await queries.update_job_status(
                 db, job_id,
                 status="processing",
@@ -45,16 +89,27 @@ async def process_paper_job(job_id: str, arxiv_id: str):
             )
 
             paper_exists = await queries.paper_exists(db, arxiv_id)
+            if paper_exists:
+                logger.info(f"Paper {arxiv_id} already exists in database, skipping ingestion")
+            else:
+                logger.info(f"Paper {arxiv_id} not found, fetching from arXiv...")
+
             if not paper_exists:
                 await _ingest_and_store_paper(db, job_id, arxiv_id)
             else:
                 # Paper already exists, just link the job to it
+                logger.info("Linking job to existing paper...")
                 job = await queries.get_job(db, job_id)
                 if job:
                     job.paper_id = arxiv_id
                     await db.commit()
+                logger.info("Job linked successfully")
 
             # Step 2: Generate visualizations from structured paper
+            logger.info("=" * 60)
+            logger.info("STEP 2: Generating visualizations from structured paper")
+            logger.info("=" * 60)
+
             await queries.update_job_status(
                 db, job_id,
                 current_step="Generating visualizations",
@@ -62,15 +117,28 @@ async def process_paper_job(job_id: str, arxiv_id: str):
             )
 
             db_paper = await queries.get_paper(db, arxiv_id)
+            logger.info(f"Found paper in database: {db_paper.title}")
+
             db_sections = sorted(db_paper.sections, key=lambda s: s.order_index)
+            logger.info(f"Loaded {len(db_sections)} sections from database")
+
             structured_paper = _build_structured_paper_from_db(db_paper, db_sections)
+            logger.info("Converted database sections to StructuredPaper format")
+
+            logger.info("Invoking visualization generation pipeline...")
             generated_visualizations = await generate_visualizations(structured_paper)
+            logger.info(f"Generated {len(generated_visualizations)} visualization(s)")
 
             # Create visualization records
+            logger.info("Creating visualization records in database...")
             viz_records = []
             job_suffix = job_id.replace("job_", "")[:8]
             for i, visualization in enumerate(generated_visualizations):
                 viz_id = f"viz_{job_suffix}_{i+1}"
+                logger.info(f"  [{i+1}/{len(generated_visualizations)}] Creating record for {viz_id}")
+                logger.debug(f"    Concept: {visualization.concept}")
+                logger.debug(f"    Section: {visualization.section_id}")
+
                 await queries.create_visualization(
                     db,
                     viz_id=viz_id,
@@ -87,6 +155,7 @@ async def process_paper_job(job_id: str, arxiv_id: str):
                 })
 
             if not viz_records:
+                logger.warning("No valid visualizations were generated from the paper")
                 await queries.update_job_status(
                     db, job_id,
                     status="completed",
@@ -96,6 +165,10 @@ async def process_paper_job(job_id: str, arxiv_id: str):
                 return
 
             # Step 3: Render visualizations
+            logger.info("=" * 60)
+            logger.info(f"STEP 3: Rendering {len(viz_records)} visualizations")
+            logger.info("=" * 60)
+
             await queries.update_job_status(
                 db, job_id,
                 current_step="Rendering videos",
@@ -105,31 +178,39 @@ async def process_paper_job(job_id: str, arxiv_id: str):
             )
 
             render_semaphore = asyncio.Semaphore(3)
+            progress_bar = ProgressBar(len(viz_records), "Video Rendering")
 
             async def _render_one(viz: dict):
                 async with render_semaphore:
                     try:
+                        logger.info(f"Starting render: {viz['id']}")
                         video_url = await process_visualization(
                             viz_id=viz["id"],
                             manim_code=viz["manim_code"],
                             quality="low_quality"
                         )
+                        logger.info(f"✓ Successfully rendered {viz['id']}")
                         await queries.update_visualization_status(
                             db, viz["id"],
                             status="complete",
                             video_url=video_url
                         )
+                        progress_bar.update()
                     except Exception as e:
+                        logger.error(f"✗ Failed to render {viz['id']}: {str(e)}")
                         await queries.update_visualization_status(
                             db, viz["id"],
                             status="failed",
                             error=str(e)
                         )
+                        progress_bar.update()
 
+            logger.info(f"Rendering {len(viz_records)} videos concurrently (max 3 parallel)...")
             await asyncio.gather(*[
                 _render_one(viz) for viz in viz_records
             ])
 
+            logger.info("All videos rendered successfully!")
             await queries.update_job_status(
                 db, job_id,
                 progress=0.9,
@@ -137,6 +218,10 @@ async def process_paper_job(job_id: str, arxiv_id: str):
             )
 
             # Step 4: Complete
+            logger.info("=" * 60)
+            logger.info("STEP 4: Finalizing job")
+            logger.info("=" * 60)
+
             await queries.update_job_status(
                 db, job_id,
                 status="completed",
@@ -144,8 +229,15 @@ async def process_paper_job(job_id: str, arxiv_id: str):
                 progress=1.0
             )
 
+            logger.info("=" * 60)
+            logger.info(f"✓ JOB COMPLETED SUCCESSFULLY: {job_id}")
+            logger.info(f"✓ Paper: {arxiv_id}")
+            logger.info(f"✓ Visualizations rendered: {len(viz_records)}")
+            logger.info("=" * 60)
+
         except Exception as e:
-            logger.exception(f"Job {job_id} failed for paper {arxiv_id}")
+            logger.exception(f"✗ JOB FAILED: {job_id} for paper {arxiv_id}")
+            logger.error(f"Error: {str(e)}")
             try:
                 await db.rollback()
                 await queries.update_job_status(

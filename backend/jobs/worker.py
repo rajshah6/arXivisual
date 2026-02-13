@@ -132,14 +132,18 @@ async def process_paper_job(job_id: str, arxiv_id: str):
             # Create visualization records
             logger.info("Creating visualization records in database...")
             viz_records = []
-            job_suffix = job_id.replace("job_", "")[:8]
+
+            # Use paper-based prefix for consistent viz_ids across re-runs
+            paper_suffix = arxiv_id.replace(".", "")[:8]  # e.g., "1706.03762" -> "17060376"
+
             for i, visualization in enumerate(generated_visualizations):
-                viz_id = f"viz_{job_suffix}_{i+1}"
+                # Create consistent viz_id based on paper and index, not job
+                viz_id = f"viz_{paper_suffix}_{i+1}"
                 logger.info(f"  [{i+1}/{len(generated_visualizations)}] Creating record for {viz_id}")
                 logger.debug(f"    Concept: {visualization.concept}")
                 logger.debug(f"    Section: {visualization.section_id}")
 
-                await queries.create_visualization(
+                await queries.upsert_visualization(
                     db,
                     viz_id=viz_id,
                     paper_id=arxiv_id,

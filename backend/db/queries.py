@@ -219,6 +219,52 @@ async def update_visualization_status(
     return viz
 
 
+async def upsert_visualization(
+    db: AsyncSession,
+    viz_id: str,
+    paper_id: str,
+    section_id: str,
+    concept: str,
+    status: str = "pending",
+    video_url: Optional[str] = None,
+    storyboard: Optional[dict] = None,
+    manim_code: Optional[str] = None,
+) -> Visualization:
+    """Create or update a visualization."""
+    result = await db.execute(
+        select(Visualization).where(Visualization.id == viz_id)
+    )
+    viz = result.scalar_one_or_none()
+
+    if viz:
+        # Update existing visualization
+        viz.section_id = section_id
+        viz.concept = concept
+        viz.status = status
+        if video_url:
+            viz.video_url = video_url
+        if storyboard:
+            viz.storyboard = storyboard
+        if manim_code:
+            viz.manim_code = manim_code
+    else:
+        # Create new visualization
+        viz = Visualization(
+            id=viz_id,
+            paper_id=paper_id,
+            section_id=section_id,
+            concept=concept,
+            storyboard=storyboard,
+            manim_code=manim_code,
+            status=status,
+            video_url=video_url,
+        )
+        db.add(viz)
+
+    await db.commit()
+    return viz
+
+
 # === Seeding ===
 
 async def seed_mock_paper(db: AsyncSession):

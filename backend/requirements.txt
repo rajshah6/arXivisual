@@ -1,3 +1,6 @@
+# Required by manim-voiceover (pkg_resources) - MUST BE FIRST
+setuptools>=65.0.0
+
 # API framework
 fastapi>=0.109.0
 uvicorn>=0.27.0
@@ -35,9 +38,6 @@ boto3>=1.34.0
 
 # LLM
 openai>=1.12.0
-
-# Required by manim-voiceover (pkg_resources)
-setuptools>=65.0.0
 
 # Dedalus SDK + MCP Gateway (Context7 live docs)
 dedalus-labs>=0.2.0

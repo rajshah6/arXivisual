@@ -29,31 +29,47 @@
 - Node.js 18+
 - Python 3.11+
 - FFmpeg, Cairo, Pango (for Manim)
-- API keys for Anthropic Claude, ElevenLabs, Dedalus Labs (free at signup)
-
-### Frontend Setup
-
-```bash
-cd frontend
-```
-```bash
-npm install
-```
-```bash
-npm run dev
-```
+- API keys: **Dedalus Labs** and ElevenLabs
 
 ### Backend Setup
 
 ```bash
 cd backend
-```
-```bash
+cp .env.example .env
+# Edit .env and add your keys (see Environment Variables below)
 uv sync
-```
-```bash
 uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+### Frontend Setup
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Visit **http://localhost:3000** — paste an arXiv URL (e.g. `https://arxiv.org/abs/2512.24601`) and click through.
+
+### Environment Variables (Backend)
+
+Add these to `backend/.env`:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DEDALUS_API_KEY` | Yes | Dedalus Labs API key (LLM). Sign up at [dedaluslabs.ai](https://www.dedaluslabs.ai/dashboard/api-keys) |
+| `ELEVEN_API_KEY` | Yes | ElevenLabs API key (voiceover) |
+| `STORAGE_MODE` | No | `local` (default) or `r2` for cloud storage |
+| `S3_*` | If R2 | `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_PUBLIC_URL` |
+
+### Environment Variables (Frontend)
+
+Optional. Create `frontend/.env.local` to override defaults:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Backend API URL |
+| `NEXT_PUBLIC_USE_MOCK` | `false` | Set `true` for demo mode (no backend needed) |
 
 ## Inspiration
 

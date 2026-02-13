@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import os
 import re
 import json
 from typing import Optional
 
 # Handle imports for both package and direct execution
 try:
-    from .base import call_llm_sync, get_model_name, get_provider
+    from .base import call_llm_sync, get_model_name
     from ..models.generation import GeneratedCode, VisualizationCandidate, VisualizationPlan
     from ..models.voiceover import VoiceoverValidationOutput
 except ImportError:
@@ -17,7 +16,7 @@ except ImportError:
     from pathlib import Path
 
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from agents.base import call_llm_sync, get_model_name, get_provider
+    from agents.base import call_llm_sync, get_model_name
     from models.generation import GeneratedCode, VisualizationCandidate, VisualizationPlan
     from models.voiceover import VoiceoverValidationOutput
 
@@ -202,10 +201,6 @@ class VoiceoverScriptValidator:
         narrations: list[str],
     ) -> tuple[Optional[float], Optional[float], Optional[str]]:
         """LLM rubric scorer. Returns None scores if unavailable."""
-        provider = get_provider()
-        if provider == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):
-            return None, None, None
-
         try:
             prompt = (
                 "You are an evaluator of educational narration quality.\n"

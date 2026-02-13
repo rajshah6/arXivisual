@@ -340,14 +340,14 @@ Feedback from all 3 validators is combined into a single message sent to `ManimG
 
 All agents inherit from `BaseAgent`, which provides:
 
-1. **Anthropic client** - auto-detects Martian vs direct Anthropic from env vars
+1. **Dedalus client routing** - enforces `DEDALUS_API_KEY` and routes all calls via Dedalus
 2. **Model name handling** - auto-converts `claude-opus-4-5-20251101` ↔ `anthropic/claude-opus-4-5-20251101`
 3. **System prompt** - loads `prompts/system/manim_reference.md` (curated Manim API reference)
 4. **Prompt template loading** - reads `.md` files from `prompts/` directory
 5. **JSON response parsing** - extracts JSON from markdown code blocks
 6. **Code block extraction** - extracts Python code from LLM responses
 
-**API priority:** `MARTIAN_API_KEY` > `ANTHROPIC_API_KEY`
+**API requirement:** `DEDALUS_API_KEY` is required
 
 **Default model:** `claude-opus-4-5-20251101` (best quality, ~60-90s per viz). Change to `claude-sonnet-4-20250514` in `base.py` line 25 for faster but slightly lower quality.
 

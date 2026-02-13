@@ -50,24 +50,6 @@ export default function Home() {
     router.push(`/abs/${encodeURIComponent(parsedId)}`);
   }
 
-  const features = [
-    {
-      title: "Parse",
-      description: "Extract sections, equations, and figures automatically",
-      icon: "∫",
-    },
-    {
-      title: "Analyze",
-      description: "AI identifies concepts perfect for visual explanation",
-      icon: "∑",
-    },
-    {
-      title: "Animate",
-      description: "Generate elegant Manim visualizations",
-      icon: "∞",
-    },
-  ];
-
   return (
     <main className="min-h-dvh relative overflow-hidden bg-black">
       {/* Mosaic background with arXiv logo */}
@@ -91,10 +73,8 @@ export default function Home() {
               transition={{ duration: 0.6, delay: 0.5 }}
               className="text-lg sm:text-xl text-white/40 max-w-2xl mx-auto leading-relaxed font-light"
             >
-              Paste any arXiv paper. Watch as we transform complex mathematics
-              into elegant{" "}
-              <span className="text-white/60 font-medium">Manim-powered</span>{" "}
-              animations that make ideas click.
+              Paste any arXiv paper. Watch as it turns complex papers
+              into digestible and <span className="text-white/60 font-medium">visually</span> appealing video explanations.
             </motion.p>
 
             {/* Input Section */}
@@ -175,77 +155,6 @@ export default function Home() {
           </div>
         </section>
 
-        {/* How It Works */}
-        <motion.section
-          id="how-it-works"
-          initial={{ opacity: 0, y: 40 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 1.6 }}
-          className="mt-20 sm:mt-28 scroll-mt-8"
-        >
-          {/* Section divider */}
-          <div className="flex items-center gap-4 mb-12">
-            <div className="h-px flex-1 bg-gradient-to-r from-transparent to-white/[0.06]" />
-            <span className="text-white/25 text-sm font-mono">// HOW IT WORKS</span>
-            <div className="h-px flex-1 bg-gradient-to-l from-transparent to-white/[0.06]" />
-          </div>
-
-          <div className="grid md:grid-cols-3 gap-6 max-w-4xl mx-auto">
-            {features.map((feature, i) => (
-              <GlassCard
-                key={feature.title}
-                spotlight
-                animate
-                delay={1.7 + i * 0.1}
-                className="p-6"
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <span className="text-4xl font-serif text-white/40">
-                    {feature.icon}
-                  </span>
-                  <span className="text-white/20 font-mono text-sm">0{i + 1}</span>
-                </div>
-
-                <h3 className="text-xl font-medium text-white/90 mb-2">
-                  {feature.title}
-                </h3>
-                <p className="text-sm text-white/40 leading-relaxed">
-                  {feature.description}
-                </p>
-              </GlassCard>
-            ))}
-          </div>
-
-          {/* Connecting lines */}
-          <div className="hidden md:flex justify-center items-center gap-4 mt-8">
-            <div className="w-20 h-px bg-gradient-to-r from-white/10 to-white/20" />
-            <span className="text-white/20">→</span>
-            <div className="w-20 h-px bg-white/20" />
-            <span className="text-white/20">→</span>
-            <div className="w-20 h-px bg-gradient-to-r from-white/20 to-white/10" />
-          </div>
-        </motion.section>
-
-        {/* Mathematical Quote */}
-        <motion.section
-          initial={{ opacity: 0, y: 30 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, delay: 2 }}
-          className="mt-24 text-center"
-        >
-          <div className="max-w-2xl mx-auto">
-            <div className="relative">
-              <span className="absolute -top-6 -left-4 text-6xl text-white/[0.06] font-serif">&ldquo;</span>
-              <p className="text-lg sm:text-xl text-white/50 font-light italic leading-relaxed">
-                The essence of mathematics is not to make simple things complicated,
-                but to make complicated things simple.
-              </p>
-              <span className="absolute -bottom-4 -right-4 text-6xl text-white/[0.06] font-serif rotate-180">&ldquo;</span>
-            </div>
-            <p className="mt-6 text-sm text-white/25">— Stan Gudder</p>
-          </div>
-        </motion.section>
-
         {/* Pro Tip Card */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -263,19 +172,34 @@ export default function Home() {
               </div>
               <div>
                 <h3 className="font-semibold text-white/90">Pro Tip</h3>
-                <p className="text-sm text-white/40">Works with any arXiv format</p>
+                <p className="text-sm text-white/40">One edit turns arXiv into ArXivisual</p>
               </div>
             </div>
-            <p className="text-sm text-white/45 leading-relaxed">
-              Paste a full URL like{" "}
-              <code className="text-white/60 bg-white/[0.06] px-2 py-0.5 rounded text-xs font-mono">
-                https://arxiv.org/abs/1706.03762
-              </code>
-              {" "}or just the paper ID. We handle{" "}
-              <code className="text-white/60 bg-white/[0.06] px-1.5 py-0.5 rounded text-xs">/abs/</code>,{" "}
-              <code className="text-white/60 bg-white/[0.06] px-1.5 py-0.5 rounded text-xs">/pdf/</code>,
-              and direct IDs automatically.
-            </p>
+            <div className="space-y-3 text-sm text-white/45 leading-relaxed">
+              <p>
+                If your link starts with{" "}
+                <code className="text-white/60 bg-white/[0.06] px-1.5 py-0.5 rounded text-xs font-mono">
+                  arxiv.org
+                </code>
+                , just add{" "}
+                <code className="text-white/60 bg-white/[0.06] px-1.5 py-0.5 rounded text-xs font-mono">
+                  isual
+                </code>
+                {" "}after{" "}
+                <code className="text-white/60 bg-white/[0.06] px-1.5 py-0.5 rounded text-xs font-mono">
+                  arxiv
+                </code>
+                .
+              </p>
+              <div className="rounded-lg border border-white/[0.08] bg-white/[0.03] p-3">
+                <p className="font-mono text-xs text-white/50">
+                  Before: arxiv.org/abs/1706.03762
+                </p>
+                <p className="font-mono text-xs text-white/70 mt-1">
+                  After:&nbsp;&nbsp;arxivisual.org/abs/1706.03762
+                </p>
+              </div>
+            </div>
           </GlassCard>
         </motion.div>
 

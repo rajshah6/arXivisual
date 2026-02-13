@@ -19,7 +19,7 @@ You’ll deploy the **backend first**, then the frontend (so you can set the API
 
 - GitHub repo with this project pushed
 - Accounts (free): [GitHub](https://github.com), [Vercel](https://vercel.com), [Render](https://render.com)
-- Backend API keys in `.env`: `MARTIAN_API_KEY`, `ELEVEN_API_KEY` (you already have these locally)
+- Backend API keys in `.env`: `DEDALUS_API_KEY`, `ELEVEN_API_KEY` (you already have these locally)
 
 ---
 
@@ -57,7 +57,7 @@ git push origin main
 
 | Key | Value | Notes |
 |-----|--------|--------|
-| `MARTIAN_API_KEY` | (your key from `.env`) | Required for LLM |
+| `DEDALUS_API_KEY` | (your key from `.env`) | Required for LLM |
 | `ELEVEN_API_KEY` | (your key from `.env`) | Required for voiceover |
 
 Do **not** commit your real keys to git; only add them in Render’s UI.
@@ -137,7 +137,7 @@ Open that URL; the app will call your Render backend using `NEXT_PUBLIC_API_URL`
 
 - **Build**: `pip install -r requirements.txt` (root = `backend`)
 - **Start**: `uvicorn main:app --host 0.0.0.0 --port $PORT`
-- **Env vars**: `MARTIAN_API_KEY`, `ELEVEN_API_KEY`
+- **Env vars**: `DEDALUS_API_KEY`, `ELEVEN_API_KEY`
 
 ### Frontend (Vercel)
 
@@ -170,14 +170,14 @@ uv run uvicorn main:app --reload --port 8000
 
 ### Health check works but `/api/process` or paper endpoints fail
 
-- Ensure `MARTIAN_API_KEY` and `ELEVEN_API_KEY` are set in Render.
+- Ensure `DEDALUS_API_KEY` and `ELEVEN_API_KEY` are set in Render.
 - Check Render **Logs** for Python tracebacks.
 
 ---
 
 ## Summary
 
-1. **Backend**: Render → New Web Service → repo root `backend`, build `pip install -r requirements.txt`, start `uvicorn main:app --host 0.0.0.0 --port $PORT`, add `MARTIAN_API_KEY` and `ELEVEN_API_KEY`.
+1. **Backend**: Render → New Web Service → repo root `backend`, build `pip install -r requirements.txt`, start `uvicorn main:app --host 0.0.0.0 --port $PORT`, add `DEDALUS_API_KEY` and `ELEVEN_API_KEY`.
 2. **Frontend**: Vercel → Import repo → root `frontend`, add `NEXT_PUBLIC_API_URL` = Render URL, deploy.
 3. Open the Vercel URL and use the app; the frontend will talk to the backend on Render.
 

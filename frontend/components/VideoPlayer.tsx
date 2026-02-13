@@ -7,6 +7,7 @@ type Props = {
   title?: string;
   className?: string;
   autoPlay?: boolean;
+  pauseWhenInactive?: boolean;
 };
 
 function formatTime(seconds: number): string {
@@ -21,11 +22,14 @@ export function VideoPlayer({
   title = "Visualization video",
   className,
   autoPlay = false,
+  pauseWhenInactive = false,
 }: Props) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const [hadError, setHadError] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [progress, setProgress] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -70,10 +74,61 @@ export function VideoPlayer({
     v.currentTime = Math.max(0, Math.min(duration, pct * duration));
   }
 
+  async function toggleFullscreen() {
+    const container = containerRef.current;
+    const video = videoRef.current;
+    if (!container || !video) return;
+
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+        return;
+      }
+      if (container.requestFullscreen) {
+        await container.requestFullscreen();
+        return;
+      }
+    } catch {
+      // Fall back to iOS video fullscreen below.
+    }
+
+    const iosVideo = video as HTMLVideoElement & {
+      webkitEnterFullscreen?: () => void;
+    };
+    if (typeof iosVideo.webkitEnterFullscreen === "function") {
+      iosVideo.webkitEnterFullscreen();
+    }
+  }
+
+  useEffect(() => {
+    function onFullscreenChange() {
+      const fsEl = document.fullscreenElement;
+      setIsFullscreen(
+        Boolean(
+          fsEl &&
+            (fsEl === containerRef.current || fsEl === videoRef.current)
+        )
+      );
+    }
+
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!pauseWhenInactive) return;
+    const v = videoRef.current;
+    if (!v || v.paused) return;
+    v.pause();
+  }, [pauseWhenInactive]);
+
   if (!src) return null;
 
   return (
     <div
+      ref={containerRef}
       className={[
         "relative overflow-hidden rounded-xl bg-black border border-white/[0.06]",
         className ?? "",
@@ -161,6 +216,14 @@ export function VideoPlayer({
             <div className="rounded-md bg-black/50 backdrop-blur-sm px-2 py-1 text-[11px] text-white/40 border border-white/[0.06]">
               {isReady ? "HD" : "Loading..."}
             </div>
+            <button
+              type="button"
+              onClick={toggleFullscreen}
+              aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+              className="rounded-md bg-black/50 backdrop-blur-sm px-2 py-1 text-[11px] text-white/60 border border-white/[0.06] hover:text-white transition"
+            >
+              {isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
+            </button>
           </div>
         )}
       </div>

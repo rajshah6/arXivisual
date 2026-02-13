@@ -182,7 +182,7 @@ async def process_paper_job(job_id: str, arxiv_id: str):
 
             await queries.update_job_status(
                 db, job_id,
-                current_step="Generating Manim animations",
+                current_step="Generating animations",
                 progress=0.70,
                 sections_total=len(viz_records),
                 sections_completed=0

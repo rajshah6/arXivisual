@@ -449,12 +449,11 @@ The frontend's polling loop picks this up and loads the paper page with embedded
 
 ## How the LLM Calls Work
 
-Every agent in the pipeline needs to call Claude. The system supports 3 LLM providers, auto-detected from environment variables in priority order:
+Every agent in the pipeline needs to call Claude. The system uses a Dedalus-only configuration:
 
 ```
   1. DEDALUS_API_KEY set?  -->  Use Dedalus SDK (AsyncDedalus + DedalusRunner)
-  2. MARTIAN_API_KEY set?  -->  Use Anthropic SDK with Martian proxy base URL
-  3. ANTHROPIC_API_KEY set? --> Use Anthropic SDK directly
+  2. Missing key?          -->  Fail fast with a configuration error
 ```
 
 All agents inherit from `BaseAgent` (`agents/base.py`), which handles:

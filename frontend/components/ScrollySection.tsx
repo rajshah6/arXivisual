@@ -218,7 +218,11 @@ export function ScrollySection({
                 className="mt-6"
               >
                 <div className="rounded-xl overflow-hidden border border-white/[0.06] bg-black/30">
-                  <VideoPlayer src={section.videoUrl} title="Visualization" />
+                  <VideoPlayer
+                    src={section.videoUrl}
+                    title="Visualization"
+                    pauseWhenInactive={!isActive}
+                  />
                 </div>
               </motion.div>
             )}

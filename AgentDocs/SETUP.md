@@ -58,11 +58,10 @@ cp .env.example .env
 Edit `backend/.env`:
 
 ```env
-# REQUIRED - Pick one LLM provider:
-MARTIAN_API_KEY=sk-your-martian-key-here      # Recommended (unlimited for hackathon)
-# ANTHROPIC_API_KEY=sk-ant-your-key-here      # Direct Anthropic (pay per token)
+# REQUIRED:
+DEDALUS_API_KEY=dsk-your-dedalus-key-here
 
-# OPTIONAL - For AI voiceovers:
+# REQUIRED - For AI voiceovers:
 ELEVEN_API_KEY=your-elevenlabs-key-here       # From elevenlabs.io (free tier works)
 ```
 
@@ -70,8 +69,7 @@ ELEVEN_API_KEY=your-elevenlabs-key-here       # From elevenlabs.io (free tier wo
 
 | Key | Sign Up | Notes |
 |-----|---------|-------|
-| Martian | [withmartian.com](https://withmartian.com) | Proxies to Claude; unlimited for hackathon |
-| Anthropic | [console.anthropic.com](https://console.anthropic.com) | Direct access; pay per token (~$0.50-2.00 per pipeline run with Opus) |
+| Dedalus | [dedaluslabs.ai](https://www.dedaluslabs.ai/dashboard/api-keys) | Required LLM provider for this project |
 | ElevenLabs | [elevenlabs.io](https://elevenlabs.io) | Free tier: 10k characters/month; enough for ~5-10 visualizations |
 
 ### 3. Install dependencies

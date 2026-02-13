@@ -24,7 +24,7 @@ const DEMO_STEPS = [
   { label: "Fetching paper from arXiv", at: 0 },
   { label: "Parsing sections and equations", at: 0.2 },
   { label: "Analyzing concepts for visualization", at: 0.4 },
-  { label: "Generating Manim animations", at: 0.6 },
+  { label: "Generating animations", at: 0.6 },
   { label: "Rendering videos", at: 0.8 },
 ];
 
@@ -243,6 +243,26 @@ export default function PaperPage({
   useEffect(() => {
     if (bgReady) loadPaper();
   }, [bgReady, loadPaper]);
+
+  // Refetch when paper has sections but no videos (rendering may have just finished)
+  const hasSectionsWithoutVideos =
+    state.type === "ready" &&
+    state.paper.sections.some((s) => !s.video_url);
+  useEffect(() => {
+    if (!hasSectionsWithoutVideos || !arxivId) return;
+    let retries = 0;
+    const maxRetries = 12; // ~2 min
+    const refetchInterval = setInterval(async () => {
+      retries++;
+      if (retries > maxRetries) return clearInterval(refetchInterval);
+      const paper = await getPaper(arxivId);
+      if (paper && paper.sections.some((s) => s.video_url)) {
+        setState({ type: "ready", paper });
+        clearInterval(refetchInterval);
+      }
+    }, 10000);
+    return () => clearInterval(refetchInterval);
+  }, [hasSectionsWithoutVideos, arxivId]);
 
   const onProgressChange = useCallback((progress: number) => {
     setScrollProgress(progress);
@@ -510,7 +530,7 @@ function NotFoundState({
           <h2 className="text-2xl font-medium text-white/90">Paper Not Yet Processed</h2>
           <p className="mt-4 text-white/70 leading-relaxed">
             This paper (<span className="font-mono text-white/80 bg-white/15 px-2 py-0.5 rounded">{arxivId}</span>) hasn&apos;t been visualized yet.
-            We&apos;ll parse the content and generate Manim animations for key concepts.
+            We&apos;ll parse the content and generate animations for key concepts.
           </p>
 
           <div className="mt-8 space-y-4">
@@ -540,7 +560,7 @@ function ProcessingState({ status }: { status: ProcessingStatus }) {
     { label: "Fetching paper from arXiv", threshold: 10, icon: "\u222B" },
     { label: "Parsing sections and content", threshold: 30, icon: "\u2202" },
     { label: "Analyzing concepts for visualization", threshold: 50, icon: "\u2207" },
-    { label: "Generating Manim animations", threshold: 70, icon: "\u03BB" },
+    { label: "Generating animations", threshold: 70, icon: "\u03BB" },
     { label: "Rendering videos", threshold: 90, icon: "\u221E" },
   ];
 

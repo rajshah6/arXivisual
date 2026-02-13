@@ -1,12 +1,10 @@
-"""Base agent class with multi-provider LLM support (Dedalus, Martian, Anthropic)."""
+"""Base agent class with Dedalus-only LLM support."""
 
 import json
 import os
 import re
 from pathlib import Path
 from typing import Any
-
-from anthropic import Anthropic
 
 # Load .env file if it exists
 try:
@@ -18,36 +16,30 @@ except ImportError:
     pass  # python-dotenv not installed, use system env vars
 
 
-# Martian API configuration
-MARTIAN_BASE_URL = "https://api.withmartian.com/v1"
-
 # Default model
 DEFAULT_MODEL = "claude-opus-4-5-20251101"
 
-# Provider detection: "dedalus", "martian", or "anthropic"
-_provider: str | None = None
+# Provider is intentionally fixed to Dedalus for production consistency.
+_provider: str = "dedalus"
 
 # Shared Dedalus runner (reuse across agents to avoid re-init)
 _dedalus_runner = None
 
 
 def _detect_provider() -> str:
-    """Detect which LLM provider to use.
-
-    Priority: DEDALUS_API_KEY -> MARTIAN_API_KEY -> ANTHROPIC_API_KEY
-    """
-    if os.environ.get("DEDALUS_API_KEY"):
-        return "dedalus"
-    if os.environ.get("MARTIAN_API_KEY"):
-        return "martian"
-    return "anthropic"
+    """Detect provider and enforce Dedalus-only configuration."""
+    if not os.environ.get("DEDALUS_API_KEY"):
+        raise RuntimeError(
+            "DEDALUS_API_KEY is required. This project is configured to use "
+            "Dedalus-only LLM routing."
+        )
+    return "dedalus"
 
 
 def get_provider() -> str:
     """Get the current provider name."""
-    global _provider
-    if _provider is None:
-        _provider = _detect_provider()
+    # Always validate env when requested so misconfigurations fail fast.
+    _detect_provider()
     return _provider
 
 
@@ -68,20 +60,9 @@ def _dedalus_model(model: str) -> str:
     return f"anthropic/{model}"
 
 
-def _get_client() -> Anthropic | None:
-    """Get an Anthropic SDK client for Martian or direct Anthropic.
-
-    Returns None when using Dedalus (use call_llm / call_llm_sync instead).
-    """
-    provider = get_provider()
-    if provider == "dedalus":
-        return None
-    if provider == "martian":
-        return Anthropic(
-            api_key=os.environ["MARTIAN_API_KEY"],
-            base_url=MARTIAN_BASE_URL,
-        )
-    return Anthropic()
+def _get_client() -> None:
+    """Compatibility shim: there is no direct SDK client in Dedalus-only mode."""
+    return None
 
 
 def get_model_name(model: str | None = None) -> str:
@@ -99,27 +80,16 @@ async def call_llm(
     system_prompt: str = "",
     max_tokens: int = 4096,
 ) -> str:
-    """Async LLM call routed to the configured provider."""
-    provider = get_provider()
-
-    if provider == "dedalus":
-        runner = _get_dedalus_runner()
-        result = await runner.run(
-            input=prompt,
-            model=_dedalus_model(model),
-            instructions=system_prompt,
-            max_tokens=max_tokens,
-        )
-        return result.final_output or ""
-
-    client = _get_client()
-    response = client.messages.create(
-        model=model,
+    """Async LLM call routed through Dedalus."""
+    get_provider()
+    runner = _get_dedalus_runner()
+    result = await runner.run(
+        input=prompt,
+        model=_dedalus_model(model),
+        instructions=system_prompt,
         max_tokens=max_tokens,
-        system=system_prompt,
-        messages=[{"role": "user", "content": prompt}],
     )
-    return response.content[0].text
+    return result.final_output or ""
 
 
 def call_llm_sync(
@@ -128,38 +98,25 @@ def call_llm_sync(
     system_prompt: str = "",
     max_tokens: int = 4096,
 ) -> str:
-    """Synchronous LLM call routed to the configured provider."""
-    provider = get_provider()
+    """Synchronous LLM call routed through Dedalus."""
+    import asyncio
 
-    if provider == "dedalus":
-        import asyncio
-        runner = _get_dedalus_runner()
-        result = asyncio.run(runner.run(
-            input=prompt,
-            model=_dedalus_model(model),
-            instructions=system_prompt,
-            max_tokens=max_tokens,
-        ))
-        return result.final_output or ""
-
-    client = _get_client()
-    response = client.messages.create(
-        model=model,
+    get_provider()
+    runner = _get_dedalus_runner()
+    result = asyncio.run(runner.run(
+        input=prompt,
+        model=_dedalus_model(model),
+        instructions=system_prompt,
         max_tokens=max_tokens,
-        system=system_prompt,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return response.content[0].text
+    ))
+    return result.final_output or ""
 
 
 class BaseAgent:
     """
     Base class for all AI agents in the pipeline.
 
-    Supports three LLM providers (auto-detected from env vars):
-    - Dedalus SDK (DEDALUS_API_KEY) — routes to Anthropic models via Dedalus
-    - Martian proxy (MARTIAN_API_KEY) — routes to Anthropic via Martian
-    - Direct Anthropic (ANTHROPIC_API_KEY) — direct Anthropic API
+    Uses Dedalus SDK only (DEDALUS_API_KEY).
     """
 
     def __init__(
@@ -177,13 +134,8 @@ class BaseAgent:
         # Keep self.client for any code that still references it directly
         self.client = _get_client()
 
-        # Log which provider is active
-        if self._provider == "dedalus":
-            print(f"🔮 Dedalus SDK → anthropic/{self.model}")
-        elif self._provider == "martian":
-            print(f"🚀 Martian API → {self.model}")
-        else:
-            print(f"🔑 Anthropic API → {self.model}")
+        # Log active provider
+        print(f"🔮 Dedalus SDK → anthropic/{self.model}")
 
     def _get_prompts_dir(self) -> Path:
         """Get the prompts directory path."""

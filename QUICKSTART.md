@@ -44,7 +44,8 @@ npm install
 ```env
 # Minimal setup for local testing
 DATABASE_URL=sqlite+aiosqlite:///./arxiviz.db
-ANTHROPIC_API_KEY=sk-ant-xxxxx  # Get from console.anthropic.com
+DEDALUS_API_KEY=dsk-your-dedalus-key
+ELEVEN_API_KEY=your-elevenlabs-key
 ```
 
 **Frontend** - Create `frontend/.env.local`:
@@ -159,7 +160,7 @@ MODAL_TOKEN_SECRET=your_token_secret
 
 - **Frontend**: Next.js 16, React 19, Tailwind CSS, Framer Motion
 - **Backend**: Python 3.11+, FastAPI, SQLAlchemy
-- **AI**: Anthropic Claude API
+- **AI**: Dedalus SDK (Claude models)
 - **Video**: Manim Community Edition on Modal.com
 - **Storage**: PostgreSQL, Redis, S3/Cloudflare R2
 

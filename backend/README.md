@@ -48,11 +48,10 @@ cp .env.example .env
 Edit `.env` with your keys:
 
 ```env
-# REQUIRED - Pick one:
-MARTIAN_API_KEY=sk-your-martian-key      # Recommended (unlimited for hackathon)
-# ANTHROPIC_API_KEY=sk-ant-your-key      # Direct Anthropic (pay per token)
+# REQUIRED:
+DEDALUS_API_KEY=dsk-your-dedalus-key
 
-# OPTIONAL - For AI voiceovers:
+# REQUIRED - For AI voiceovers:
 ELEVEN_API_KEY=your-elevenlabs-key       # elevenlabs.io free tier works
 ```
 
@@ -265,9 +264,9 @@ VOICEOVER_TARGET_DURATION_SECONDS = (30, 45)
 The LLM model is configured in `agents/base.py`:
 
 ```python
-DEFAULT_MODEL_ANTHROPIC = "claude-opus-4-5-20251101"     # Best quality (~60-90s/viz)
+DEFAULT_MODEL = "claude-opus-4-5-20251101"               # Best quality (~60-90s/viz)
 # Change to:
-DEFAULT_MODEL_ANTHROPIC = "claude-sonnet-4-20250514"     # Faster (~20-30s/viz)
+DEFAULT_MODEL = "claude-sonnet-4-20250514"               # Faster (~20-30s/viz)
 ```
 
 ### ElevenLabs Voices

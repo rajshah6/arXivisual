@@ -12,46 +12,14 @@ Output populates both .content and .summary on each Section.
 
 import json
 import logging
-import os
 import re
-from pathlib import Path
-from typing import Optional
 
-from dotenv import load_dotenv
-from openai import AsyncOpenAI
-
+from agents.base import call_llm
 from models.paper import Section, ArxivPaperMeta
-
-# Load .env so MARTIAN_API_KEY is available when called from any entry point
-_env_path = Path(__file__).parent.parent / ".env"
-if _env_path.exists():
-    load_dotenv(_env_path)
 
 logger = logging.getLogger(__name__)
 
-# Lazy-initialized client
-_client: Optional[AsyncOpenAI] = None
-
 MAX_SECTIONS = 5
-
-
-def _get_client() -> AsyncOpenAI:
-    """Get or create the OpenAI client (pointed at Martian router)."""
-    global _client
-    if _client is None:
-        api_key = os.getenv("MARTIAN_API_KEY")
-        if not api_key:
-            print("[FORMATTER] ERROR: MARTIAN_API_KEY not set in environment!")
-            raise RuntimeError(
-                "MARTIAN_API_KEY environment variable is required for section formatting. "
-                "Set it in your .env file or environment."
-            )
-        print(f"[FORMATTER] Initializing Martian client (key: {api_key[:8]}...)")
-        _client = AsyncOpenAI(
-            api_key=api_key,
-            base_url="https://api.withmartian.com/v1",
-        )
-    return _client
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +87,8 @@ FORMATTING:
 - Use **bold** for key terms when first introduced
 - Use bullet points sparingly for lists of results or contributions
 - Preserve LaTeX notation for important equations
+- Do NOT use TeX text styling commands like \textsc, \textbf, \mathrm for prose
+- Write model names in plain text (e.g., "BERT Base", "BERT Large"), not split letters
 - Do NOT invent information not in the source paper
 - Do NOT start with "This paper..." or any preamble -- just begin explaining
 
@@ -136,8 +106,6 @@ async def _summarize_paper(
 
     Returns plain markdown text at 30-40% of original length.
     """
-    client = _get_client()
-
     target_pct = 35  # aim for middle of 30-40% range
     target_words = max(300, int(total_words * target_pct / 100))
 
@@ -157,17 +125,13 @@ Full paper content:
 
     print(f"[FORMATTER] Phase 1: Summarizing paper ({total_words} words -> ~{target_words} words)...")
 
-    response = await client.chat.completions.create(
+    result = await call_llm(
+        prompt=user_prompt,
         model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0.3,
+        system_prompt=system_prompt,
         max_tokens=16000,
     )
-
-    result = response.choices[0].message.content.strip()
+    result = result.strip()
     result_words = len(result.split())
     compression = round(result_words / total_words * 100) if total_words > 0 else 0
     print(f"[FORMATTER] Phase 1 complete: {total_words} -> {result_words} words ({compression}% of original)")
@@ -219,8 +183,6 @@ async def _organize_into_sections(
 
     Returns list of dicts with 'title' and 'content' keys.
     """
-    client = _get_client()
-
     system_prompt = ORGANIZE_SYSTEM_PROMPT.replace(
         "{max_sections}", str(MAX_SECTIONS)
     )
@@ -234,17 +196,13 @@ Summarized text to organize into sections:
     summary_words = len(summary_text.split())
     print(f"[FORMATTER] Phase 2: Organizing {summary_words} words into <={MAX_SECTIONS} sections...")
 
-    response = await client.chat.completions.create(
+    raw_response = await call_llm(
+        prompt=user_prompt,
         model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0.2,
+        system_prompt=system_prompt,
         max_tokens=16000,
     )
-
-    raw_response = response.choices[0].message.content.strip()
+    raw_response = raw_response.strip()
 
     # Strip markdown code fences if present
     if raw_response.startswith("```"):
@@ -311,6 +269,47 @@ def _fallback_split(text: str, max_sections: int = MAX_SECTIONS) -> list[dict]:
     return sections
 
 
+def _clean_display_text(text: str) -> str:
+    """
+    Clean common LLM/PDF formatting artifacts that break markdown rendering.
+
+    Specifically normalizes split small-caps sequences such as:
+      \\textsc
+      L
+      A
+      R
+      G
+      E
+    into:
+      LARGE
+    """
+    if not text:
+        return text
+
+    cleaned = text
+
+    # Remove zero-width characters.
+    cleaned = re.sub(r"[\u200B-\u200D\uFEFF]", "", cleaned)
+
+    # Remove \textsc marker while preserving inline word, e.g. \textscBASE -> BASE
+    cleaned = re.sub(r"\\textsc\s*([A-Za-z]+)", r"\1", cleaned)
+    cleaned = re.sub(r"\\textsc\b", "", cleaned)
+
+    # Collapse letter-per-line runs: L\nA\nR\nG\nE -> LARGE
+    cleaned = re.sub(
+        r"(?m)^(?:[A-Z]\s*\n){2,}[A-Z]\s*$",
+        lambda m: "".join(ch for ch in m.group(0) if ch.isalpha()),
+        cleaned,
+    )
+
+    # Remove immediate duplicate line after collapse, e.g. LARGE\nLARGE
+    cleaned = re.sub(r"(?m)^([A-Z]{2,})\n\1$", r"\1", cleaned)
+
+    # Normalize excessive blank lines
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -331,7 +330,7 @@ async def format_sections(
     Args:
         sections: Sections from extract_sections()
         meta: Paper metadata for context
-        model: Martian model identifier (e.g. "claude-sonnet-4-5-20250929")
+        model: Claude model identifier (e.g. "claude-sonnet-4-5-20250929")
         max_concurrent: Max concurrent API calls
 
     Returns:
@@ -352,8 +351,10 @@ async def format_sections(
         summary_text = await _summarize_paper(full_content, meta.title, total_words, model)
     except Exception as e:
         logger.error(f"Phase 1 (summarization) failed: {e}")
-        print(f"[FORMATTER] Phase 1 FAILED ({type(e).__name__}: {e}), using raw content")
-        summary_text = full_content  # fallback: use raw content
+        print(f"[FORMATTER] Phase 1 FAILED ({type(e).__name__}: {e}), aborting pipeline")
+        raise RuntimeError(
+            "Section summarization failed. No paper content was stored to avoid raw-text fallback."
+        ) from e
 
     # --- Phase 2: Section organization ---
     try:
@@ -366,12 +367,13 @@ async def format_sections(
     # --- Build final Section objects ---
     result_sections: list[Section] = []
     for i, org_section in enumerate(organized):
+        cleaned_content = _clean_display_text(org_section["content"])
         section = Section(
             id=f"{meta.arxiv_id}-section-{i + 1}",
             title=org_section["title"],
             level=1,
-            content=org_section["content"],
-            summary=org_section["content"],
+            content=cleaned_content,
+            summary=cleaned_content,
             equations=[],
             figures=[],
             tables=[],

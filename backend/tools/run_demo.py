@@ -8,11 +8,11 @@ This script:
 3. Optionally renders the videos using Manim
 
 Usage (from the backend/ directory):
-    uv run python run_demo.py                         # Generate and save code
-    uv run python run_demo.py --render                # Also render videos
-    uv run python run_demo.py --render --quality low  # Faster render for testing
-    uv run python run_demo.py --verbose               # Show detailed agent logs
-    uv run python run_demo.py --max 3                 # Generate up to 3 visualizations
+    uv run python tools/run_demo.py                         # Generate and save code
+    uv run python tools/run_demo.py --render                # Also render videos
+    uv run python tools/run_demo.py --render --quality low  # Faster render for testing
+    uv run python tools/run_demo.py --verbose               # Show detailed agent logs
+    uv run python tools/run_demo.py --max 3                 # Generate up to 3 visualizations
 """
 
 import asyncio
@@ -26,7 +26,7 @@ from pathlib import Path
 from datetime import datetime
 
 # Add backend to path
-backend_dir = Path(__file__).parent
+backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
@@ -483,10 +483,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  uv run python run_demo.py                    # Generate visualizations
-  uv run python run_demo.py --verbose          # Show detailed agent logs
-  uv run python run_demo.py --render           # Generate and render videos
-  uv run python run_demo.py --max 3            # Generate up to 3 visualizations
+  uv run python tools/run_demo.py                    # Generate visualizations
+  uv run python tools/run_demo.py --verbose          # Show detailed agent logs
+  uv run python tools/run_demo.py --render           # Generate and render videos
+  uv run python tools/run_demo.py --max 3            # Generate up to 3 visualizations
         """
     )
     parser.add_argument("--render", action="store_true", help="Render videos after generation")
@@ -553,8 +553,8 @@ Examples:
         print(f"  1. cd {OUTPUT_DIR}")
         print("  2. uv run manim -qm <filename>.py")
         print("\nOr run this script with --render:")
-        print("  uv run python run_demo.py --render")
-        print("  uv run python run_demo.py --render --quality low   # Faster (480p)")
+        print("  uv run python tools/run_demo.py --render")
+        print("  uv run python tools/run_demo.py --render --quality low   # Faster (480p)")
         print("\nOutput videos will be in:")
         print(f"  {OUTPUT_DIR}/media/videos/")
 

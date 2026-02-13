@@ -9,23 +9,23 @@ Usage:
     cd backend
 
     # Run offline tests (no API key required):
-    uv run python test_pipeline.py
+    uv run python tools/test_pipeline.py
 
     # Run full online tests (requires API key in .env):
-    uv run python test_pipeline.py --online
+    uv run python tools/test_pipeline.py --online
 
     # Run a specific agent test:
-    uv run python test_pipeline.py --online --test analyzer
-    uv run python test_pipeline.py --online --test planner
-    uv run python test_pipeline.py --online --test generator
-    uv run python test_pipeline.py --online --test pipeline
+    uv run python tools/test_pipeline.py --online --test analyzer
+    uv run python tools/test_pipeline.py --online --test planner
+    uv run python tools/test_pipeline.py --online --test generator
+    uv run python tools/test_pipeline.py --online --test pipeline
 """
 
 import sys
 from pathlib import Path
 
 # Add the backend directory to path for direct script execution
-backend_dir = Path(__file__).parent
+backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
@@ -674,6 +674,6 @@ if __name__ == "__main__":
         print("      DEDALUS_API_KEY=your_key")
         print("")
         print("   2. Run tests (from the backend/ directory):")
-        print("      uv run python test_pipeline.py --online                    # Full pipeline")
-        print("      uv run python test_pipeline.py --online --test analyzer    # Just analyzer")
-        print("      uv run python test_pipeline.py --online --test generator   # Just generator")
+        print("      uv run python tools/test_pipeline.py --online                    # Full pipeline")
+        print("      uv run python tools/test_pipeline.py --online --test analyzer    # Just analyzer")
+        print("      uv run python tools/test_pipeline.py --online --test generator   # Just generator")

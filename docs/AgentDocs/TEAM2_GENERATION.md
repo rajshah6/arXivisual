@@ -109,8 +109,8 @@ backend/
 │   ├── matrix_operations.py         # matrix type
 │   └── three_d_network.py           # three_d type
 │
-├── run_demo.py                      # Demo runner (generate + render)
-├── test_pipeline.py                 # Test harness (offline + online)
+├── tools/run_demo.py                # Demo runner (generate + render)
+├── tools/test_pipeline.py           # Test harness (offline + online)
 ├── test_voiceover.py                # Voiceover-specific tests
 ├── pyproject.toml                   # Project config + dependencies (uv)
 ├── uv.lock                          # Locked dependency versions
@@ -401,18 +401,18 @@ Visualization
 cd backend
 
 # Offline (no API key needed) - tests models + code validator
-uv run python test_pipeline.py
+uv run python tools/test_pipeline.py
 
 # Online - test individual agents
-uv run python test_pipeline.py --online --test analyzer     # Section analysis
-uv run python test_pipeline.py --online --test planner      # Storyboard planning
-uv run python test_pipeline.py --online --test generator    # Manim code generation
-uv run python test_pipeline.py --online --test pipeline     # Full pipeline (1 viz)
+uv run python tools/test_pipeline.py --online --test analyzer     # Section analysis
+uv run python tools/test_pipeline.py --online --test planner      # Storyboard planning
+uv run python tools/test_pipeline.py --online --test generator    # Manim code generation
+uv run python tools/test_pipeline.py --online --test pipeline     # Full pipeline (1 viz)
 
 # Demo - generate + save code
-uv run python run_demo.py                                   # 2 visualizations
-uv run python run_demo.py --max 3 --verbose                 # 3 viz + debug logs
-uv run python run_demo.py --render --quality low            # Generate + render
+uv run python tools/run_demo.py                                   # 2 visualizations
+uv run python tools/run_demo.py --max 3 --verbose                 # 3 viz + debug logs
+uv run python tools/run_demo.py --render --quality low            # Generate + render
 ```
 
 ---

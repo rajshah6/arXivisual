@@ -283,4 +283,4 @@ asyncio.run(check_viz())
 - **Issues?** Check the logs for specific error messages and stack traces
 - **Optimization?** Profile the slow steps and consider parallelization options
 
-For more info on the pipeline architecture, see [ARCHITECTURE.md](../ARCHITECTURE.md).
+For more info on the pipeline architecture, see [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md).

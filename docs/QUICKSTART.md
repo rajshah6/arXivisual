@@ -95,7 +95,7 @@ MosiacManim/
 ├── frontend/            # Next.js app
 │   ├── app/abs/        # Paper display pages
 │   └── components/     # Scrollytelling UI
-└── AgentDocs/          # Full documentation
+└── docs/AgentDocs/     # Full documentation
 ```
 
 ## Key API Endpoints
@@ -121,14 +121,14 @@ npm run build                          # Build for production
 
 ## Need Help?
 
-- **Full Setup Guide**: See `AgentDocs/SETUP.md` for detailed instructions
-- **Architecture**: Read `AgentDocs/PROJECT_OVERVIEW.md`
-- **API Documentation**: Check `AgentDocs/API_SPEC.md`
+- **Full Setup Guide**: See `docs/AgentDocs/SETUP.md` for detailed instructions
+- **Architecture**: Read `docs/AgentDocs/PROJECT_OVERVIEW.md`
+- **API Documentation**: Check `docs/AgentDocs/API_SPEC.md`
 - **Team Guides**:
-  - Team 1 (Ingestion): `AgentDocs/TEAM1_INGESTION.md`
-  - Team 2 (Generation): `AgentDocs/TEAM2_GENERATION.md`
-  - Team 3 (Backend): `AgentDocs/TEAM3_BACKEND.md`
-  - Team 4 (Frontend): `AgentDocs/TEAM4_FRONTEND.md`
+  - Team 1 (Ingestion): `docs/AgentDocs/TEAM1_INGESTION.md`
+  - Team 2 (Generation): `docs/AgentDocs/TEAM2_GENERATION.md`
+  - Team 3 (Backend): `docs/AgentDocs/TEAM3_BACKEND.md`
+  - Team 4 (Frontend): `docs/AgentDocs/TEAM4_FRONTEND.md`
 
 ## Optional: Full Infrastructure
 
@@ -189,6 +189,6 @@ DATABASE_URL=sqlite+aiosqlite:///./arxiviz.db
 
 ---
 
-**Ready to dive deeper?** Check out the full documentation in `AgentDocs/` 📚
+**Ready to dive deeper?** Check out the full documentation in `docs/AgentDocs/` 📚
 
 ;jhk.ylkkjlh

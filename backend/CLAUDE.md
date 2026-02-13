@@ -238,9 +238,9 @@ git show da1116e^:server/schemas.py  # Pydantic models
 ```
 
 ### 3. Documentation
-- `AgentDocs/TEAM3_BACKEND.md` - Full implementation guide
-- `AgentDocs/API_SPEC.md` - Detailed API specification
-- `AgentDocs/MANIM_PATTERNS.md` - Manim code examples
+- `docs/AgentDocs/TEAM3_BACKEND.md` - Full implementation guide
+- `docs/AgentDocs/API_SPEC.md` - Detailed API specification
+- `docs/AgentDocs/MANIM_PATTERNS.md` - Manim code examples
 
 ---
 

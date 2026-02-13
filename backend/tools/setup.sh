@@ -1,7 +1,7 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
 # ArXivisual Backend — One-Shot Setup
-# Run: cd backend && bash setup.sh
+# Run: cd backend && bash tools/setup.sh
 #
 # NOTE: We use Text() instead of MathTex() in all Manim scenes
 # so LaTeX/BasicTeX is NOT required. This keeps setup simple.

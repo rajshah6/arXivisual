@@ -14,14 +14,14 @@ cp .env.example .env              # Then edit .env with your API keys
 uv sync                           # Install all dependencies
 
 # Test
-uv run python test_pipeline.py                         # Offline (no API key)
-uv run python test_pipeline.py --online                # Full pipeline test
-uv run python test_pipeline.py --online --test analyzer    # Individual agent
+uv run python tools/test_pipeline.py                         # Offline (no API key)
+uv run python tools/test_pipeline.py --online                # Full pipeline test
+uv run python tools/test_pipeline.py --online --test analyzer    # Individual agent
 
 # Run
-uv run python run_demo.py                              # Generate visualizations
-uv run python run_demo.py --max 3 --verbose            # 3 visualizations, debug logs
-uv run python run_demo.py --render --quality low       # Generate + render at 480p
+uv run python tools/run_demo.py                              # Generate visualizations
+uv run python tools/run_demo.py --max 3 --verbose            # 3 visualizations, debug logs
+uv run python tools/run_demo.py --render --quality low       # Generate + render at 480p
 
 # Render manually
 cd generated_output
@@ -67,11 +67,11 @@ That's it. `uv run` automatically uses the virtual environment.
 
 ## How the Pipeline Works (Step by Step)
 
-Here's exactly what happens when you run `uv run python run_demo.py`:
+Here's exactly what happens when you run `uv run python tools/run_demo.py`:
 
 ### Step 0: Input Construction
 
-Currently, `run_demo.py` and `test_pipeline.py` construct a **hardcoded** `StructuredPaper` object simulating what Team 1 would provide. This includes:
+Currently, `tools/run_demo.py` and `tools/test_pipeline.py` construct a **hardcoded** `StructuredPaper` object simulating what Team 1 would provide. This includes:
 - Paper metadata (title, authors, abstract, arXiv ID)
 - Sections with their text content
 - Equations extracted from each section (LaTeX)
@@ -233,7 +233,7 @@ The final `Visualization` object is returned with:
 - `section_id`: Which paper section it belongs to
 - `storyboard`: The original plan (JSON) for reference
 
-`run_demo.py` saves each visualization as a `.py` file in `generated_output/`.
+`tools/run_demo.py` saves each visualization as a `.py` file in `generated_output/`.
 
 ---
 
@@ -329,7 +329,7 @@ Available voices (configured in `agents/voiceover_generator.py`):
 ### "Pipeline generated 0 visualizations"
 - Check the logs for which stage failed (analyzer, planner, generator, or validation)
 - Run with `--verbose` flag for detailed logs
-- Try running individual tests: `uv run python test_pipeline.py --online --test analyzer`
+- Try running individual tests: `uv run python tools/test_pipeline.py --online --test analyzer`
 
 ### Manim render fails
 - Make sure you have LaTeX installed: `brew install --cask basictex` (macOS)

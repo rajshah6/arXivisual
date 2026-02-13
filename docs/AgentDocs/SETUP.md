@@ -85,7 +85,7 @@ This creates a `.venv/`, resolves all dependencies, and installs them. You never
 
 ```bash
 cd backend
-uv run python test_pipeline.py
+uv run python tools/test_pipeline.py
 ```
 
 Expected output:
@@ -102,7 +102,7 @@ All offline tests passed!
 
 ```bash
 cd backend
-uv run python run_demo.py
+uv run python tools/run_demo.py
 ```
 
 This takes ~60-90 seconds (uses Claude Opus 4.5) and generates Manim `.py` files in `backend/generated_output/`.
@@ -112,7 +112,7 @@ This takes ~60-90 seconds (uses Claude Opus 4.5) and generates Manim `.py` files
 ```bash
 # Quick preview (480p)
 cd backend
-uv run python run_demo.py --render --quality low
+uv run python tools/run_demo.py --render --quality low
 
 # Or render manually
 cd generated_output
@@ -130,22 +130,22 @@ uv run manim -ql filename.py
 uv sync                                            # Install/update dependencies
 
 # ─── Offline Tests (no API key needed) ────────
-uv run python test_pipeline.py                     # Test models + code validator
+uv run python tools/test_pipeline.py                     # Test models + code validator
 
 # ─── Online Tests (need API key in .env) ──────
-uv run python test_pipeline.py --online                     # All agents + pipeline
-uv run python test_pipeline.py --online --test analyzer     # Just section analyzer
-uv run python test_pipeline.py --online --test planner      # Just visualization planner
-uv run python test_pipeline.py --online --test generator    # Just Manim generator
-uv run python test_pipeline.py --online --test pipeline     # Full pipeline (1 viz)
+uv run python tools/test_pipeline.py --online                     # All agents + pipeline
+uv run python tools/test_pipeline.py --online --test analyzer     # Just section analyzer
+uv run python tools/test_pipeline.py --online --test planner      # Just visualization planner
+uv run python tools/test_pipeline.py --online --test generator    # Just Manim generator
+uv run python tools/test_pipeline.py --online --test pipeline     # Full pipeline (1 viz)
 
 # ─── Demo Runner ──────────────────────────────
-uv run python run_demo.py                          # Generate 2 visualizations
-uv run python run_demo.py --max 3                  # Generate up to 3
-uv run python run_demo.py --verbose                # Show detailed agent logs
-uv run python run_demo.py --render                 # Generate + render to video
-uv run python run_demo.py --render --quality low   # Render at 480p (fastest)
-uv run python run_demo.py --render --quality high  # Render at 1080p
+uv run python tools/run_demo.py                          # Generate 2 visualizations
+uv run python tools/run_demo.py --max 3                  # Generate up to 3
+uv run python tools/run_demo.py --verbose                # Show detailed agent logs
+uv run python tools/run_demo.py --render                 # Generate + render to video
+uv run python tools/run_demo.py --render --quality low   # Render at 480p (fastest)
+uv run python tools/run_demo.py --render --quality high  # Render at 1080p
 
 # ─── Manual Rendering ─────────────────────────
 cd generated_output
@@ -177,7 +177,7 @@ uv run manim -qh filename.py                       # 1080p
 
 ### Pipeline generates 0 visualizations
 - Run with `--verbose` to see detailed logs
-- Test individual agents: `uv run python test_pipeline.py --online --test analyzer`
+- Test individual agents: `uv run python tools/test_pipeline.py --online --test analyzer`
 - Check the logs for which validation stage is failing
 
 ### ElevenLabs voiceover fails

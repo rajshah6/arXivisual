@@ -508,7 +508,7 @@ function NotFoundState({
 
         <h2 className="mt-8 text-2xl font-medium text-white/80">Paper Not Yet Processed</h2>
         <p className="mt-4 text-white/40 leading-relaxed">
-          This paper (<span className="font-mono text-white/60 bg-white/[0.06] px-2 py-0.5 rounded">{arxivId}</span>) hasn&apos;t been visualized yet.
+          This paper (<span className="font-mono text-white/80 bg-white/15 px-2 py-0.5 rounded">{arxivId}</span>) hasn&apos;t been visualized yet.
           We&apos;ll parse the content and generate Manim animations for key concepts.
         </p>
 

@@ -85,7 +85,7 @@ async def process_paper_job(job_id: str, arxiv_id: str):
                 db, job_id,
                 status="processing",
                 current_step="Fetching paper from arXiv",
-                progress=0.05
+                progress=0.10
             )
 
             paper_exists = await queries.paper_exists(db, arxiv_id)
@@ -105,6 +105,13 @@ async def process_paper_job(job_id: str, arxiv_id: str):
                     await db.commit()
                 logger.info("Job linked successfully")
 
+                # Update progress to match what would happen after ingestion
+                await queries.update_job_status(
+                    db, job_id,
+                    current_step="Paper already processed",
+                    progress=0.30
+                )
+
             # Step 2: Generate visualizations from structured paper
             logger.info("=" * 60)
             logger.info("STEP 2: Generating visualizations from structured paper")
@@ -112,8 +119,8 @@ async def process_paper_job(job_id: str, arxiv_id: str):
 
             await queries.update_job_status(
                 db, job_id,
-                current_step="Generating visualizations",
-                progress=0.3
+                current_step="Analyzing concepts for visualization",
+                progress=0.50
             )
 
             db_paper = await queries.get_paper(db, arxiv_id)
@@ -175,16 +182,26 @@ async def process_paper_job(job_id: str, arxiv_id: str):
 
             await queries.update_job_status(
                 db, job_id,
-                current_step="Rendering videos",
-                progress=0.4,
+                current_step="Generating Manim animations",
+                progress=0.70,
                 sections_total=len(viz_records),
                 sections_completed=0
             )
 
-            render_semaphore = asyncio.Semaphore(3)
-            progress_bar = ProgressBar(len(viz_records), "Video Rendering")
+            # Update again when actually rendering starts
+            await queries.update_job_status(
+                db, job_id,
+                current_step="Rendering videos",
+                progress=0.75
+            )
 
-            async def _render_one(viz: dict):
+            render_semaphore = asyncio.Semaphore(3)
+            progress_lock = asyncio.Lock()
+            progress_bar = ProgressBar(len(viz_records), "Video Rendering")
+            completed_count = 0
+
+            async def _render_one(viz: dict, index: int):
+                nonlocal completed_count
                 async with render_semaphore:
                     try:
                         logger.info(f"Starting render: {viz['id']}")
@@ -200,6 +217,16 @@ async def process_paper_job(job_id: str, arxiv_id: str):
                             video_url=video_url
                         )
                         progress_bar.update()
+
+                        # Update job progress incrementally (75% to 95%)
+                        async with progress_lock:
+                            completed_count += 1
+                            render_progress = 0.75 + (0.20 * (completed_count / len(viz_records)))
+                            await queries.update_job_status(
+                                db, job_id,
+                                progress=render_progress,
+                                sections_completed=completed_count
+                            )
                     except Exception as e:
                         logger.error(f"✗ Failed to render {viz['id']}: {str(e)}")
                         await queries.update_visualization_status(
@@ -209,17 +236,25 @@ async def process_paper_job(job_id: str, arxiv_id: str):
                         )
                         progress_bar.update()
 
+                        # Still update progress even on failure
+                        async with progress_lock:
+                            completed_count += 1
+                            render_progress = 0.75 + (0.20 * (completed_count / len(viz_records)))
+                            await queries.update_job_status(
+                                db, job_id,
+                                progress=render_progress,
+                                sections_completed=completed_count
+                            )
+
             logger.info(f"Rendering {len(viz_records)} videos concurrently (max 3 parallel)...")
             await asyncio.gather(*[
-                _render_one(viz) for viz in viz_records
+                _render_one(viz, i) for i, viz in enumerate(viz_records)
             ])
 
             logger.info("All videos rendered successfully!")
-            await queries.update_job_status(
-                db, job_id,
-                progress=0.9,
-                sections_completed=len(viz_records)
-            )
+
+            # Brief pause to ensure all DB commits have settled
+            await asyncio.sleep(0.5)
 
             # Step 4: Complete
             logger.info("=" * 60)
@@ -232,6 +267,8 @@ async def process_paper_job(job_id: str, arxiv_id: str):
                 current_step="Complete",
                 progress=1.0
             )
+
+            logger.info("Job status updated to completed with progress 1.0")
 
             logger.info("=" * 60)
             logger.info(f"✓ JOB COMPLETED SUCCESSFULLY: {job_id}")
@@ -263,7 +300,7 @@ async def _ingest_and_store_paper(db, job_id: str, arxiv_id: str):
     await queries.update_job_status(
         db, job_id,
         current_step="Fetching paper metadata from arXiv",
-        progress=0.1
+        progress=0.15
     )
 
     structured_paper = await ingest_paper(arxiv_id)
@@ -271,8 +308,8 @@ async def _ingest_and_store_paper(db, job_id: str, arxiv_id: str):
 
     await queries.update_job_status(
         db, job_id,
-        current_step=f"Parsed: {meta.title[:60]}",
-        progress=0.2
+        current_step="Parsing sections and content",
+        progress=0.30
     )
 
     # Store paper record

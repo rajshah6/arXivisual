@@ -261,7 +261,7 @@ export function toProcessingStatus(response: StatusResponse): ProcessingStatus {
   return {
     job_id: response.job_id,
     status: response.status,
-    progress: response.progress / 100, // Backend sends 0-100, frontend expects 0-1
+    progress: response.progress, // Backend sends 0.0-1.0, frontend expects 0-1
     sections_completed: response.sections_completed,
     sections_total: response.sections_total,
     current_step: response.current_step,

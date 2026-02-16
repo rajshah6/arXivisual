@@ -544,7 +544,7 @@ function NotFoundState({
             </motion.button>
 
             <p className="text-xs text-white/40">
-              This usually takes 1-3 minutes depending on paper length
+              This usually takes 3-5 minutes depending on paper length
             </p>
           </div>
         </div>

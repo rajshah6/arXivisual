@@ -15,8 +15,8 @@ app = modal.App("arxiviz-manim")
 manim_image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install(["ffmpeg", "libcairo2-dev", "libpango1.0-dev", "sox"])
+    .pip_install(["setuptools>=75.0.0,<81"])  # Must keep pkg_resources (removed in 81+)
     .pip_install([
-        "setuptools>=65.0.0",  # Required by manim-voiceover (pkg_resources)
         "manim>=0.18.0",
         "manim-voiceover[elevenlabs]>=0.3.0",
     ])
@@ -73,13 +73,14 @@ def render_manim_modal(code: str, scene_name: str, quality: str = "low_quality")
             f"--media_dir={output_dir}",
         ]
 
-        # Run manim
+        # Run manim (stdin=DEVNULL prevents any interactive input() from hanging)
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             timeout=300,
             cwd=tmpdir,
+            stdin=subprocess.DEVNULL,
         )
 
         if result.returncode != 0:
@@ -101,14 +102,22 @@ def render_manim_modal(code: str, scene_name: str, quality: str = "low_quality")
 def main():
     test_code = '''
 from manim import *
+from manim_voiceover import VoiceoverScene
+from manim_voiceover.services.elevenlabs import ElevenLabsService
 
-class TestScene(Scene):
+class TestScene(VoiceoverScene):
     def construct(self):
+        self.set_speech_service(ElevenLabsService(
+            voice_id="pNInz6obpgDQGcFmaJgB",
+            model="eleven_flash_v2_5",
+            transcription_model=None,
+        ))
         circle = Circle(color=BLUE)
-        self.play(Create(circle))
+        with self.voiceover(text="Here is a blue circle.") as tracker:
+            self.play(Create(circle), run_time=tracker.duration)
         self.wait()
 '''
-    print("Rendering test scene on Modal...")
+    print("Rendering voiceover test scene on Modal...")
     video_bytes = render_manim_modal.remote(test_code, "TestScene", "low_quality")
 
     output_path = Path("modal_test_output.mp4")

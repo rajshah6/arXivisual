@@ -99,15 +99,22 @@ async def ingest_paper(
     # Step 3: Extract sections
     logger.info("Extracting sections from parsed content")
     sections = extract_sections(content, meta)
-    logger.info(f"Extracted {len(sections)} sections")
+    raw_count = len(sections)
+    total_chars = sum(len(s.content) for s in sections)
+    logger.info(f"Extracted {raw_count} raw sections ({total_chars:,} chars total)")
 
     # Step 4: Summarize + organize into <=5 sections (two-phase LLM pipeline)
     try:
         sections = await format_sections(sections, meta)
-        print(f"[INGESTION] Paper summarized and organized: {len(sections)} final sections")
+        logger.info(
+            f"Section formatting succeeded: {raw_count} raw → {len(sections)} summarized sections"
+        )
     except Exception as e:
-        print(f"[INGESTION] WARNING: Section formatting skipped: {type(e).__name__}: {e}")
-        logger.warning(f"Section formatting skipped (sections will use raw content): {e}")
+        logger.error(
+            f"Section formatting FAILED ({type(e).__name__}: {e}). "
+            f"Falling back to {raw_count} raw sections. "
+            f"This usually means the LLM call timed out or the API key is invalid."
+        )
 
     # Step 5: Build final structure
     paper = StructuredPaper(

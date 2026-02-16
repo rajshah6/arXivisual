@@ -1,10 +1,14 @@
 """Base agent class with Dedalus-only LLM support."""
 
 import json
+import logging
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # Load .env file if it exists
 try:
@@ -48,7 +52,9 @@ def _get_dedalus_runner():
     global _dedalus_runner
     if _dedalus_runner is None:
         from dedalus_labs import AsyncDedalus, DedalusRunner
-        client = AsyncDedalus()
+        client = AsyncDedalus(
+            timeout=300.0,  # 5 min — large paper summarization needs headroom
+        )
         _dedalus_runner = DedalusRunner(client, verbose=False)
     return _dedalus_runner
 
@@ -83,13 +89,26 @@ async def call_llm(
     """Async LLM call routed through Dedalus."""
     get_provider()
     runner = _get_dedalus_runner()
-    result = await runner.run(
-        input=prompt,
-        model=_dedalus_model(model),
-        instructions=system_prompt,
-        max_tokens=max_tokens,
-    )
-    return result.final_output or ""
+    dedalus_model = _dedalus_model(model)
+    input_words = len(prompt.split())
+    logger.info(f"[LLM] Calling {dedalus_model} ({input_words} input words, max_tokens={max_tokens})")
+    t0 = time.monotonic()
+    try:
+        result = await runner.run(
+            input=prompt,
+            model=dedalus_model,
+            instructions=system_prompt,
+            max_tokens=max_tokens,
+        )
+        elapsed = time.monotonic() - t0
+        output = result.final_output or ""
+        output_words = len(output.split())
+        logger.info(f"[LLM] {dedalus_model} responded in {elapsed:.1f}s ({output_words} output words)")
+        return output
+    except Exception as e:
+        elapsed = time.monotonic() - t0
+        logger.error(f"[LLM] {dedalus_model} FAILED after {elapsed:.1f}s: {type(e).__name__}: {e}")
+        raise
 
 
 def call_llm_sync(

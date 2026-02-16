@@ -124,7 +124,9 @@ class DedalusBaseAgent:
                 "Then set DEDALUS_API_KEY in your environment."
             )
         
-        self.client = AsyncDedalus()
+        self.client = AsyncDedalus(
+            timeout=300.0,  # 5 min — large paper summarization needs headroom
+        )
         self.runner = DedalusRunner(self.client)
         self.task_type = task_type
         self.max_tokens = max_tokens

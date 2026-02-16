@@ -136,7 +136,7 @@ export function SplitScreenDemo({ status }: SplitScreenDemoProps) {
         {/* Split screen */}
         <div className="flex flex-col md:flex-row items-stretch gap-3 md:gap-0">
           {/* Left: The Paper */}
-          <div className="w-full md:w-[calc(50%-28px)] shrink-0">
+          <div className="w-full md:w-[calc(50%-56px)] shrink-0">
             <PaperPanel
               activeIndex={activeIndex}
               sectionProgress={sectionProgress}
@@ -144,27 +144,27 @@ export function SplitScreenDemo({ status }: SplitScreenDemoProps) {
           </div>
 
           {/* Center: Transformation Arrow (desktop) */}
-          <div className="hidden md:flex items-center justify-center w-14 shrink-0">
-            <div className="flex flex-col items-center gap-3">
-              <div className="w-px h-16 bg-gradient-to-b from-transparent to-white/[0.15]" />
+          <div className="hidden md:flex items-center justify-center w-28 shrink-0">
+            <div className="flex flex-col items-center gap-4">
+              <div className="w-px h-24 bg-gradient-to-b from-transparent via-white/[0.2] to-white/[0.15]" />
               <motion.div
                 animate={{
-                  scale: [1, 1.1, 1],
-                  opacity: [0.6, 1, 0.6],
+                  scale: [1, 1.15, 1],
+                  opacity: [0.7, 1, 0.7],
                 }}
                 transition={{
                   duration: 2,
                   repeat: Infinity,
                   ease: "easeInOut",
                 }}
-                className="w-9 h-9 rounded-full border border-white/[0.15] bg-white/[0.05] backdrop-blur-sm flex items-center justify-center"
+                className="w-16 h-16 rounded-full border-2 border-white/[0.25] bg-white/[0.08] backdrop-blur-sm flex items-center justify-center shadow-lg shadow-white/[0.05]"
               >
                 <svg
-                  className="w-4 h-4 text-white/60"
+                  className="w-8 h-8 text-white/80"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
-                  strokeWidth={2}
+                  strokeWidth={2.5}
                 >
                   <path
                     strokeLinecap="round"
@@ -173,22 +173,23 @@ export function SplitScreenDemo({ status }: SplitScreenDemoProps) {
                   />
                 </svg>
               </motion.div>
-              <div className="w-px h-16 bg-gradient-to-t from-transparent to-white/[0.15]" />
+              <div className="w-px h-24 bg-gradient-to-t from-transparent via-white/[0.2] to-white/[0.15]" />
             </div>
           </div>
 
           {/* Center: Transformation Arrow (mobile) */}
-          <div className="flex md:hidden items-center justify-center py-1">
+          <div className="flex md:hidden items-center justify-center py-2">
             <motion.div
-              animate={{ opacity: [0.4, 0.8, 0.4] }}
+              animate={{ opacity: [0.5, 0.9, 0.5] }}
               transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+              className="w-12 h-12 rounded-full border-2 border-white/[0.2] bg-white/[0.06] backdrop-blur-sm flex items-center justify-center"
             >
               <svg
-                className="w-5 h-5 text-white/40 rotate-90"
+                className="w-7 h-7 text-white/70 rotate-90"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
-                strokeWidth={2}
+                strokeWidth={2.5}
               >
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
               </svg>
@@ -196,7 +197,7 @@ export function SplitScreenDemo({ status }: SplitScreenDemoProps) {
           </div>
 
           {/* Right: ArXivisual Output */}
-          <div className="w-full md:w-[calc(50%-28px)]">
+          <div className="w-full md:w-[calc(50%-56px)]">
             <VisualizationPanel
               section={activeSection}
               index={activeIndex}

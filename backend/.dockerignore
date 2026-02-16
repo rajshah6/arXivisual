@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.git/
+.env
+arxiviz.db
+media/videos/*.mp4
+*.egg-info/
+.pytest_cache/

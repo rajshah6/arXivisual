@@ -1,0 +1,36 @@
+# ── ArXivisual Render Blueprint ─────────────────────────────
+# Deploy with: render.com → New → Blueprint → connect this repo
+# ────────────────────────────────────────────────────────────
+
+services:
+  - type: web
+    name: arxiviz-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: standard  # 2GB RAM — Manim + ffmpeg needs headroom during renders
+    region: oregon
+    healthCheckPath: /api/health
+    envVars:
+      # LLM
+      - key: DEDALUS_API_KEY
+        sync: false  # Set manually in Render dashboard
+      # TTS
+      - key: ELEVEN_API_KEY
+        sync: false
+      # Storage: Cloudflare R2
+      - key: STORAGE_MODE
+        value: r2
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ACCESS_KEY
+        sync: false
+      - key: S3_SECRET_KEY
+        sync: false
+      - key: S3_PUBLIC_URL
+        sync: false
+      # Server
+      - key: ENVIRONMENT
+        value: production

@@ -1,4 +1,4 @@
-# ArXivisual — How the Backend Works
+# arXivisual — How the Backend Works
 
 You give the system an arXiv paper ID. It gives you back narrated, animated explainer videos for the key concepts in that paper. No human touches the pipeline in between. This document walks through exactly what happens at every step, from the moment a user pastes `1706.03762` into the search bar to the moment video files land on disk.
 

@@ -1,5 +1,5 @@
 """
-Video storage backends for ArXivisual.
+Video storage backends for arXivisual.
 
 STORAGE_MODE env var controls which backend is used:
   - "local" (default): filesystem storage in ./media/videos/

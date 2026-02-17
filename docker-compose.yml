@@ -1,4 +1,4 @@
-# ── ArXivisual Local Development ──────────────────────────
+# ── arXivisual Local Development ──────────────────────────
 # Start everything with: docker compose up
 # No brew/apt installs needed — Docker handles all system deps.
 # ──────────────────────────────────────────────────────────

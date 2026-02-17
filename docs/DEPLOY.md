@@ -1,4 +1,4 @@
-# Deploy ArXivisual (Frontend + Backend) — Free Tier
+# Deploy arXivisual (Frontend + Backend) — Free Tier
 
 Step-by-step guide to deploy the **Next.js frontend** and **FastAPI backend** for free.
 

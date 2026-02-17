@@ -1,4 +1,4 @@
-# ── ArXivisual Backend ──────────────────────────────────────
+# ── arXivisual Backend ──────────────────────────────────────
 # Multi-stage build: system deps + Python deps + app code
 # Optimized for Render deployment with Manim rendering
 # ────────────────────────────────────────────────────────────

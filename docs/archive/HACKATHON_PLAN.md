@@ -1,10 +1,10 @@
-# ArXivisual Hackathon Battle Plan
+# arXivisual Hackathon Battle Plan
 
 ## Context
 
-ArXivisual transforms arXiv papers into 3Blue1Brown-style animated visual explanations. The AI generation pipeline (Team 2) is complete. The frontend is built with mock data. What's missing is **wiring everything end-to-end**: ingestion → pipeline → rendered videos → API → frontend.
+arXivisual transforms arXiv papers into 3Blue1Brown-style animated visual explanations. The AI generation pipeline (Team 2) is complete. The frontend is built with mock data. What's missing is **wiring everything end-to-end**: ingestion → pipeline → rendered videos → API → frontend.
 
-**Theme — MOSAIC**: "Nothing arrives whole; everything begins as a piece." ArXivisual IS this metaphor: a paper enters as a monolith, gets shattered into section fragments, AI transforms each fragment into a visual tile, and the tiles reassemble into a mosaic of understanding.
+**Theme — MOSAIC**: "Nothing arrives whole; everything begins as a piece." arXivisual IS this metaphor: a paper enters as a monolith, gets shattered into section fragments, AI transforms each fragment into a visual tile, and the tiles reassemble into a mosaic of understanding.
 
 **Due**: Tomorrow 5pm (~18 hours)
 

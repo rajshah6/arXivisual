@@ -172,7 +172,7 @@ export default function Home() {
               </div>
               <div>
                 <h3 className="font-semibold text-white/90">Pro Tip</h3>
-                <p className="text-sm text-white/40">One edit turns arXiv into ArXivisual</p>
+                <p className="text-sm text-white/40">One edit turns arXiv into arXivisual</p>
               </div>
             </div>
             <div className="space-y-3 text-sm text-white/45 leading-relaxed">

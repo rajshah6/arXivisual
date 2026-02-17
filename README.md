@@ -2,17 +2,17 @@
     <img alt="Logo" src="frontend/public/icon.png" width=100 />
 </div>
 <h1 align="center">
-  <a href="https://www.arxivisual.org/" target="_blank">ArXivisual</a>
+  <a href="https://www.arxivisual.org/" target="_blank">arXivisual</a>
 </h1>
 <p align="center">
    Transform research papers into visual stories
 </p>
 
-[![ArXivisual Video](frontend/public/demo.mp4)](https://github.com/user-attachments/assets/b99fe167-85e1-4946-ae16-5aa4762e379e)
+[![arXivisual Video](frontend/public/arXivisual.mp4)](https://github.com/user-attachments/assets/5453760b-5f82-4fd1-9a77-fe8818fea059)
 
-![ArXivisual Landing Page](frontend/public/landing.jpeg)
+![arXivisual Landing Page](frontend/public/landing.jpeg)
 
-![ArXivisual Manim](frontend/public/manim.png)
+![arXivisual Manim](frontend/public/manim.png)
 
 ## How It Works
 
@@ -62,4 +62,4 @@ uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 Research papers arrive as monoliths — dense, opaque, intimidating. Within them lies a mosaic of brilliant ideas waiting to be seen.
 
-**ArXivisual** transforms fragments of academic text into animated visual explanations, making complex research accessible to everyone.
+**arXivisual** transforms fragments of academic text into animated visual explanations, making complex research accessible to everyone.

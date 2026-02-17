@@ -49,6 +49,9 @@ npm run dev
 cd backend
 ```
 ```bash
+cp .env.example .env          # Add your API keys
+```
+```bash
 uv sync
 ```
 ```bash

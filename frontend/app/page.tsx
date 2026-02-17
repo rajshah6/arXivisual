@@ -53,7 +53,7 @@ export default function Home() {
   return (
     <main className="min-h-dvh relative overflow-hidden bg-black">
       {/* Mosaic background with arXiv logo */}
-      <MosaicBackground showLogo logoYFraction={0.12} />
+      <MosaicBackground showLogo logoYFraction={0.20} />
 
       {/* Floating glass shards */}
       <ShardField />

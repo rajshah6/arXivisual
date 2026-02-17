@@ -553,6 +553,17 @@ function NotFoundState({
   );
 }
 
+// Rough estimated seconds per pipeline step (total ~4-5 min)
+const STEP_TIME_ESTIMATES = [35, 50, 55, 90, 75]; // fetch, parse, analyze, generate, render
+
+function formatTimeLeft(seconds: number): string {
+  if (seconds <= 0) return "almost done";
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.round(seconds % 60);
+  if (mins > 0) return `~${mins}m ${secs}s`;
+  return `~${secs}s`;
+}
+
 function ProcessingState({ status }: { status: ProcessingStatus }) {
   const progressPercent = Math.round(status.progress * 100);
 
@@ -563,6 +574,38 @@ function ProcessingState({ status }: { status: ProcessingStatus }) {
     { label: "Generating animations", threshold: 70, icon: "\u03BB" },
     { label: "Rendering videos", threshold: 90, icon: "\u221E" },
   ];
+
+  // Compute estimated time left based on current step and progress
+  let estimatedSecondsLeft = 0;
+  if (progressPercent >= 100) {
+    estimatedSecondsLeft = 0;
+  } else {
+    // Step ranges: 0-10, 10-30, 30-50, 50-70, 70-100
+    const stepBoundaries = [0, 10, 30, 50, 70, 100];
+    const currentStepIndex = stepBoundaries.findIndex(
+      (_, i) =>
+        i < stepBoundaries.length - 1 &&
+        progressPercent >= stepBoundaries[i] &&
+        progressPercent < stepBoundaries[i + 1]
+    );
+    const stepIdx = Math.max(0, Math.min(currentStepIndex, steps.length - 1));
+    const stepStart = stepBoundaries[stepIdx];
+    const stepEnd = stepBoundaries[stepIdx + 1];
+    const progressInStep = (stepEnd - stepStart > 0)
+      ? (progressPercent - stepStart) / (stepEnd - stepStart)
+      : 0;
+    const remainingInCurrentStep =
+      STEP_TIME_ESTIMATES[stepIdx] * Math.max(0, 1 - progressInStep);
+    const remainingFutureSteps = STEP_TIME_ESTIMATES.slice(stepIdx + 1).reduce(
+      (a, b) => a + b,
+      0
+    );
+    const baseSeconds = remainingInCurrentStep + remainingFutureSteps;
+    // Per-job variance (±15%) so each paper gets a different estimate
+    const jobHash = status.job_id.split("").reduce((a, c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 0);
+    const variance = 0.85 + ((Math.abs(jobHash) % 31) / 31) * 0.3;
+    estimatedSecondsLeft = Math.max(1, Math.round(baseSeconds * variance));
+  }
 
   return (
     <div className="flex items-center justify-center py-16 px-6">
@@ -589,7 +632,12 @@ function ProcessingState({ status }: { status: ProcessingStatus }) {
           <div className="mt-8">
             <div className="flex items-center justify-between text-sm mb-3">
               <span className="text-white/30">Overall Progress</span>
-              <span className="font-mono text-white/80 font-medium">{progressPercent}%</span>
+              <span className="flex items-center gap-4">
+                {progressPercent < 100 && status.job_id !== "demo" && (
+                  <span className="text-white/40 font-medium">{formatTimeLeft(estimatedSecondsLeft)} left</span>
+                )}
+                <span className="font-mono text-white/80 font-medium">{progressPercent}%</span>
+              </span>
             </div>
             <div className="h-3 rounded-full bg-white/[0.05] overflow-hidden border border-white/[0.06]">
               <motion.div

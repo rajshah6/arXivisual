@@ -8,7 +8,7 @@
    Transform research papers into visual stories
 </p>
 
-[![ArXivisual Video](frontend/public/demo.mp4)](https://github.com/user-attachments/assets/777bbf9b-a8b2-4656-8275-60dfc3267089)
+[![ArXivisual Video](frontend/public/demo.mp4)](https://github.com/user-attachments/assets/b99fe167-85e1-4946-ae16-5aa4762e379e)
 
 ![ArXivisual Landing Page](frontend/public/landing.jpeg)
 

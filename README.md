@@ -29,7 +29,7 @@
 - Node.js 18+
 - Python 3.11+
 - FFmpeg, Cairo, Pango (for Manim)
-- API keys for Anthropic Claude, ElevenLabs, Dedalus Labs (free at signup)
+- API keys for Dedalus Labs (or any Anthropic provider)
 
 ### Frontend Setup
 

@@ -63,3 +63,12 @@ uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 Research papers arrive as monoliths — dense, opaque, intimidating. Within them lies a mosaic of brilliant ideas waiting to be seen.
 
 **arXivisual** transforms fragments of academic text into animated visual explanations, making complex research accessible to everyone.
+
+## Creators
+
+| Name | X |
+|------|---|
+| Armaan Gupta | [@armaangupt0](https://x.com/armaangupt0) |
+| Raj Shah | [@_rajshah6](https://x.com/_rajshah6) |
+| Nikhil Hooda | [@_nikhilhooda](https://x.com/_nikhilhooda) |
+| Ajith Bondili | [@AjithBondili](https://x.com/AjithBondili) |

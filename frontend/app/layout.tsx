@@ -18,6 +18,7 @@ const jsonLd = {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
   name: "arXivisual",
+  alternateName: ["arxivisuals", "arxiv visual", "arxiv visuals", "arXivisuals"],
   url: "https://arxivisual.org",
   applicationCategory: "EducationalApplication",
   operatingSystem: "Web",
@@ -30,7 +31,7 @@ const jsonLd = {
     { "@type": "Person", name: "Ajith Bondili", sameAs: "https://x.com/AjithBondili" },
   ],
   offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
-  keywords: "arXiv, arXivisual, research paper visualizer, Manim, scrollytelling, AI, machine learning",
+  keywords: "arXiv, arXivisual, arXivisuals, arxiv visual, arxiv visuals, research paper visualizer, Manim, scrollytelling, AI, machine learning",
 };
 
 export const metadata: Metadata = {
@@ -44,6 +45,9 @@ export const metadata: Metadata = {
   applicationName: "arXivisual",
   keywords: [
     "arXivisual",
+    "arXivisuals",
+    "arxiv visual",
+    "arxiv visuals",
     "arXiv",
     "arXiv paper visualizer",
     "research paper explainer",

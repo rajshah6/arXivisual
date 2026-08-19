@@ -10,8 +10,13 @@ import type { Paper, ProcessingStatus, Section } from "./types";
 // Toggle between mock and real API
 const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK === "true";
 
-// Backend API base URL - defaults to localhost:8000 for development
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// Backend API base URL — env var wins; production builds fall back to the
+// Azure backend, dev builds to localhost.
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL ||
+  (process.env.NODE_ENV === "production"
+    ? "https://arxivisual-api.purplepond-ac9e2dc5.eastus2.azurecontainerapps.io"
+    : "http://localhost:8000");
 
 // === Types matching backend schemas ===
 

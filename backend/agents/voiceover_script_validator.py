@@ -95,6 +95,14 @@ class VoiceoverScriptValidator:
             if stripped.lower().startswith(self.BANNED_STARTS):
                 issues.append(f"Narration {idx} starts with animation command style wording.")
 
+            # Word-count rule (hard fail — too short reads as filler, too long overruns the beat)
+            word_count = self._word_count(stripped)
+            if word_count < self.min_words or word_count > self.max_words:
+                issues.append(
+                    f"Narration {idx} is {word_count} words, outside the "
+                    f"{self.min_words}-{self.max_words} words range."
+                )
+
             alignment_rule_scores.append(self._rule_alignment_score(stripped, reference_terms))
             educational_rule_scores.append(self._rule_educational_score(stripped))
 

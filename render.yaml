@@ -12,7 +12,14 @@ services:
     region: oregon
     healthCheckPath: /api/health
     envVars:
-      # LLM
+      # LLM — Azure OpenAI (GPT-5). Set values in the dashboard.
+      - key: AZURE_OPENAI_ENDPOINT
+        sync: false
+      - key: AZURE_OPENAI_API_KEY
+        sync: false
+      - key: AZURE_OPENAI_DEPLOYMENT
+        value: gpt-5
+      # Legacy fallback provider (optional)
       - key: DEDALUS_API_KEY
         sync: false  # Set manually in Render dashboard
       # TTS

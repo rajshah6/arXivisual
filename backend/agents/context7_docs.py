@@ -536,7 +536,13 @@ async def get_manim_docs(
     """
     docs = ""
 
-    if use_dedalus and DEDALUS_API_KEY:
+    # Skip the Dedalus path entirely when the pipeline runs on another
+    # provider (e.g. Azure) — go straight to the Context7 REST API.
+    dedalus_active = bool(DEDALUS_API_KEY) and os.environ.get(
+        "LLM_PROVIDER", "dedalus" if DEDALUS_API_KEY else ""
+    ).strip().lower() == "dedalus"
+
+    if use_dedalus and dedalus_active:
         docs = await fetch_manim_docs_via_dedalus(topic, max_tokens)
 
     if not docs:

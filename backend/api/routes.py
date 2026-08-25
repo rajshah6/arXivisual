@@ -4,6 +4,7 @@ FastAPI routes for the ArXiviz API.
 Now using SQLite database and local Manim rendering.
 """
 
+import hmac
 import logging
 import os
 import uuid
@@ -52,7 +53,9 @@ def _authorize_render(secret: str | None) -> None:
     if os.getenv("ENVIRONMENT", "development").lower() != "production":
         return
     expected = os.getenv("RENDER_API_SECRET")
-    if expected and secret == expected:
+    # Timing-safe comparison; the explicit None guard keeps compare_digest from
+    # being handed a non-str. No configured secret in prod = fully disabled.
+    if expected and secret is not None and hmac.compare_digest(secret, expected):
         return
     raise HTTPException(status_code=404, detail="Not found")
 

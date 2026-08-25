@@ -43,6 +43,16 @@ def test_production_allows_render_with_matching_secret(monkeypatch):
     _authorize_render("correct-horse")  # should not raise
 
 
+def test_production_rejects_near_miss_secret(monkeypatch):
+    # Exercises the timing-safe hmac.compare_digest path + the None guard.
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("RENDER_API_SECRET", "correct-horse")
+    with pytest.raises(HTTPException):
+        _authorize_render("correct-hors")  # one char short
+    with pytest.raises(HTTPException):
+        _authorize_render(None)
+
+
 def test_production_without_secret_configured_stays_closed(monkeypatch):
     # If no secret is configured in prod, the endpoint is fully disabled even
     # if a caller sends some header value.

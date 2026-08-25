@@ -54,3 +54,20 @@ def test_use_dedalus_true_without_provider_falls_back(monkeypatch):
     docs = asyncio.run(context7_docs.get_manim_docs(topic="dedalus-no-provider", use_dedalus=True))
     assert docs == "DIRECT DOCS"
     assert calls["dedalus"] == 0
+
+
+def test_static_fallback_used_when_live_sources_empty(monkeypatch):
+    calls = _stub_docs(monkeypatch)
+
+    async def empty_direct(topic, max_tokens):
+        calls["direct"] += 1
+        return ""
+
+    monkeypatch.setattr(context7_docs, "fetch_manim_docs_direct", empty_direct)
+    # Static read is exercised off the event loop via asyncio.to_thread; stub it
+    # so the test doesn't depend on the on-disk reference file.
+    monkeypatch.setattr(context7_docs, "_read_static_docs", lambda path: "STATIC DOCS")
+
+    docs = asyncio.run(context7_docs.get_manim_docs(topic="static-fallback", use_dedalus=False))
+    assert docs == "STATIC DOCS"
+    assert calls["direct"] == 1

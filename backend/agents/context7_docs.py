@@ -513,6 +513,11 @@ async def fetch_manim_docs_direct(
 # Main entry point with fallback chain
 # ---------------------------------------------------------------------------
 
+def _read_static_docs(path: Path) -> str:
+    """Blocking read of the static Manim reference (run via asyncio.to_thread)."""
+    return path.read_text() if path.exists() else ""
+
+
 async def get_manim_docs(
     topic: str = "animations mobjects Scene ThreeDScene MathTex",
     max_tokens: int = 5000,
@@ -565,8 +570,9 @@ async def get_manim_docs(
         static_path = (
             Path(__file__).parent.parent / "prompts" / "system" / "manim_reference.md"
         )
-        if static_path.exists():
-            docs = static_path.read_text()
+        # Read off the event loop — get_manim_docs is async and this fallback is
+        # reachable during request handling.
+        docs = await asyncio.to_thread(_read_static_docs, static_path)
 
     return docs
 

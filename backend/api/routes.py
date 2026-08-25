@@ -8,7 +8,7 @@ import hmac
 import logging
 import os
 import uuid
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Header
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Header, Request
 from fastapi.responses import FileResponse, RedirectResponse
 from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,6 +35,7 @@ from db.connection import get_db
 from db import queries
 from rendering import process_visualization, get_video_path, get_video_url, extract_scene_name
 from jobs import process_paper_job
+from .throttle import client_ip, global_limiter, per_ip_limiter, recent_jobs
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,7 @@ def _authorize_render(secret: str | None) -> None:
 @router.post("/process", response_model=ProcessResponse)
 async def start_processing(
     request: ProcessRequest,
+    http_request: Request,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db)
 ):
@@ -72,16 +74,57 @@ async def start_processing(
     Start processing an arXiv paper.
 
     Returns immediately with a job_id. Poll /api/status/{job_id} for progress.
+    Duplicate submissions for a paper already in flight return the existing
+    job instead of starting (and paying for) a second pipeline.
     """
+    arxiv_id = request.arxiv_id
+
+    # Dedupe: an in-flight job for this paper is returned as-is. The in-memory
+    # map covers the seconds before the worker links job.paper_id; the DB query
+    # covers everything after (including submissions from other clients).
+    existing_id = recent_jobs.get(arxiv_id)
+    if existing_id is None:
+        existing = await queries.get_active_job_for_paper(db, arxiv_id)
+        existing_id = existing.id if existing else None
+    if existing_id is not None:
+        job = await queries.get_job(db, existing_id)
+        if job and job.status in ("queued", "processing"):
+            return ProcessResponse(
+                job_id=existing_id,
+                arxiv_id=arxiv_id,
+                status=JobStatus(job.status),
+                message="This paper is already being processed. Poll /api/status/{job_id} for updates.",
+            )
+        recent_jobs.clear(arxiv_id)
+
+    # Cost fuse: each accepted job spends real LLM + render money.
+    ip = client_ip(http_request)
+    allowed, retry_after = per_ip_limiter.allow(ip)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit reached for starting new papers. Try again later.",
+            headers={"Retry-After": str(retry_after)},
+        )
+    allowed, retry_after = global_limiter.allow("global")
+    if not allowed:
+        logger.warning("Global processing rate limit hit (client %s)", ip)
+        raise HTTPException(
+            status_code=429,
+            detail="The service is at capacity for new papers right now. Try again later.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
     # Create job in database
-    job_id = await queries.create_job(db, request.arxiv_id)
+    job_id = await queries.create_job(db, arxiv_id)
+    recent_jobs.put(arxiv_id, job_id)
 
     # Start background processing
-    background_tasks.add_task(process_paper_job, job_id, request.arxiv_id)
+    background_tasks.add_task(process_paper_job, job_id, arxiv_id)
 
     return ProcessResponse(
         job_id=job_id,
-        arxiv_id=request.arxiv_id,
+        arxiv_id=arxiv_id,
         status=JobStatus.queued,
         message="Processing started. Poll /api/status/{job_id} for updates."
     )

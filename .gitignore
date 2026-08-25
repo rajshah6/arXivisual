@@ -54,3 +54,6 @@ server/outputs/*
 
 # External MCP server clone
 manim-mcp-server/
+
+# Claude Code local state (agent worktrees, local launch config)
+.claude/

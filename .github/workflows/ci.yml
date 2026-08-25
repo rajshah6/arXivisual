@@ -33,6 +33,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # manimpango (via manim) builds against system pango/cairo headers, which
+      # a bare runner lacks. Mirrors the Dockerfile's system deps, minus texlive
+      # and ffmpeg — the unit suite never renders.
+      - name: Install system build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libcairo2-dev libpango1.0-dev
+
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:

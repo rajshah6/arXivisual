@@ -14,6 +14,7 @@ behavior. Once thresholds are trusted, the verdict can gate a targeted repair.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -121,15 +122,19 @@ def _parse_verdict(text: str) -> VisualQAResult:
     except (json.JSONDecodeError, TypeError):
         logger.warning("[VisualQA] Unparseable judge output: %r", text[:200])
         return VisualQAResult(severity="none", issues=["judge output unparseable"])
-    if data.get("severity") not in ("none", "minor", "major"):
-        data["severity"] = "minor" if any(
-            data.get(k) for k in ("overlap", "cutoff", "collisions")
-        ) else "none"
+    any_flag = any(data.get(k) for k in ("overlap", "cutoff", "collisions"))
+    severity = data.get("severity")
+    if severity not in ("none", "minor", "major"):
+        severity = "minor" if any_flag else "none"
+    elif severity == "none" and any_flag:
+        # A judge that sets defect flags but says "none" is contradicting
+        # itself — trust the flags so the defect isn't scored as clean.
+        severity = "minor"
     return VisualQAResult(
         overlap=bool(data.get("overlap", False)),
         cutoff=bool(data.get("cutoff", False)),
         collisions=bool(data.get("collisions", False)),
-        severity=data["severity"],
+        severity=severity,
         issues=[str(i) for i in data.get("issues", [])][:10],
     )
 
@@ -144,7 +149,9 @@ async def judge_video(video_bytes: bytes, viz_id: str = "") -> Optional[VisualQA
         logger.info("[VisualQA] Skipped (non-Azure provider has no vision path)")
         return None
     try:
-        frames = sample_frames(video_bytes)
+        # sample_frames is blocking subprocess + file I/O — keep it off the
+        # event loop (the caller may be the FastAPI serving loop).
+        frames = await asyncio.to_thread(sample_frames, video_bytes)
     except Exception as exc:
         logger.warning("[VisualQA] Frame sampling failed for %s: %s", viz_id, exc)
         return None

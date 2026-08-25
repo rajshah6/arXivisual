@@ -45,7 +45,7 @@ The video must feel like a coherent teaching sequence, not a list of disconnecte
   mobjects into a `VGroup(...).arrange(..., buff=0.3)` instead of positioning
   each independently.
 - Labels must never sit on top of arrows or other shapes: position labels with
-  `next_to(target, direction, buff=0.25)` on the side AWAY from incoming arrows.
+  `next_to(target, direction, buff=0.3)` on the side AWAY from incoming arrows.
 - When many arrows converge (e.g. fan-in diagrams), keep their label text OUTSIDE
   the arrow region or omit per-arrow labels entirely.
 - Scale to fit: if a group would exceed the safe area, `group.scale_to_fit_width(12)`

@@ -7,7 +7,7 @@ from manim_voiceover.services.openai import OpenAIService
 
 class VoiceoverEquationExample(VoiceoverScene):
     def construct(self):
-        self.set_speech_service(OpenAIService(voice="nova", model="gpt-4o-mini-tts", transcription_model=None, cache_dir="/tmp/arxivisual-tts-cache"))
+        self.set_speech_service(OpenAIService(voice="nova", model="gpt-4o-mini-tts", transcription_model=None))
 
         # Beat 1: framing equation
         title = Text("Scaled Dot-Product Attention", font_size=38)

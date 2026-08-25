@@ -47,6 +47,17 @@ def test_parse_garbage_degrades_to_clean_verdict():
     assert not v.has_defects
 
 
+def test_contradictory_none_severity_is_upgraded_to_minor():
+    # Judge sets defect flags but claims severity "none" — trust the flags so
+    # the defect isn't scored as clean (CodeRabbit regression, PR #28).
+    v = _parse_verdict(
+        '{"overlap": true, "cutoff": false, "collisions": false, '
+        '"severity": "none", "issues": ["title overlaps box"]}'
+    )
+    assert v.severity == "minor"
+    assert v.has_defects
+
+
 def test_parse_invalid_severity_is_derived_from_flags():
     v = _parse_verdict(
         '{"overlap": true, "cutoff": false, "collisions": false, '

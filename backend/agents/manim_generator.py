@@ -8,6 +8,7 @@ Hackathon Track: Dedalus "Best use of tool calling"
 """
 
 import logging
+import os
 import re
 import sys
 from pathlib import Path
@@ -65,6 +66,17 @@ class ManimGenerator(BaseAgent):
     DEFAULT_EXAMPLE = "equation_walkthrough.py"
     DEFAULT_VOICEOVER_EXAMPLE = "voiceover_equation.py"
 
+    # TTS service wiring injected verbatim into generated scenes. The `openai`
+    # option targets Azure OpenAI's OpenAI-compatible endpoint at render time
+    # (see rendering/local_runner._tts_subprocess_env), so audio bills against
+    # Azure credits like the rest of the pipeline. gTTS is a free fallback.
+    OPENAI_TTS_MODEL = os.getenv("VOICEOVER_TTS_MODEL", "gpt-4o-mini-tts")
+    DEFAULT_OPENAI_VOICE = "nova"
+
+    TTS_IMPORTS = {
+        "gtts": "from manim_voiceover.services.gtts import GTTSService",
+        "openai": "from manim_voiceover.services.openai import OpenAIService",
+    }
     TTS_SETUP = {
         "gtts": "self.set_speech_service(GTTSService(transcription_model=None))",
     }
@@ -108,7 +120,18 @@ class ManimGenerator(BaseAgent):
 
     def _get_tts_setup_snippet(self, tts_service: str, voice_name: str) -> str:
         """Return concrete set_speech_service(...) snippet for prompt grounding."""
+        if tts_service == "openai":
+            voice = voice_name or self.DEFAULT_OPENAI_VOICE
+            return (
+                f'self.set_speech_service(OpenAIService('
+                f'voice="{voice}", model="{self.OPENAI_TTS_MODEL}", '
+                f'transcription_model=None))'
+            )
         return self.TTS_SETUP.get(tts_service, self.TTS_SETUP["gtts"])
+
+    def _get_tts_import(self, tts_service: str) -> str:
+        """Return the exact import line matching the selected TTS service."""
+        return self.TTS_IMPORTS.get(tts_service, self.TTS_IMPORTS["gtts"])
 
     def _generate_scene_class_name(self, concept_name: str) -> str:
         """Generate a valid Python class name from concept name."""
@@ -177,6 +200,7 @@ class ManimGenerator(BaseAgent):
         example_code = self._get_example_for_type(plan.visualization_type, voiceover_enabled)
         scene_class_name = self._generate_scene_class_name(plan.concept_name)
         tts_setup_snippet = self._get_tts_setup_snippet(tts_service, voice_name)
+        tts_import = self._get_tts_import(tts_service)
 
         return self._format_prompt(
             plan_json=plan.model_dump_json(indent=2),
@@ -190,6 +214,7 @@ class ManimGenerator(BaseAgent):
             voice_name=voice_name,
             narration_style=narration_style,
             tts_setup_snippet=tts_setup_snippet,
+            tts_import=tts_import,
         )
 
     async def _enrich_system_prompt_with_live_docs(

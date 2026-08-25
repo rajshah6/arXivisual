@@ -32,7 +32,7 @@ dependencies = [
     # Rendering / visualization
     "manim>=0.18.0",
     "modal>=0.60.0",
-    "manim-voiceover[gtts]>=0.3.0",
+    "manim-voiceover[gtts,openai]>=0.3.0",
 
     # Cloud storage (S3-compatible — Cloudflare R2)
     "boto3>=1.34.0",
@@ -45,6 +45,9 @@ dependencies = [
 
     # Dedalus SDK + MCP Gateway (Context7 live docs)
     "dedalus-labs>=0.2.0",
+
+    # Observability — LLM tracing / cost tracking
+    "langfuse>=3.0.0",
 ]
 
 [project.optional-dependencies]
@@ -62,6 +65,10 @@ packages = ["agents", "models", "prompts", "examples"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# Only collect the real unit-test suite. Without this, plain `pytest` also
+# collects the argparse scripts under tools/ and backend root, some of which
+# fire real Azure OpenAI calls and network fetches on collection/execution.
+testpaths = ["tests"]
 
 [tool.uv.workspace]
 members = [

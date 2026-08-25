@@ -2,12 +2,12 @@
 
 from manim import *
 from manim_voiceover import VoiceoverScene
-from manim_voiceover.services.gtts import GTTSService
+from manim_voiceover.services.openai import OpenAIService
 
 
 class VoiceoverDataFlowExample(VoiceoverScene):
     def construct(self):
-        self.set_speech_service(GTTSService(transcription_model=None))
+        self.set_speech_service(OpenAIService(voice="nova", model="gpt-4o-mini-tts", transcription_model=None))
 
         # Beat 1: framing
         title = Text("Attention Data Flow", font_size=42)

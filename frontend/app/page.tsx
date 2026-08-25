@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { PlaceholdersAndVanishInput } from "@/components/ui/placeholders-and-vanish-input";
@@ -57,6 +58,23 @@ export default function Home() {
 
       {/* Floating glass shards */}
       <ShardField />
+
+      {/* Explore the library — floating glass pill, top-right */}
+      <motion.div
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.6, delay: 0.4 }}
+        className="fixed top-5 right-5 z-20"
+      >
+        <Link
+          href="/explore"
+          className="group inline-flex items-center gap-2 rounded-full bg-black/60 backdrop-blur-xl px-4 py-2.5 text-sm text-white/50 border border-white/[0.08] transition-all hover:bg-black/80 hover:text-white/80 hover:border-white/[0.15] shadow-lg shadow-black/30"
+        >
+          <span className="text-white/40 select-none">&#9671;</span>
+          <span>Explore</span>
+          <span className="transition-transform group-hover:translate-x-0.5">&rarr;</span>
+        </Link>
+      </motion.div>
 
       <div className="relative z-10 mx-auto w-full max-w-6xl px-6">
         {/* ── First viewport: Logo (clear) + search bar below ── */}

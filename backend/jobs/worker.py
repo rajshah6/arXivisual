@@ -44,6 +44,40 @@ from models.paper import (
 logger = logging.getLogger(__name__)
 
 
+def resolve_terminal_job_status(
+    succeeded_count: int, total_count: int
+) -> tuple[str, str, str | None]:
+    """Decide a job's terminal status from render outcomes.
+
+    Returns ``(status, current_step, error)``. A job is only "completed" when at
+    least one visualization actually rendered — previously an all-failed run (or
+    a run that generated nothing) still reported success, showing the reader a
+    green checkmark over a paper with no visualizations.
+    """
+    if total_count == 0:
+        return (
+            "failed",
+            "No valid visualizations generated",
+            "The pipeline did not produce any valid visualizations for this paper. "
+            "The parsed paper text is still available.",
+        )
+    if succeeded_count == 0:
+        return (
+            "failed",
+            "All visualizations failed to render",
+            f"All {total_count} visualization(s) failed to render. "
+            "See visualization records for per-item errors.",
+        )
+    failed_count = total_count - succeeded_count
+    if failed_count:
+        return (
+            "completed",
+            f"Complete ({failed_count} visualization(s) failed)",
+            None,
+        )
+    return "completed", "Complete", None
+
+
 class ProgressBar:
     """Simple progress bar for logging output."""
 
@@ -214,12 +248,17 @@ async def _process_paper_job_impl(job_id: str, arxiv_id: str):
                 })
 
             if not viz_records:
+                # The paper text is stored and readable, but the pipeline produced
+                # nothing to render. Reporting "completed" here told the reader the
+                # job succeeded while showing a paper with no visualizations.
                 logger.warning("No valid visualizations were generated from the paper")
+                status, step, error = resolve_terminal_job_status(0, 0)
                 await queries.update_job_status(
                     db, job_id,
-                    status="completed",
-                    current_step="No valid visualizations generated",
-                    progress=1.0
+                    status=status,
+                    current_step=step,
+                    progress=1.0,
+                    error=error,
                 )
                 return
 
@@ -247,9 +286,10 @@ async def _process_paper_job_impl(job_id: str, arxiv_id: str):
             progress_lock = asyncio.Lock()
             progress_bar = ProgressBar(len(viz_records), "Video Rendering")
             completed_count = 0
+            succeeded_count = 0
 
             async def _render_one(viz: dict, index: int):
-                nonlocal completed_count
+                nonlocal completed_count, succeeded_count
                 async with render_semaphore:
                     status = "complete"
                     video_url: str | None = None
@@ -282,12 +322,16 @@ async def _process_paper_job_impl(job_id: str, arxiv_id: str):
                         )
                         async with progress_lock:
                             completed_count += 1
+                            if status == "complete":
+                                succeeded_count += 1
                             progress_bar.update()
                             render_progress = 0.75 + (0.20 * (completed_count / len(viz_records)))
                             await queries.update_job_status(
                                 task_db, job_id,
                                 progress=render_progress,
-                                sections_completed=completed_count,
+                                # Report only successful renders as completed
+                                # sections — a failed render produces no video.
+                                sections_completed=succeeded_count,
                             )
 
             logger.info(f"Rendering {len(viz_records)} videos concurrently (max 3 parallel)...")
@@ -295,7 +339,11 @@ async def _process_paper_job_impl(job_id: str, arxiv_id: str):
                 _render_one(viz, i) for i, viz in enumerate(viz_records)
             ])
 
-            logger.info("All videos rendered successfully!")
+            failed_count = len(viz_records) - succeeded_count
+            logger.info(
+                "Rendering finished: %s succeeded, %s failed",
+                succeeded_count, failed_count,
+            )
 
             # Brief pause to ensure all DB commits have settled
             await asyncio.sleep(0.5)
@@ -305,14 +353,22 @@ async def _process_paper_job_impl(job_id: str, arxiv_id: str):
             logger.info("STEP 4: Finalizing job")
             logger.info("=" * 60)
 
+            status, step, error = resolve_terminal_job_status(
+                succeeded_count, len(viz_records)
+            )
             await queries.update_job_status(
                 db, job_id,
-                status="completed",
-                current_step="Complete",
-                progress=1.0
+                status=status,
+                current_step=step,
+                progress=1.0,
+                error=error,
             )
 
-            logger.info("Job status updated to completed with progress 1.0")
+            if status == "failed":
+                logger.error("✗ JOB FAILED: %s — every render failed", job_id)
+                return
+
+            logger.info("Job status updated to %s with progress 1.0", status)
 
             logger.info("=" * 60)
             logger.info(f"✓ JOB COMPLETED SUCCESSFULLY: {job_id}")

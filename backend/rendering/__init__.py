@@ -82,23 +82,44 @@ async def process_visualization(viz_id: str, manim_code: str, quality: str = "lo
     video_bytes = await render_manim(manim_code, scene_name, quality)
     logger.info(f"[Processing Visualization] Rendering complete ({len(video_bytes):,} bytes)")
 
-    # Visual QA (observe mode): judge sampled frames for overlap/cutoff defects.
-    # Logs + Langfuse score only — never blocks the pipeline or fails the render.
-    await _observe_visual_qa(viz_id, video_bytes)
-
-    # Save to storage
+    # Save to storage FIRST — visual QA must never delay video delivery.
     logger.info(f"[Processing Visualization] Saving to storage...")
     video_url = await save_video(video_bytes, f"{viz_id}.mp4")
     logger.info(f"[Processing Visualization] Video saved successfully")
     logger.info(f"[Processing Visualization] Video URL: {video_url}")
 
+    # Visual QA (observe mode): judge sampled frames for overlap/cutoff defects.
+    # Dispatched as supervised background work — logs + Langfuse score only,
+    # never blocks the render path or fails the visualization.
+    _dispatch_visual_qa(viz_id, video_bytes)
+
     return video_url
 
 
-async def _observe_visual_qa(viz_id: str, video_bytes: bytes) -> None:
-    """Run the vision layout judge when ENABLE_VISUAL_QA=1; log-only."""
+# Keep strong references so background QA tasks aren't garbage-collected early.
+_visual_qa_tasks: set = set()
+
+
+def _dispatch_visual_qa(viz_id: str, video_bytes: bytes) -> None:
+    """Fire-and-supervise the observe-mode visual QA task."""
     if os.getenv("ENABLE_VISUAL_QA", "0") != "1":
         return
+    import asyncio
+
+    task = asyncio.get_running_loop().create_task(_observe_visual_qa(viz_id, video_bytes))
+    _visual_qa_tasks.add(task)
+
+    def _done(t: "asyncio.Task") -> None:
+        _visual_qa_tasks.discard(t)
+        exc = t.exception() if not t.cancelled() else None
+        if exc is not None:
+            logger.warning("[VisualQA] Background QA task failed for %s: %s", viz_id, exc)
+
+    task.add_done_callback(_done)
+
+
+async def _observe_visual_qa(viz_id: str, video_bytes: bytes) -> None:
+    """Run the vision layout judge; log + score only."""
     try:
         from agents.visual_qa import judge_video
 
@@ -113,7 +134,7 @@ async def _observe_visual_qa(viz_id: str, video_bytes: bytes) -> None:
             )
         else:
             logger.info("[VisualQA] %s clean (%s frames)", viz_id, verdict.frames_checked)
-        # Score the current Langfuse span so defect rates become dashboardable.
+        # Score the current Langfuse trace so defect rates become dashboardable.
         try:
             from langfuse import get_client
 
@@ -122,7 +143,8 @@ async def _observe_visual_qa(viz_id: str, video_bytes: bytes) -> None:
                 value=1.0 if verdict.has_defects else 0.0,
                 comment=f"{viz_id}: {verdict.severity}; " + "; ".join(verdict.issues[:3]),
             )
-        except Exception:
-            pass  # Langfuse unavailable/unconfigured — logging above suffices
+        except Exception as exc:
+            # Distinguish broken telemetry from intentional unconfiguration.
+            logger.warning("[VisualQA] Langfuse scoring failed for %s: %s", viz_id, exc)
     except Exception as exc:
         logger.warning("[VisualQA] Observe-mode QA failed for %s: %s", viz_id, exc)

@@ -33,7 +33,11 @@ async def main() -> int:
     args = parser.parse_args()
 
     async with httpx.AsyncClient(timeout=120) as http:
-        resp = await http.get(f"{args.api}/api/paper/{args.arxiv_id}")
+        try:
+            resp = await http.get(f"{args.api}/api/paper/{args.arxiv_id}")
+        except httpx.RequestError as exc:
+            print(f"could not reach {args.api}: {exc}")
+            return 1
         if resp.status_code != 200:
             print(f"paper {args.arxiv_id} not found ({resp.status_code})")
             return 1
@@ -53,15 +57,25 @@ async def main() -> int:
         print(f"{'viz':<20}{'severity':<10}{'ovl':<5}{'cut':<5}{'col':<5}issues")
 
         defects = 0
+        completed = 0
+        failed = 0
         for viz_id, url in videos:
-            video = await http.get(url)
+            try:
+                video = await http.get(url)
+            except httpx.RequestError as exc:
+                failed += 1
+                print(f"{viz_id:<20}download error: {exc}")
+                continue
             if video.status_code != 200:
+                failed += 1
                 print(f"{viz_id:<20}download failed ({video.status_code})")
                 continue
             verdict = await judge_video(video.content, viz_id=viz_id)
             if verdict is None:
+                failed += 1
                 print(f"{viz_id:<20}judge unavailable")
                 continue
+            completed += 1
             defects += 1 if verdict.has_defects else 0
             flag = lambda b: "Y" if b else "-"
             print(
@@ -70,8 +84,9 @@ async def main() -> int:
                 f"{'; '.join(verdict.issues[:2])[:80]}"
             )
 
-        print(f"\n{defects}/{len(videos)} videos have layout defects")
-        return 0
+        print(f"\n{defects}/{completed} judged videos have layout defects"
+              + (f" ({failed} could not be evaluated)" if failed else ""))
+        return 0 if failed == 0 else 2
 
 
 if __name__ == "__main__":

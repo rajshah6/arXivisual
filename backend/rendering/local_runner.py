@@ -66,6 +66,30 @@ def extract_scene_name(code: str) -> str:
     return "MainScene"  # Fallback
 
 
+def _link_persistent_voiceover_cache(media_dir: Path, scene_name: str) -> None:
+    """Persist manim-voiceover's narration cache across renders.
+
+    The library's default cache is ``Path(media_dir) / "voiceovers"`` — inside
+    the render's TemporaryDirectory, so identical narration was re-synthesized
+    (and re-billed per character) on every retry/re-render. Symlinking that
+    location to a stable per-scene path keeps the library on its default
+    Path-typed codepath (an explicit ``cache_dir=str`` crashes its cache
+    lookup) and gives each scene its own cache index, so concurrent renders
+    never share — or race on — the same cache.json.
+
+    Best effort: any failure just means the render uses the throwaway default.
+    """
+    try:
+        cache_root = Path(os.getenv("VOICEOVER_CACHE_DIR", "/tmp/arxivisual-tts-cache"))
+        safe_scene = re.sub(r"[^A-Za-z0-9_-]", "_", scene_name) or "scene"
+        target = cache_root / safe_scene
+        target.mkdir(parents=True, exist_ok=True)
+        media_dir.mkdir(parents=True, exist_ok=True)
+        (media_dir / "voiceovers").symlink_to(target, target_is_directory=True)
+    except Exception as exc:
+        logger.warning("[Renderer] Voiceover cache link failed (%s) — using throwaway cache", exc)
+
+
 def _run_manim_subprocess(
     code: str,
     scene_name: str,
@@ -84,6 +108,7 @@ def _run_manim_subprocess(
         code_path.write_text(code)
 
         output_dir = tmpdir_path / "media"
+        _link_persistent_voiceover_cache(output_dir, scene_name)
         quality_flags = {
             "low_quality": "-ql",
             "medium_quality": "-qm",

@@ -24,13 +24,14 @@ def test_openai_snippet_uses_configured_voice_and_model(generator):
     assert 'model="gpt-4o-mini-tts"' in snippet
     # Bookmark transcription must stay off — it would pull in whisper at render.
     assert "transcription_model=None" in snippet
-    # Persistent audio cache — without it, retries re-synthesize (and re-bill)
-    # identical narration because the default cache dies with the render tmpdir.
-    assert 'cache_dir="/tmp/arxivisual-tts-cache"' in snippet
+    # cache_dir must NOT appear: SpeechService keeps an explicit cache_dir as a
+    # raw str and its cache lookup does Path division on it -> TypeError on the
+    # first narration. Persistence is the runner's job (voiceover-cache symlink).
+    assert "cache_dir" not in snippet
 
 
-def test_gtts_snippet_also_uses_persistent_cache(generator):
-    assert 'cache_dir="/tmp/arxivisual-tts-cache"' in generator._get_tts_setup_snippet("gtts", "")
+def test_gtts_snippet_has_no_cache_dir_either(generator):
+    assert "cache_dir" not in generator._get_tts_setup_snippet("gtts", "")
 
 
 def test_openai_snippet_defaults_voice_when_blank(generator):

@@ -44,6 +44,22 @@ from models.paper import (
 logger = logging.getLogger(__name__)
 
 
+def parse_render_concurrency(default: int = 3) -> int:
+    """Parse RENDER_CONCURRENCY safely.
+
+    An empty or non-numeric value must not fail jobs at render setup — fall
+    back to the documented default and log the misconfiguration instead.
+    """
+    raw = os.getenv("RENDER_CONCURRENCY", str(default))
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid RENDER_CONCURRENCY=%r — using default %d", raw, default
+        )
+        return default
+
+
 def resolve_terminal_job_status(
     succeeded_count: int, total_count: int
 ) -> tuple[str, str, str | None]:
@@ -285,9 +301,8 @@ async def _process_paper_job_impl(job_id: str, arxiv_id: str):
             # Concurrent Manim renders are CPU-bound (manim + latex + ffmpeg);
             # production telemetry shows rendering is ~74% of pipeline wall-clock
             # on the 2-vCPU container, so this is the knob to tune per host.
-            render_semaphore = asyncio.Semaphore(
-                max(1, int(os.getenv("RENDER_CONCURRENCY", "3")))
-            )
+            render_concurrency = parse_render_concurrency()
+            render_semaphore = asyncio.Semaphore(render_concurrency)
             progress_lock = asyncio.Lock()
             progress_bar = ProgressBar(len(viz_records), "Video Rendering")
             completed_count = 0
@@ -339,7 +354,10 @@ async def _process_paper_job_impl(job_id: str, arxiv_id: str):
                                 sections_completed=succeeded_count,
                             )
 
-            logger.info(f"Rendering {len(viz_records)} videos concurrently (max 3 parallel)...")
+            logger.info(
+                f"Rendering {len(viz_records)} videos concurrently "
+                f"(max {render_concurrency} parallel)..."
+            )
             await asyncio.gather(*[
                 _render_one(viz, i) for i, viz in enumerate(viz_records)
             ])

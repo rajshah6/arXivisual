@@ -343,7 +343,7 @@ async def health_check(db: AsyncSession = Depends(get_db)):
             version = result.stdout.strip().split("\n")[0]
             manim_status = f"available ({version})"
         else:
-            detail = (result.stderr or result.stdout).strip().splitlines()
+            detail = (result.stderr.strip() or result.stdout.strip()).splitlines()
             manim_status = f"error: {detail[-1][:200] if detail else 'command failed'}"
     except FileNotFoundError:
         manim_status = "not installed"

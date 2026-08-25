@@ -358,6 +358,16 @@ async def generate_single_visualization(
                     target_duration_seconds=VOICEOVER_TARGET_DURATION_SECONDS,
                 )
 
+            # Clear the previous attempt's gate results now that this attempt's
+            # regeneration feedback has been built from them. Otherwise a later
+            # attempt that fails early (e.g. at stage 1) would carry forward a
+            # stale spatial/voice/render result and feed the model issues that
+            # no longer exist.
+            validation = None
+            spatial_result = None
+            voice_result = None
+            render_result = None
+
             # Stage 1: code validation
             logger.info("    [1/4] CodeValidator: Checking syntax & structure...")
             validation = validator.validate(code_result.code)
@@ -397,7 +407,13 @@ async def generate_single_visualization(
                 code_result.narration_beats = beats
                 code_result.voiceover_enabled = True
 
-                voice_result = voiceover_script_validator.validate(
+                # Run the (synchronous, LLM-backed) judge in a worker thread so
+                # it doesn't block the event loop. Without this, the sync judge
+                # call serializes all 5 gathered visualization tasks at this gate
+                # and stalls /api/status polling. Running off-thread also avoids
+                # the nested-asyncio.run failure on the Dedalus provider path.
+                voice_result = await asyncio.to_thread(
+                    voiceover_script_validator.validate,
                     generated_code=code_result,
                     plan=plan,
                     candidate=candidate,

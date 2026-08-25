@@ -150,3 +150,17 @@ class TestWorkflowOrchestration:
                     await handle.result()
 
         asyncio.run(run())
+
+
+def test_viz_ids_do_not_collide_across_sibling_arxiv_ids():
+    """Regression: the old 8-char digit prefix collided for sibling ids
+    (2608.23551 vs 2608.23553 -> both "26082355"), so papers overwrote each
+    other's visualization rows via upsert. Found live in production."""
+    def suffix(arxiv_id: str) -> str:
+        return arxiv_id.replace(".", "_").replace("/", "_")
+
+    a, b = suffix("2608.23551"), suffix("2608.23553")
+    assert a != b
+    assert a == "2608_23551"
+    # Old-style ids (e.g. math/0211159) sanitize to filesystem/URL-safe form too.
+    assert suffix("math/0211159") == "math_0211159"

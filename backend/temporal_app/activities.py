@@ -118,7 +118,10 @@ async def generate_visualizations_for_paper(params: PipelineInput) -> list[Rende
         generated = await generate_visualizations(structured_paper)
 
     render_inputs: list[RenderInput] = []
-    paper_suffix = params.arxiv_id.replace(".", "")[:8]
+    # Full sanitized arXiv id — a truncated prefix collided across sibling
+    # ids (e.g. 2608.23551 vs 2608.23553 both mapped to "26082355"), making
+    # papers overwrite each other's visualization rows via upsert.
+    paper_suffix = params.arxiv_id.replace(".", "_").replace("/", "_")
     async with async_session_maker() as db:
         for i, viz in enumerate(generated):
             viz_id = f"viz_{paper_suffix}_{i + 1}"

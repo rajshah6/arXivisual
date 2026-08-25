@@ -239,7 +239,10 @@ async def _process_paper_job_impl(job_id: str, arxiv_id: str):
             viz_records = []
 
             # Use paper-based prefix for consistent viz_ids across re-runs
-            paper_suffix = arxiv_id.replace(".", "")[:8]  # e.g., "1706.03762" -> "17060376"
+            # Full sanitized arXiv id — a truncated prefix collided across
+            # sibling ids (e.g. 2608.23551 vs 2608.23553 both mapped to
+            # "26082355"), making papers overwrite each other's viz rows.
+            paper_suffix = arxiv_id.replace(".", "_").replace("/", "_")
 
             for i, visualization in enumerate(generated_visualizations):
                 # Create consistent viz_id based on paper and index, not job

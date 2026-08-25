@@ -61,6 +61,12 @@ async def main() -> None:
     client = await Client.connect(address, namespace=namespace, tls=use_tls)
     logger.info("Connected. Render concurrency: %d", render_concurrency)
 
+    # Backpressure: observed in production that unbounded concurrent
+    # generations (each fanning out 5 LLM tasks + render tests) starve each
+    # other on the shared box until the activity timeout fires. Two papers
+    # generating at once is the sweet spot for this host; the rest queue on the
+    # Temporal server — which is exactly what it's for.
+    pipeline_concurrency = max(1, int(os.getenv("PIPELINE_CONCURRENCY", "2")))
     pipeline_worker = Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -72,6 +78,7 @@ async def main() -> None:
             finalize_job,
             mark_job_failed,
         ],
+        max_concurrent_activities=pipeline_concurrency,
     )
     render_worker = Worker(
         client,

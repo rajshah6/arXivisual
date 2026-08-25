@@ -82,6 +82,10 @@ async def process_visualization(viz_id: str, manim_code: str, quality: str = "lo
     video_bytes = await render_manim(manim_code, scene_name, quality)
     logger.info(f"[Processing Visualization] Rendering complete ({len(video_bytes):,} bytes)")
 
+    # Visual QA (observe mode): judge sampled frames for overlap/cutoff defects.
+    # Logs + Langfuse score only — never blocks the pipeline or fails the render.
+    await _observe_visual_qa(viz_id, video_bytes)
+
     # Save to storage
     logger.info(f"[Processing Visualization] Saving to storage...")
     video_url = await save_video(video_bytes, f"{viz_id}.mp4")
@@ -89,3 +93,36 @@ async def process_visualization(viz_id: str, manim_code: str, quality: str = "lo
     logger.info(f"[Processing Visualization] Video URL: {video_url}")
 
     return video_url
+
+
+async def _observe_visual_qa(viz_id: str, video_bytes: bytes) -> None:
+    """Run the vision layout judge when ENABLE_VISUAL_QA=1; log-only."""
+    if os.getenv("ENABLE_VISUAL_QA", "0") != "1":
+        return
+    try:
+        from agents.visual_qa import judge_video
+
+        verdict = await judge_video(video_bytes, viz_id=viz_id)
+        if verdict is None:
+            return
+        if verdict.has_defects:
+            logger.warning(
+                "[VisualQA] %s severity=%s overlap=%s cutoff=%s collisions=%s issues=%s",
+                viz_id, verdict.severity, verdict.overlap, verdict.cutoff,
+                verdict.collisions, "; ".join(verdict.issues[:5]),
+            )
+        else:
+            logger.info("[VisualQA] %s clean (%s frames)", viz_id, verdict.frames_checked)
+        # Score the current Langfuse span so defect rates become dashboardable.
+        try:
+            from langfuse import get_client
+
+            get_client().score_current_trace(
+                name="visual_qa_defect",
+                value=1.0 if verdict.has_defects else 0.0,
+                comment=f"{viz_id}: {verdict.severity}; " + "; ".join(verdict.issues[:3]),
+            )
+        except Exception:
+            pass  # Langfuse unavailable/unconfigured — logging above suffices
+    except Exception as exc:
+        logger.warning("[VisualQA] Observe-mode QA failed for %s: %s", viz_id, exc)

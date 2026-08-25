@@ -33,12 +33,23 @@ The video must feel like a coherent teaching sequence, not a list of disconnecte
    - `# Beat 3: ...`
 5. Keep consistent color semantics across all beats.
 
-## Spatial Quality Requirements
-- Keep content in safe area: x in [-6, 6], y in [-3.5, 3.5].
+## Spatial Quality Requirements (CRITICAL — overlapping visuals are the #1 defect)
+- Keep content in safe area: x in [-6, 6], y in [-3.5, 3.5]. Anything wider gets clipped by the frame.
 - Prefer relative layout (`next_to`, `arrange`, `to_edge(..., buff=...)`) over hardcoded offsets.
-- Always include `buff` in `next_to` / `arrange` calls.
-- Avoid overlap by grouping and arranging related objects.
-- Clear visual clutter between major beats when needed.
+- Always include `buff` in `next_to` / `arrange` calls (minimum 0.3).
+- MANDATORY: end every beat by clearing what the next beat replaces —
+  `self.play(FadeOut(old_group), run_time=0.5)` — never draw a new diagram on
+  top of a previous one. If elements persist across beats, MOVE them aside
+  (`.animate.to_edge(...)` or `.animate.scale(0.6).to_corner(...)`) first.
+- Never place more than ~7 labeled elements on screen at once; group related
+  mobjects into a `VGroup(...).arrange(..., buff=0.3)` instead of positioning
+  each independently.
+- Labels must never sit on top of arrows or other shapes: position labels with
+  `next_to(target, direction, buff=0.25)` on the side AWAY from incoming arrows.
+- When many arrows converge (e.g. fan-in diagrams), keep their label text OUTSIDE
+  the arrow region or omit per-arrow labels entirely.
+- Scale to fit: if a group would exceed the safe area, `group.scale_to_fit_width(12)`
+  (or height 7) BEFORE positioning it.
 
 ## LaTeX and MathTex Safety (CRITICAL)
 - Keep MathTex valid with BasicTeX-safe syntax.

@@ -1,0 +1,106 @@
+# Manual backend deploy: build the image in ACR, roll the Container App, verify health.
+#
+# Deploys are human-initiated on purpose — there is NO on:push trigger. Run this
+# from the Actions tab (or `gh workflow run deploy-backend.yml`) once CI is green.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# One-time Azure setup (maintainers run these locally, once)
+#
+# The workflow authenticates via OIDC federation — no client secret is stored in
+# GitHub. It needs an Entra application that trusts this repo's main branch and
+# has rights over the arxivisual-rg resource group:
+#
+#   # 1) Create the Entra app + service principal
+#   APP_ID=$(az ad app create --display-name "arxivisual-github-deploy" \
+#              --query appId -o tsv)
+#   az ad sp create --id "$APP_ID"
+#
+#   # 2) Federate it with GitHub Actions. workflow_dispatch runs carry the ref
+#   #    they were dispatched on, so this subject allows dispatches from main:
+#   az ad app federated-credential create --id "$APP_ID" --parameters '{
+#     "name": "github-arxivisual-main",
+#     "issuer": "https://token.actions.githubusercontent.com",
+#     "subject": "repo:rajshah6/arXivisual:ref:refs/heads/main",
+#     "audiences": ["api://AzureADTokenExchange"]
+#   }'
+#
+#   # 3) Grant it Contributor on the resource group (covers both the ACR build
+#   #    and the containerapp update — registry and app live in arxivisual-rg):
+#   SUB_ID=$(az account show --query id -o tsv)
+#   az role assignment create \
+#     --assignee "$APP_ID" \
+#     --role Contributor \
+#     --scope "/subscriptions/$SUB_ID/resourceGroups/arxivisual-rg"
+#
+#   # 4) Store the three ids as repo secrets (ids, not credentials — the trust
+#   #    lives in the federated credential above):
+#   gh secret set AZURE_CLIENT_ID       --body "$APP_ID"
+#   gh secret set AZURE_TENANT_ID       --body "$(az account show --query tenantId -o tsv)"
+#   gh secret set AZURE_SUBSCRIPTION_ID --body "$SUB_ID"
+#
+# Required repo secrets: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Deploy backend
+
+on:
+  workflow_dispatch:
+
+# One deploy at a time; queue rather than cancel a rollout mid-flight.
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+permissions:
+  id-token: write # mint the OIDC token azure/login exchanges
+  contents: read
+
+env:
+  ACR_NAME: ca82c08e2eadacr
+  IMAGE_NAME: arxivisual-api
+  APP_NAME: arxivisual-api
+  RESOURCE_GROUP: arxivisual-rg
+  HEALTH_URL: https://arxivisual-api.purplepond-ac9e2dc5.eastus2.azurecontainerapps.io/api/health
+
+jobs:
+  deploy:
+    name: Build, roll, verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Build happens inside ACR (same as the manual `az acr build` flow the
+      # project has used so far), tagged with the exact commit being deployed.
+      - name: Build image in ACR
+        run: az acr build -r "$ACR_NAME" -t "$IMAGE_NAME:gh-${{ github.sha }}" backend
+
+      - name: Roll Container App to the new image
+        run: |
+          az containerapp update \
+            -n "$APP_NAME" -g "$RESOURCE_GROUP" \
+            --image "$ACR_NAME.azurecr.io/$IMAGE_NAME:gh-${{ github.sha }}"
+
+      # The update returns before the new revision finishes provisioning, so
+      # poll the public health endpoint instead of trusting the CLI exit code.
+      - name: Verify health
+        run: |
+          echo "Polling $HEALTH_URL ..."
+          for attempt in $(seq 1 30); do
+            if curl -fsS --max-time 10 "$HEALTH_URL"; then
+              echo
+              echo "Backend healthy (attempt $attempt)."
+              exit 0
+            fi
+            echo "Attempt $attempt/30: not healthy yet, retrying in 10s..."
+            sleep 10
+          done
+          echo "Backend did not become healthy within ~5 minutes." >&2
+          echo "Inspect the revision: az containerapp logs show -n $APP_NAME -g $RESOURCE_GROUP --tail 100" >&2
+          exit 1

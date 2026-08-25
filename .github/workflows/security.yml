@@ -1,0 +1,70 @@
+# Lightweight security checks. Only the secret scan blocks — leaked credentials
+# are an emergency regardless of context. The dependency audits are advisory
+# (continue-on-error) so a new upstream CVE never blocks unrelated work; they
+# surface in the logs and in the weekly scheduled run.
+name: Security
+
+on:
+  pull_request:
+  schedule:
+    - cron: "0 8 * * 1" # Mondays 08:00 UTC, runs against main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    name: Secret scan (blocking)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # gitleaks scans the full commit history
+
+      # Public repo: no GITLEAKS_LICENSE needed.
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  npm-audit:
+    name: npm audit (advisory)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # Audits straight from package-lock.json — no install needed. Advisory:
+      # matches CI's lint precedent (step-level continue-on-error keeps the
+      # finding visible in logs without gating merges on upstream advisories).
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+        continue-on-error: true
+
+  pip-audit:
+    name: pip-audit (advisory)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      # Export the locked runtime closure instead of `uv sync`-ing: installing
+      # the real environment would drag in manimpango's pango/cairo build deps
+      # for no benefit. The export carries hashes, which lets pip-audit run
+      # with --disable-pip (audit the pinned set, install nothing).
+      - name: Export locked runtime dependencies
+        run: uv export --frozen --no-dev --no-emit-project -o requirements.txt
+
+      - name: Audit locked dependencies
+        run: pipx run pip-audit --disable-pip -r requirements.txt
+        continue-on-error: true

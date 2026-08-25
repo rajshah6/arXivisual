@@ -1,0 +1,3 @@
+# Default owners: every PR requests review from the repo owner and the main
+# maintainer. Add path-scoped rules below if ownership ever splits.
+* @rajshah6 @Ajith-Bondili

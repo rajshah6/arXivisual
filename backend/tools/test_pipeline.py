@@ -494,7 +494,6 @@ class StrictVoiceExample(VoiceoverScene):
         spatial_validator=FakeSpatialValidator(),
         voiceover_script_validator=FakeVoiceoverScriptValidator(),
         render_tester=FakeRenderTester(),
-        legacy_voiceover_generator=None,
     )
 
     assert viz is not None
@@ -595,7 +594,6 @@ async def test_pipeline_drops_visualization_when_voice_quality_fails():
             spatial_validator=None,
             voiceover_script_validator=FakeVoiceoverScriptValidator(),
             render_tester=FakeRenderTester(),
-            legacy_voiceover_generator=None,
         )
     finally:
         pipeline_module.MAX_RETRIES = old_max_retries

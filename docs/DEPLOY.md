@@ -1,184 +1,108 @@
-# Deploy arXivisual (Frontend + Backend) — Free Tier
+# Deploying arXivisual
 
-Step-by-step guide to deploy the **Next.js frontend** and **FastAPI backend** for free.
+Production runs in two pieces:
 
----
+| Part | Stack | Host |
+|------|-------|------|
+| Backend | FastAPI in Docker ([backend/Dockerfile](../backend/Dockerfile)) | Azure Container Apps (`arxivisual-api` in resource group `arxivisual-rg`) |
+| Frontend | Next.js 16 | Vercel, auto-deployed from `main` |
 
-## Overview
-
-| Part      | Stack           | Free host   | Notes                          |
-|-----------|------------------|------------|--------------------------------|
-| Frontend  | Next.js 16       | **Vercel** | Best fit for Next.js           |
-| Backend   | FastAPI (Python) | **Render** | Free web service (sleeps ~15 min idle) |
-
-You’ll deploy the **backend first**, then the frontend (so you can set the API URL).
+The backend image bundles Manim's system dependencies (FFmpeg, Cairo, Pango, a TeX Live install for `MathTex`), so it is large (~3 GB) and takes several minutes to build.
 
 ---
 
-## Prerequisites
+## Backend: Azure Container Apps
 
-- GitHub repo with this project pushed
-- Accounts (free): [GitHub](https://github.com), [Vercel](https://vercel.com), [Render](https://render.com)
-- Backend API keys in `.env`: `DEDALUS_API_KEY`, `ELEVEN_API_KEY` (you already have these locally)
+### 1. Build the image in ACR
 
----
-
-## Part 1: Deploy the backend (Render)
-
-### 1.1 Push code to GitHub
+Build remotely in Azure Container Registry — no local Docker needed. From the repo root:
 
 ```bash
-cd /Users/rajshah/Documents/Projects/Hackathons/TartanHacks/arXivisual
-git add .
-git commit -m "Prepare for deployment"
-git push origin main
+az acr build -r ca82c08e2eadacr -t arxivisual-api:<tag> backend
 ```
 
-(Use your branch name if not `main`.)
+Use a descriptive, dated tag (e.g. `tts-langfuse-20260825`) so rollbacks are unambiguous. The build context is the `backend/` directory; the Dockerfile installs the exact locked dependency set with `uv sync --frozen`, so a stale `uv.lock` fails the build instead of shipping silently (CI enforces the same invariant).
 
-### 1.2 Create a Render account and new Web Service
-
-1. Go to [render.com](https://render.com) and sign up (e.g. with GitHub).
-2. **Dashboard** → **New** → **Web Service**.
-3. Connect your GitHub account if needed, then select the **arXivisual** repo.
-4. Use these settings:
-
-| Field | Value |
-|-------|--------|
-| **Name** | `arxivisual-api` (or any name) |
-| **Region** | Oregon (or nearest) |
-| **Branch** | `main` |
-| **Root Directory** | `backend` |
-| **Runtime** | `Python 3` |
-| **Build Command** | `pip install -r requirements.txt` |
-| **Start Command** | `uvicorn main:app --host 0.0.0.0 --port $PORT` |
-
-5. Click **Advanced** and add **Environment Variables**:
-
-| Key | Value | Notes |
-|-----|--------|--------|
-| `DEDALUS_API_KEY` | (your key from `.env`) | Required for LLM |
-| `ELEVEN_API_KEY` | (your key from `.env`) | Required for voiceover |
-
-Do **not** commit your real keys to git; only add them in Render’s UI.
-
-6. Click **Create Web Service**. Render will build and deploy. The first build can take several minutes (installing Manim etc.).
-
-### 1.3 Get your backend URL
-
-When the service is live, you’ll see a URL like:
-
-```text
-https://arxivisual-api.onrender.com
-```
-
-Use this as `NEXT_PUBLIC_API_URL` when deploying the frontend. Test it:
+### 2. Deploy the new image
 
 ```bash
-curl https://YOUR-RENDER-URL.onrender.com/api/health
+az containerapp update \
+  -n arxivisual-api \
+  -g arxivisual-rg \
+  --image ca82c08e2eadacr.azurecr.io/arxivisual-api:<tag>
 ```
 
-You should get a JSON health response.
+This creates a new revision and shifts traffic to it. The app runs a single always-on replica; a paper job's Manim renders are CPU-bound, so the replica is sized accordingly (2 vCPU / 4 Gi).
 
-### 1.4 Render free tier notes
-
-- Service **sleeps** after ~15 minutes of no traffic; first request after sleep can take 30–60 seconds.
-- **SQLite** is used by default; data is lost on redeploy (no persistent disk on free tier). Fine for a demo/hackathon.
-- If the build fails (e.g. out of memory), see “Backend build issues” at the end.
-
----
-
-## Part 2: Deploy the frontend (Vercel)
-
-### 2.1 Create a Vercel project from GitHub
-
-1. Go to [vercel.com](https://vercel.com) and sign in with GitHub.
-2. **Add New** → **Project**.
-3. Import your **arXivisual** repo.
-4. Set **Root Directory**: click **Edit** and set to `frontend`.
-5. **Framework Preset** should be **Next.js** (auto-detected). Leave **Build Command** and **Output Directory** as default.
-
-### 2.2 Set environment variable for the API
-
-1. In the project settings, open **Environment Variables**.
-2. Add:
-
-| Name | Value |
-|------|--------|
-| `NEXT_PUBLIC_API_URL` | `https://arxivisual-api.onrender.com` |
-
-Use the **exact** backend URL from Render (no trailing slash).
-
-3. (Optional) To use mock data instead of the real API:  
-   `NEXT_PUBLIC_USE_MOCK` = `true`.
-
-### 2.3 Deploy
-
-Click **Deploy**. Vercel will build and deploy the Next.js app. When it’s done, you get a URL like:
-
-```text
-https://arxivisual-xxx.vercel.app
-```
-
-Open that URL; the app will call your Render backend using `NEXT_PUBLIC_API_URL`.
-
----
-
-## Part 3: CORS and security (already set)
-
-- The backend already allows all origins in CORS (for the hackathon). For production you’d set `allow_origins` to your Vercel domain(s).
-- API keys are only in Render’s environment (and your local `.env`), not in the frontend.
-
----
-
-## Quick reference
-
-### Backend (Render)
-
-- **Build**: `pip install -r requirements.txt` (root = `backend`)
-- **Start**: `uvicorn main:app --host 0.0.0.0 --port $PORT`
-- **Env vars**: `DEDALUS_API_KEY`, `ELEVEN_API_KEY`
-
-### Frontend (Vercel)
-
-- **Root**: `frontend`
-- **Env**: `NEXT_PUBLIC_API_URL` = your Render backend URL
-
-### Optional: run backend locally with same PORT behavior
-
-The backend already supports both `PORT` (Render/Railway) and `API_PORT` (local). To run locally:
+### 3. Verify
 
 ```bash
-cd backend
-uv run uvicorn main:app --reload --port 8000
+curl https://arxivisual-api.purplepond-ac9e2dc5.eastus2.azurecontainerapps.io/api/health
+```
+
+`GET /api/health` reports database, Manim, and storage connectivity; expect `"status": "healthy"` with `"database": "connected"`, `"manim": "available (...)"`, and `"storage": "r2: connected"`. Also confirm `POST /api/render` returns 404 (see `RENDER_API_SECRET` below).
+
+### Environment variables and secrets
+
+Set these on the Container App (secrets referenced via `secretref:`; the rest as plain env vars). [backend/.env.example](../backend/.env.example) documents each one.
+
+| Variable | Value / purpose |
+|----------|-----------------|
+| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI resource endpoint (LLM + TTS both route through it) |
+| `AZURE_OPENAI_API_KEY` | **secret** — API key for the resource |
+| `AZURE_OPENAI_DEPLOYMENT` | Deployment name of the pipeline model (production uses `gpt-5-mini`; code defaults to `gpt-5`) |
+| `AZURE_OPENAI_REASONING_EFFORT` | `minimal` \| `low` \| `medium` \| `high`; reasoning tokens dominate output cost, so this is the main cost lever |
+| `DATABASE_URL` | **secret** — Postgres flexible server URL, `postgresql://...?ssl=require`. Unset falls back to ephemeral SQLite, which is wiped on every redeploy |
+| `STORAGE_MODE` | `r2` — videos go to Cloudflare R2 instead of the container filesystem |
+| `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_PUBLIC_URL` | R2 credentials (keys as **secrets**) and the public URL videos are served from |
+| `RENDER_MODE` | `local` — Manim renders in-container via subprocess (a Modal.com path exists in code but is not used in production) |
+| `ENVIRONMENT` | `production` — disables the raw-code `POST /api/render` endpoint unless `RENDER_API_SECRET` is also set |
+| `RENDER_API_SECRET` | **secret**, optional — when set, `POST /api/render` accepts requests carrying it in the `X-Render-Secret` header; when unset in production, the endpoint is fully disabled (404) |
+| `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | **secrets** — enable LLM tracing when both are present |
+| `LANGFUSE_HOST` | Langfuse region host (e.g. `https://us.cloud.langfuse.com`) |
+| `LANGFUSE_TRACING_ENVIRONMENT` | `production` — keeps prod traces separate from dev |
+| `VOICEOVER_TTS_SERVICE`, `VOICEOVER_VOICE_NAME`, `VOICEOVER_TTS_MODEL` | Optional TTS overrides. Defaults (`openai` / `nova` / `gpt-4o-mini-tts`) reuse the `AZURE_OPENAI_*` credentials at render time — no extra key needed. The TTS model must match an Azure deployment name |
+
+### Rollback
+
+List available tags, newest first:
+
+```bash
+az acr repository show-tags -n ca82c08e2eadacr \
+  --repository arxivisual-api --orderby time_desc -o table
+```
+
+Then redeploy the previous tag with the same `az containerapp update ... --image` command. Environment variables and secrets live on the app, not the image, so no reconfiguration is needed. Alternatively, reactivate a prior revision directly:
+
+```bash
+az containerapp revision list -n arxivisual-api -g arxivisual-rg -o table
+az containerapp revision activate -n arxivisual-api -g arxivisual-rg --revision <name>
+```
+
+### ACR housekeeping
+
+The registry is **Basic tier (10 GB)** and each image is ~3 GB (TeX Live), so it fills up after a few deploys. Periodically delete superseded tags, always keeping the live tag plus one rollback tag:
+
+```bash
+az acr repository delete -n ca82c08e2eadacr --image arxivisual-api:<old-tag>
 ```
 
 ---
 
-## Troubleshooting
+## Frontend: Vercel
 
-### Backend build fails on Render (out of memory / timeout)
+The Vercel project builds from the `frontend/` directory and auto-deploys on every push to `main`; pull requests get preview deployments (the backend's CORS policy allows `arxivisual.org`, this project's `ar-xivisual-*.vercel.app` previews, and `localhost:3000`).
 
-- **Option A**: On Render free tier, try reducing dependencies (e.g. comment out or make optional heavy packages like `manim` if you only need the API to return cached/demo data).
-- **Option B**: Deploy backend to **Railway** instead: [railway.app](https://railway.app) → New Project → Deploy from GitHub, set root to `backend`, add the same env vars, and use `uvicorn main:app --host 0.0.0.0 --port $PORT`. Railway gives a small free monthly credit.
+One environment variable matters:
 
-### Frontend shows “Failed to fetch” or network errors
+| Variable | Value |
+|----------|-------|
+| `NEXT_PUBLIC_API_URL` | The backend URL (the Azure Container Apps URL above) |
 
-- Confirm `NEXT_PUBLIC_API_URL` in Vercel matches the Render URL exactly (https, no trailing slash).
-- Redeploy the frontend after changing env vars (Vercel uses env at build time for `NEXT_PUBLIC_*`).
-- If the backend is sleeping, the first request may take 30–60 seconds; try again.
-
-### Health check works but `/api/process` or paper endpoints fail
-
-- Ensure `DEDALUS_API_KEY` and `ELEVEN_API_KEY` are set in Render.
-- Check Render **Logs** for Python tracebacks.
+`NEXT_PUBLIC_*` variables are baked in at build time — redeploy the frontend after changing it. As a safety net, production builds fall back to the Azure backend URL when the variable is unset (see [frontend/lib/api.ts](../frontend/lib/api.ts)); dev builds fall back to `http://localhost:8000`.
 
 ---
 
-## Summary
+## CI
 
-1. **Backend**: Render → New Web Service → repo root `backend`, build `pip install -r requirements.txt`, start `uvicorn main:app --host 0.0.0.0 --port $PORT`, add `DEDALUS_API_KEY` and `ELEVEN_API_KEY`.
-2. **Frontend**: Vercel → Import repo → root `frontend`, add `NEXT_PUBLIC_API_URL` = Render URL, deploy.
-3. Open the Vercel URL and use the app; the frontend will talk to the backend on Render.
-
-All steps use free tiers of Render and Vercel.
+[.github/workflows/ci.yml](../.github/workflows/ci.yml) runs on every push and PR: backend pytest on Python 3.11 and 3.13 (offline, dummy provider credentials), frontend typecheck + build (lint is advisory), and a Docker image build gated on changes to the Dockerfile, `pyproject.toml`, or `uv.lock`. Deploys are manual via the `az` commands above — CI validates that the image still builds but does not push it.

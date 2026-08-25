@@ -24,6 +24,13 @@ def test_openai_snippet_uses_configured_voice_and_model(generator):
     assert 'model="gpt-4o-mini-tts"' in snippet
     # Bookmark transcription must stay off — it would pull in whisper at render.
     assert "transcription_model=None" in snippet
+    # Persistent audio cache — without it, retries re-synthesize (and re-bill)
+    # identical narration because the default cache dies with the render tmpdir.
+    assert 'cache_dir="/tmp/arxivisual-tts-cache"' in snippet
+
+
+def test_gtts_snippet_also_uses_persistent_cache(generator):
+    assert 'cache_dir="/tmp/arxivisual-tts-cache"' in generator._get_tts_setup_snippet("gtts", "")
 
 
 def test_openai_snippet_defaults_voice_when_blank(generator):

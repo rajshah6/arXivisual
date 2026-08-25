@@ -73,12 +73,15 @@ class ManimGenerator(BaseAgent):
     OPENAI_TTS_MODEL = os.getenv("VOICEOVER_TTS_MODEL", "gpt-4o-mini-tts")
     DEFAULT_OPENAI_VOICE = "nova"
 
+    # Persistent narration-audio cache. manim-voiceover's default cache lives
+    # under the render's TemporaryDirectory, so identical narration was
+    # re-synthesized (and re-billed) on every retry/re-render. A stable path on
+    # the container survives across renders within a replica's lifetime.
+    TTS_CACHE_DIR = os.getenv("VOICEOVER_CACHE_DIR", "/tmp/arxivisual-tts-cache")
+
     TTS_IMPORTS = {
         "gtts": "from manim_voiceover.services.gtts import GTTSService",
         "openai": "from manim_voiceover.services.openai import OpenAIService",
-    }
-    TTS_SETUP = {
-        "gtts": "self.set_speech_service(GTTSService(transcription_model=None))",
     }
 
     def __init__(self, model: str | None = None):
@@ -125,9 +128,12 @@ class ManimGenerator(BaseAgent):
             return (
                 f'self.set_speech_service(OpenAIService('
                 f'voice="{voice}", model="{self.OPENAI_TTS_MODEL}", '
-                f'transcription_model=None))'
+                f'transcription_model=None, cache_dir="{self.TTS_CACHE_DIR}"))'
             )
-        return self.TTS_SETUP.get(tts_service, self.TTS_SETUP["gtts"])
+        return (
+            f"self.set_speech_service(GTTSService("
+            f'transcription_model=None, cache_dir="{self.TTS_CACHE_DIR}"))'
+        )
 
     def _get_tts_import(self, tts_service: str) -> str:
         """Return the exact import line matching the selected TTS service."""

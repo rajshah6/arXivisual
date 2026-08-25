@@ -282,7 +282,12 @@ async def _process_paper_job_impl(job_id: str, arxiv_id: str):
                 progress=0.75
             )
 
-            render_semaphore = asyncio.Semaphore(3)
+            # Concurrent Manim renders are CPU-bound (manim + latex + ffmpeg);
+            # production telemetry shows rendering is ~74% of pipeline wall-clock
+            # on the 2-vCPU container, so this is the knob to tune per host.
+            render_semaphore = asyncio.Semaphore(
+                max(1, int(os.getenv("RENDER_CONCURRENCY", "3")))
+            )
             progress_lock = asyncio.Lock()
             progress_bar = ProgressBar(len(viz_records), "Video Rendering")
             completed_count = 0

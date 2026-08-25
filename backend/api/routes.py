@@ -4,9 +4,10 @@ FastAPI routes for the ArXiviz API.
 Now using SQLite database and local Manim rendering.
 """
 
+import logging
 import os
 import uuid
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Header
 from fastapi.responses import FileResponse, RedirectResponse
 from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,7 +35,26 @@ from db import queries
 from rendering import process_visualization, get_video_path, get_video_url, extract_scene_name
 from jobs import process_paper_job
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api")
+
+
+def _authorize_render(secret: str | None) -> None:
+    """Guard the raw-code render endpoint.
+
+    ``POST /api/render`` executes caller-supplied Python via Manim, so it must
+    never be openly reachable in production. Outside production it stays open for
+    local development; in production it is disabled entirely unless RENDER_API_SECRET
+    is configured AND the caller presents it. We return 404 (not 403) so the
+    endpoint's existence isn't advertised.
+    """
+    if os.getenv("ENVIRONMENT", "development").lower() != "production":
+        return
+    expected = os.getenv("RENDER_API_SECRET")
+    if expected and secret == expected:
+        return
+    raise HTTPException(status_code=404, detail="Not found")
 
 
 # === Endpoints ===
@@ -242,13 +262,19 @@ async def get_video(video_id: str):
 
 
 @router.post("/render", response_model=RenderResponse)
-async def render_manim(request: RenderRequest):
+async def render_manim(
+    request: RenderRequest,
+    x_render_secret: str | None = Header(default=None),
+):
     """
     Test endpoint to render Manim code directly.
 
-    This is for testing/development purposes.
-    In production, rendering happens as part of the paper processing pipeline.
+    This is for testing/development purposes only — it executes caller-supplied
+    Python. It is disabled in production unless RENDER_API_SECRET is set and the
+    caller presents it via the X-Render-Secret header. In production, rendering
+    happens as part of the paper processing pipeline.
     """
+    _authorize_render(x_render_secret)
     try:
         # Generate a unique video ID
         video_id = f"test_{uuid.uuid4().hex[:8]}"
@@ -275,10 +301,11 @@ async def render_manim(request: RenderRequest):
             status_code=500,
             detail=f"Rendering failed: {str(e)}"
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("Unexpected error while rendering Manim code")
         raise HTTPException(
             status_code=500,
-            detail=f"Unexpected error: {str(e)}"
+            detail="Internal error while rendering. See server logs.",
         )
 
 

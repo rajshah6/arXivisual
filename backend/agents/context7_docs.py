@@ -513,6 +513,11 @@ async def fetch_manim_docs_direct(
 # Main entry point with fallback chain
 # ---------------------------------------------------------------------------
 
+def _read_static_docs(path: Path) -> str:
+    """Blocking read of the static Manim reference (run via asyncio.to_thread)."""
+    return path.read_text() if path.exists() else ""
+
+
 async def get_manim_docs(
     topic: str = "animations mobjects Scene ThreeDScene MathTex",
     max_tokens: int = 5000,
@@ -536,7 +541,25 @@ async def get_manim_docs(
     """
     docs = ""
 
-    if use_dedalus and DEDALUS_API_KEY:
+    # Use the Dedalus doc path only when explicitly requested AND the pipeline's
+    # resolved provider is Dedalus — reuse the same resolver as call_llm so this
+    # can't diverge (base.py is Azure-first when both providers' creds are present
+    # and LLM_PROVIDER is unset). Resolve the provider ONLY when use_dedalus is
+    # set: the direct Context7 REST path and static fallback don't need a provider
+    # and must keep working even when none is configured.
+    dedalus_active = False
+    if use_dedalus:
+        try:
+            from .base import get_provider
+        except ImportError:
+            from agents.base import get_provider
+        try:
+            dedalus_active = get_provider() == "dedalus"
+        except RuntimeError:
+            # No LLM provider configured — fall through to direct/static docs.
+            dedalus_active = False
+
+    if dedalus_active:
         docs = await fetch_manim_docs_via_dedalus(topic, max_tokens)
 
     if not docs:
@@ -547,8 +570,9 @@ async def get_manim_docs(
         static_path = (
             Path(__file__).parent.parent / "prompts" / "system" / "manim_reference.md"
         )
-        if static_path.exists():
-            docs = static_path.read_text()
+        # Read off the event loop — get_manim_docs is async and this fallback is
+        # reachable during request handling.
+        docs = await asyncio.to_thread(_read_static_docs, static_path)
 
     return docs
 

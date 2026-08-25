@@ -59,7 +59,14 @@ app = FastAPI(
 # Configure CORS for frontend development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for hackathon development
+    allow_origins=[
+        "https://arxivisual.org",
+        "https://www.arxivisual.org",
+        "http://localhost:3000",  # local frontend dev
+    ],
+    # This project's Vercel preview deploys only — not every *.vercel.app site
+    # (which any Vercel user controls). Anchored end-to-end via fullmatch.
+    allow_origin_regex=r"https://ar-xivisual-[a-z0-9-]+\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -89,6 +89,18 @@ class VoiceoverScriptValidator:
         reference_terms = self._build_reference_terms(candidate)
         for idx, line in enumerate(narrations, 1):
             stripped = line.strip()
+
+            # Word-count rule (hard fail — too short reads as filler, too long
+            # overruns the beat). Checked BEFORE skipping blanks so a blank or
+            # whitespace-only narration counts as zero words and fails the rule
+            # instead of silently passing validation.
+            word_count = self._word_count(stripped)
+            if word_count < self.min_words or word_count > self.max_words:
+                issues.append(
+                    f"Narration {idx} is {word_count} words, outside the "
+                    f"{self.min_words}-{self.max_words} words range."
+                )
+
             if not stripped:
                 continue
             # Banned animation-command starts (hard fail — bad narration quality)

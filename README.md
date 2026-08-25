@@ -29,7 +29,7 @@
 - Node.js 18+
 - Python 3.11+
 - FFmpeg, Cairo, Pango (for Manim)
-- API keys for Dedalus Labs (or any Anthropic provider)
+- API keys for Azure OpenAI (GPT-5 family) — or Dedalus Labs as a fallback provider
 
 ### Frontend Setup
 

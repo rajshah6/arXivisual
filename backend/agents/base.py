@@ -1,4 +1,4 @@
-"""Base agent class with Dedalus-only LLM support."""
+"""Base agent class with provider-switchable LLM support (Azure OpenAI / Dedalus)."""
 
 import json
 import logging
@@ -20,31 +20,134 @@ except ImportError:
     pass  # python-dotenv not installed, use system env vars
 
 
-# Default model
-DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
+# Default model per provider. For Azure this is the *deployment name* you
+# created in Azure AI Foundry (defaults to the model name, e.g. "gpt-5").
+DEFAULT_DEDALUS_MODEL = "claude-sonnet-4-5"
 
-# Provider is intentionally fixed to Dedalus for production consistency.
-_provider: str = "dedalus"
 
-# Shared Dedalus runner (reuse across agents to avoid re-init)
-_dedalus_runner = None
+def _azure_deployment() -> str:
+    return os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-5")
+
+
+# GPT-5 reasoning tokens count against max_completion_tokens. Agents size
+# max_tokens for the *visible* answer, so give the model extra room to think
+# or it can return an empty message after exhausting the cap on reasoning.
+_AZURE_REASONING_HEADROOM = 4096
 
 
 def _detect_provider() -> str:
-    """Detect provider and enforce Dedalus-only configuration."""
-    if not os.environ.get("DEDALUS_API_KEY"):
+    """Resolve the LLM provider from env: LLM_PROVIDER wins, else auto-detect."""
+    explicit = os.environ.get("LLM_PROVIDER", "").strip().lower()
+    if explicit == "azure":
+        _require_azure_env()
+        return "azure"
+    if explicit == "dedalus":
+        _require_dedalus_env()
+        return "dedalus"
+    if explicit:
         raise RuntimeError(
-            "DEDALUS_API_KEY is required. This project is configured to use "
-            "Dedalus-only LLM routing."
+            f"Unknown LLM_PROVIDER={explicit!r}. Use 'azure' or 'dedalus'."
         )
-    return "dedalus"
+
+    if os.environ.get("AZURE_OPENAI_API_KEY") and os.environ.get("AZURE_OPENAI_ENDPOINT"):
+        return "azure"
+    if os.environ.get("DEDALUS_API_KEY"):
+        return "dedalus"
+    raise RuntimeError(
+        "No LLM provider configured. Set AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT "
+        "(Azure OpenAI, GPT-5 family) or DEDALUS_API_KEY (Dedalus)."
+    )
+
+
+def _require_azure_env() -> None:
+    missing = [
+        k for k in ("AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT")
+        if not os.environ.get(k)
+    ]
+    if missing:
+        raise RuntimeError(f"LLM_PROVIDER=azure but missing env vars: {', '.join(missing)}")
+
+
+def _require_dedalus_env() -> None:
+    if not os.environ.get("DEDALUS_API_KEY"):
+        raise RuntimeError("LLM_PROVIDER=dedalus but DEDALUS_API_KEY is not set.")
 
 
 def get_provider() -> str:
-    """Get the current provider name."""
-    # Always validate env when requested so misconfigurations fail fast.
-    _detect_provider()
-    return _provider
+    """Get the current provider name (validates env on every call)."""
+    return _detect_provider()
+
+
+# ---------------------------------------------------------------------------
+# Azure OpenAI (GPT-5 family) — billed against Azure / Microsoft credits
+# ---------------------------------------------------------------------------
+
+_azure_async_client = None
+_azure_sync_client = None
+
+
+def _azure_base_url() -> str:
+    endpoint = os.environ["AZURE_OPENAI_ENDPOINT"].rstrip("/")
+    return f"{endpoint}/openai/v1/"
+
+
+def _get_azure_client():
+    global _azure_async_client
+    if _azure_async_client is None:
+        from openai import AsyncOpenAI
+        _azure_async_client = AsyncOpenAI(
+            base_url=_azure_base_url(),
+            api_key=os.environ["AZURE_OPENAI_API_KEY"],
+            timeout=300.0,  # 5 min — large paper summarization needs headroom
+        )
+    return _azure_async_client
+
+
+def _get_azure_sync_client():
+    global _azure_sync_client
+    if _azure_sync_client is None:
+        from openai import OpenAI
+        _azure_sync_client = OpenAI(
+            base_url=_azure_base_url(),
+            api_key=os.environ["AZURE_OPENAI_API_KEY"],
+            timeout=300.0,
+        )
+    return _azure_sync_client
+
+
+def _azure_model(model: str | None) -> str:
+    """Map a requested model to an Azure deployment name.
+
+    Claude model names (the old Dedalus defaults) map to the configured
+    GPT-5 deployment; explicit gpt-* names pass through.
+    """
+    if not model or model.startswith("claude") or "/" in model:
+        return _azure_deployment()
+    return model
+
+
+def _azure_request_kwargs(
+    model: str, prompt: str, system_prompt: str, max_tokens: int
+) -> dict:
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+    kwargs: dict = {
+        "model": model,
+        "messages": messages,
+        "max_completion_tokens": max_tokens + _AZURE_REASONING_HEADROOM,
+    }
+    # minimal | low | medium | high — low keeps the pipeline fast/cheap
+    kwargs["reasoning_effort"] = os.environ.get("AZURE_OPENAI_REASONING_EFFORT", "low")
+    return kwargs
+
+
+# ---------------------------------------------------------------------------
+# Dedalus (legacy fallback)
+# ---------------------------------------------------------------------------
+
+_dedalus_runner = None
 
 
 def _get_dedalus_runner():
@@ -67,13 +170,17 @@ def _dedalus_model(model: str) -> str:
 
 
 def _get_client() -> None:
-    """Compatibility shim: there is no direct SDK client in Dedalus-only mode."""
+    """Compatibility shim: agents don't hold a direct SDK client."""
     return None
 
 
 def get_model_name(model: str | None = None) -> str:
-    """Get the model name (bare name, no provider prefix)."""
-    return model or DEFAULT_MODEL
+    """Get the model name for the active provider."""
+    if model:
+        return model
+    if get_provider() == "azure":
+        return _azure_deployment()
+    return DEFAULT_DEDALUS_MODEL
 
 
 # ---------------------------------------------------------------------------
@@ -82,18 +189,36 @@ def get_model_name(model: str | None = None) -> str:
 
 async def call_llm(
     prompt: str,
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
     system_prompt: str = "",
     max_tokens: int = 4096,
 ) -> str:
-    """Async LLM call routed through Dedalus."""
-    get_provider()
-    runner = _get_dedalus_runner()
-    dedalus_model = _dedalus_model(model)
+    """Async LLM call routed through the configured provider."""
+    provider = get_provider()
     input_words = len(prompt.split())
-    logger.info(f"[LLM] Calling {dedalus_model} ({input_words} input words, max_tokens={max_tokens})")
     t0 = time.monotonic()
+
+    if provider == "azure":
+        resolved = _azure_model(model)
+        logger.info(f"[LLM] Calling azure/{resolved} ({input_words} input words, max_tokens={max_tokens})")
+        try:
+            client = _get_azure_client()
+            resp = await client.chat.completions.create(
+                **_azure_request_kwargs(resolved, prompt, system_prompt, max_tokens)
+            )
+            output = resp.choices[0].message.content or ""
+            elapsed = time.monotonic() - t0
+            logger.info(f"[LLM] azure/{resolved} responded in {elapsed:.1f}s ({len(output.split())} output words)")
+            return output
+        except Exception as e:
+            elapsed = time.monotonic() - t0
+            logger.error(f"[LLM] azure/{resolved} FAILED after {elapsed:.1f}s: {type(e).__name__}: {e}")
+            raise
+
+    dedalus_model = _dedalus_model(model or DEFAULT_DEDALUS_MODEL)
+    logger.info(f"[LLM] Calling {dedalus_model} ({input_words} input words, max_tokens={max_tokens})")
     try:
+        runner = _get_dedalus_runner()
         result = await runner.run(
             input=prompt,
             model=dedalus_model,
@@ -102,8 +227,7 @@ async def call_llm(
         )
         elapsed = time.monotonic() - t0
         output = result.final_output or ""
-        output_words = len(output.split())
-        logger.info(f"[LLM] {dedalus_model} responded in {elapsed:.1f}s ({output_words} output words)")
+        logger.info(f"[LLM] {dedalus_model} responded in {elapsed:.1f}s ({len(output.split())} output words)")
         return output
     except Exception as e:
         elapsed = time.monotonic() - t0
@@ -113,18 +237,27 @@ async def call_llm(
 
 def call_llm_sync(
     prompt: str,
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
     system_prompt: str = "",
     max_tokens: int = 4096,
 ) -> str:
-    """Synchronous LLM call routed through Dedalus."""
+    """Synchronous LLM call routed through the configured provider."""
+    provider = get_provider()
+
+    if provider == "azure":
+        resolved = _azure_model(model)
+        client = _get_azure_sync_client()
+        resp = client.chat.completions.create(
+            **_azure_request_kwargs(resolved, prompt, system_prompt, max_tokens)
+        )
+        return resp.choices[0].message.content or ""
+
     import asyncio
 
-    get_provider()
     runner = _get_dedalus_runner()
     result = asyncio.run(runner.run(
         input=prompt,
-        model=_dedalus_model(model),
+        model=_dedalus_model(model or DEFAULT_DEDALUS_MODEL),
         instructions=system_prompt,
         max_tokens=max_tokens,
     ))
@@ -135,7 +268,8 @@ class BaseAgent:
     """
     Base class for all AI agents in the pipeline.
 
-    Uses Dedalus SDK only (DEDALUS_API_KEY).
+    Provider is selected via env: Azure OpenAI (AZURE_OPENAI_*) or
+    Dedalus (DEDALUS_API_KEY). See _detect_provider().
     """
 
     def __init__(
@@ -154,7 +288,10 @@ class BaseAgent:
         self.client = _get_client()
 
         # Log active provider
-        print(f"🔮 Dedalus SDK → anthropic/{self.model}")
+        if self._provider == "azure":
+            print(f"☁️  Azure OpenAI → {_azure_model(self.model)}")
+        else:
+            print(f"🔮 Dedalus SDK → anthropic/{self.model}")
 
     def _get_prompts_dir(self) -> Path:
         """Get the prompts directory path."""

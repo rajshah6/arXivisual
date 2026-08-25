@@ -64,7 +64,9 @@ app.add_middleware(
         "https://www.arxivisual.org",
         "http://localhost:3000",  # local frontend dev
     ],
-    allow_origin_regex=r"https://.*\.vercel\.app",  # Vercel preview deploys
+    # This project's Vercel preview deploys only — not every *.vercel.app site
+    # (which any Vercel user controls). Anchored end-to-end via fullmatch.
+    allow_origin_regex=r"https://ar-xivisual-[a-z0-9-]+\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

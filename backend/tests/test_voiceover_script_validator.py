@@ -148,3 +148,28 @@ def test_validator_fails_word_count_rule():
     result = validator.validate(generated_code=generated, plan=_plan(), candidate=_candidate())
     assert result.is_valid is False
     assert any("outside" in issue.lower() and "words" in issue.lower() for issue in result.issues_found)
+
+
+def test_validator_flags_blank_narration_as_zero_words():
+    """A whitespace-only narration entry must fail the word-count rule instead
+    of being silently skipped (regression for CodeRabbit finding on PR #15)."""
+    validator = VoiceoverScriptValidator(use_llm_judge=False)
+    code = _valid_code().replace(
+        "Softmax-normalized weights control how strongly each value contributes to the output representation.",
+        "   ",
+    )
+    generated = GeneratedCode(
+        code=code,
+        scene_class_name="AttentionVoice",
+        dependencies=["manim", "manim_voiceover"],
+        voiceover_enabled=True,
+        narration_lines=[
+            "Queries compare against keys to compute relevance scores across all token positions.",
+            "   ",
+        ],
+        narration_beats=["# Beat 2", "# Beat 3"],
+    )
+
+    result = validator.validate(generated_code=generated, plan=_plan(), candidate=_candidate())
+    assert result.is_valid is False
+    assert any("0 words" in issue for issue in result.issues_found)

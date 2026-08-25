@@ -29,31 +29,7 @@ class CodeValidator:
         "from manim import",
         "from manim import *",
     ]
-    
-    # Known Manim color constants
-    MANIM_COLORS = [
-        "BLUE", "RED", "GREEN", "YELLOW", "ORANGE", "PURPLE", "TEAL",
-        "GRAY", "DARK_GRAY", "WHITE", "BLACK", "PINK", "MAROON", "GOLD",
-        "BLUE_A", "BLUE_B", "BLUE_C", "BLUE_D", "BLUE_E",
-        "GREEN_A", "GREEN_B", "GREEN_C", "GREEN_D", "GREEN_E",
-        "RED_A", "RED_B", "RED_C", "RED_D", "RED_E",
-    ]
-    
-    # Known Manim mobject classes
-    MANIM_MOBJECTS = [
-        "Text", "MathTex", "Tex", "Circle", "Square", "Rectangle",
-        "RoundedRectangle", "Dot", "Line", "Arrow", "DoubleArrow",
-        "DashedLine", "CurvedArrow", "VGroup", "Group", "Matrix",
-        "Axes", "NumberPlane", "Scene", "ThreeDScene",
-    ]
-    
-    # Known Manim animations
-    MANIM_ANIMATIONS = [
-        "Write", "Create", "FadeIn", "FadeOut", "Transform",
-        "ReplacementTransform", "Circumscribe", "Indicate", "Flash",
-        "FocusOn", "Wiggle", "GrowFromCenter", "Uncreate", "Unwrite",
-    ]
-    
+
     def validate(self, code: str) -> ValidatorOutput:
         """
         Validate Manim code and attempt to fix common issues.

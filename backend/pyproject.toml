@@ -69,8 +69,3 @@ asyncio_mode = "auto"
 # collects the argparse scripts under tools/ and backend root, some of which
 # fire real Azure OpenAI calls and network fetches on collection/execution.
 testpaths = ["tests"]
-
-[tool.uv.workspace]
-members = [
-    "manimations",
-]

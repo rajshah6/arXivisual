@@ -4,9 +4,6 @@ Pipeline Orchestration - Coordinates all agents to generate visualizations.
 Main pipeline (quality-first voice mode):
   SectionAnalyzer -> VisualizationPlanner -> ManimGenerator (voice-aware)
   -> CodeValidator -> SpatialValidator -> VoiceoverScriptValidator -> RenderTester
-
-Legacy fallback mode (disabled by default):
-  ... -> RenderTester -> VoiceoverGenerator
 """
 
 import asyncio
@@ -46,7 +43,6 @@ try:
     from .spatial_validator import SpatialValidator
     from .render_tester import RenderTester, RenderTestOutput
     from .voiceover_script_validator import VoiceoverScriptValidator
-    from .voiceover_generator import VoiceoverGenerator, VoiceoverOutput
 except ImportError:
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from models.paper import StructuredPaper
@@ -67,7 +63,6 @@ except ImportError:
     from agents.spatial_validator import SpatialValidator
     from agents.render_tester import RenderTester, RenderTestOutput
     from agents.voiceover_script_validator import VoiceoverScriptValidator
-    from agents.voiceover_generator import VoiceoverGenerator, VoiceoverOutput
 
 
 logger = logging.getLogger(__name__)
@@ -95,8 +90,8 @@ VOICEOVER_VOICE_NAME = os.getenv("VOICEOVER_VOICE_NAME", "nova")
 VOICEOVER_NARRATION_STYLE = "friendly_tutor"
 VOICEOVER_TARGET_DURATION_SECONDS = (30, 45)
 
-# Voice mode and quality policy
-VOICE_MODE = "unified_generator"  # unified_generator | legacy_post_transform
+# Voice quality policy. Narration is produced by the unified (voice-aware)
+# ManimGenerator; there is no separate post-transform voice step.
 VOICE_QUALITY_STRICT = True
 VOICE_QUALITY_RETRIES = 2
 VOICE_FAIL_BEHAVIOR = "return_silent"  # drop_viz | return_silent | hard_error
@@ -131,12 +126,11 @@ async def generate_visualizations(
     """Generate validated visualizations from a structured paper."""
     logger.info("Starting visualization generation for paper: %s", paper.meta.title)
     logger.info(
-        "Pipeline config: max_viz=%s, spatial=%s, render=%s, voice=%s, voice_mode=%s",
+        "Pipeline config: max_viz=%s, spatial=%s, render=%s, voice=%s",
         max_visualizations,
         ENABLE_SPATIAL_VALIDATION,
         ENABLE_RENDER_TESTING,
         ENABLE_VOICEOVER,
-        VOICE_MODE,
     )
 
     analyzer = SectionAnalyzer()
@@ -146,22 +140,16 @@ async def generate_visualizations(
     spatial_validator = SpatialValidator() if ENABLE_SPATIAL_VALIDATION else None
     voiceover_script_validator = (
         VoiceoverScriptValidator(strict=VOICE_QUALITY_STRICT)
-        if ENABLE_VOICEOVER and VOICE_MODE == "unified_generator"
+        if ENABLE_VOICEOVER
         else None
     )
     render_tester = RenderTester() if ENABLE_RENDER_TESTING else None
-    legacy_voiceover_generator = (
-        VoiceoverGenerator(tts_service=VOICEOVER_TTS_SERVICE, voice_name=VOICEOVER_VOICE_NAME)
-        if ENABLE_VOICEOVER and VOICE_MODE == "legacy_post_transform"
-        else None
-    )
 
     logger.info(
-        "  Agents ready: Analyzer, Planner, Generator, Validator%s%s%s%s",
+        "  Agents ready: Analyzer, Planner, Generator, Validator%s%s%s",
         ", SpatialValidator" if spatial_validator else "",
         ", VoiceoverScriptValidator" if voiceover_script_validator else "",
         ", RenderTester" if render_tester else "",
-        f", LegacyVoiceoverGenerator ({VOICEOVER_TTS_SERVICE})" if legacy_voiceover_generator else "",
     )
 
     logger.info("=" * 50)
@@ -193,7 +181,6 @@ async def generate_visualizations(
                 spatial_validator=spatial_validator,
                 voiceover_script_validator=voiceover_script_validator,
                 render_tester=render_tester,
-                legacy_voiceover_generator=legacy_voiceover_generator,
             )
             for candidate in candidates
         ]
@@ -216,7 +203,6 @@ async def generate_visualizations(
                 spatial_validator=spatial_validator,
                 voiceover_script_validator=voiceover_script_validator,
                 render_tester=render_tester,
-                legacy_voiceover_generator=legacy_voiceover_generator,
             )
             if viz is not None:
                 visualizations.append(viz)
@@ -290,7 +276,6 @@ async def generate_single_visualization(
     spatial_validator: Optional[SpatialValidator] = None,
     voiceover_script_validator: Optional[VoiceoverScriptValidator] = None,
     render_tester: Optional[RenderTester] = None,
-    legacy_voiceover_generator: Optional[VoiceoverGenerator] = None,
 ) -> Optional[Visualization]:
     """Generate one visualization with strict quality gates."""
     viz_id = f"viz_{uuid.uuid4().hex[:8]}"
@@ -318,9 +303,8 @@ async def generate_single_visualization(
         spatial_result: Optional[SpatialValidatorOutput] = None
         voice_result: Optional[VoiceoverValidationOutput] = None
         render_result: Optional[RenderTestOutput] = None
-        legacy_voiceover_output: Optional[VoiceoverOutput] = None
 
-        voiceover_enabled_for_generation = ENABLE_VOICEOVER and VOICE_MODE == "unified_generator"
+        voiceover_enabled_for_generation = ENABLE_VOICEOVER
         max_attempts = MAX_RETRIES + (VOICE_QUALITY_RETRIES if voiceover_enabled_for_generation else 0)
 
         for attempt in range(max_attempts):
@@ -473,12 +457,6 @@ async def generate_single_visualization(
             return None
 
         final_code = code_result.code if code_result else ""
-
-        # Legacy voiceover mode remains available but disabled by default.
-        if ENABLE_VOICEOVER and VOICE_MODE == "legacy_post_transform" and legacy_voiceover_generator:
-            logger.info("  Applying legacy VoiceoverGenerator transform...")
-            legacy_voiceover_output = await legacy_voiceover_generator.run(plan=plan, manim_code=final_code)
-            final_code = legacy_voiceover_output.transformed_code
 
         return Visualization(
             id=viz_id,

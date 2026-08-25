@@ -32,7 +32,6 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # Copy dependency files first (better layer caching)
 COPY pyproject.toml uv.lock ./
-COPY manimations/pyproject.toml ./manimations/pyproject.toml
 
 # Create venv and install the exact locked dependency set. This must fail the
 # build if uv.lock is missing or out of sync — a silent fallback to a

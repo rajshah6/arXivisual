@@ -40,6 +40,27 @@ async def get_job(db: AsyncSession, job_id: str) -> Optional[ProcessingJob]:
     return result.scalar_one_or_none()
 
 
+async def get_active_job_for_paper(
+    db: AsyncSession, arxiv_id: str
+) -> Optional[ProcessingJob]:
+    """Find an in-flight job for a paper, newest first.
+
+    Note: jobs are created with paper_id=None (FK) and linked by the worker a
+    few seconds in, so this misses just-created jobs — callers pair it with the
+    in-memory recent-jobs map in api.throttle for the immediate-duplicate window.
+    """
+    result = await db.execute(
+        select(ProcessingJob)
+        .where(
+            ProcessingJob.paper_id == arxiv_id,
+            ProcessingJob.status.in_(("queued", "processing")),
+        )
+        .order_by(ProcessingJob.created_at.desc())
+        .limit(1)
+    )
+    return result.scalars().first()
+
+
 async def update_job_status(
     db: AsyncSession,
     job_id: str,

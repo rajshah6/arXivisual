@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, useCallback, useRef, use } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, use } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CardStack } from "@/components/CardStack";
 import type { ScrollySectionModel } from "@/components/ScrollySection";
@@ -41,9 +41,86 @@ function normalizeArxivId(segments: string[] | undefined): string {
 type PageState =
   | { type: "loading" }
   | { type: "not_found"; arxivId: string }
-  | { type: "processing"; status: ProcessingStatus }
-  | { type: "ready"; paper: Paper }
+  // paperPreview: once the backend has stored the paper text (~30% progress),
+  // we show the real reader immediately and let videos pop in as they render.
+  | { type: "processing"; status: ProcessingStatus; paperPreview?: Paper | null }
+  | { type: "ready"; paper: Paper; notice?: string }
   | { type: "error"; message: string };
+
+/**
+ * Completion notifier: a ding + (when the tab is hidden) a browser notification
+ * and a title flash, so people can safely tab away during the 3-5 minute wait.
+ * Everything is gated behind an explicit button click — the click both resumes
+ * the AudioContext (autoplay policy) and triggers the permission prompt.
+ */
+function useCompletionNotifier() {
+  const [enabled, setEnabled] = useState(false);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+
+  const enable = useCallback(async () => {
+    try {
+      audioCtxRef.current = audioCtxRef.current ?? new AudioContext();
+      await audioCtxRef.current.resume();
+    } catch {
+      // no audio — notification/title flash still work
+    }
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      try {
+        await Notification.requestPermission();
+      } catch {
+        // denied or unsupported — the ding still works
+      }
+    }
+    setEnabled(true);
+  }, []);
+
+  const fire = useCallback(
+    (title: string, body: string) => {
+      if (!enabled) return;
+      const ctx = audioCtxRef.current;
+      if (ctx) {
+        try {
+          // Two-note "ding": E6 then B5, short and gentle.
+          [[1318.5, 0], [987.8, 0.18]].forEach(([freq, delay]) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = "sine";
+            osc.frequency.value = freq;
+            gain.gain.setValueAtTime(0.0001, ctx.currentTime + delay);
+            gain.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + delay + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + delay + 0.5);
+            osc.connect(gain).connect(ctx.destination);
+            osc.start(ctx.currentTime + delay);
+            osc.stop(ctx.currentTime + delay + 0.55);
+          });
+        } catch {
+          // audio failed — continue with the visual channels
+        }
+      }
+      if (document.hidden) {
+        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+          try {
+            new Notification(title, { body });
+          } catch {
+            // notification failed — title flash below still signals
+          }
+        }
+        const originalTitle = document.title;
+        document.title = `✅ ${title}`;
+        const restore = () => {
+          document.title = originalTitle;
+          document.removeEventListener("visibilitychange", restore);
+        };
+        document.addEventListener("visibilitychange", restore);
+      }
+    },
+    [enabled]
+  );
+
+  // Stable identity so consumers can use the notifier in effect deps without
+  // tearing the effect down on every render.
+  return useMemo(() => ({ enabled, enable, fire }), [enabled, enable, fire]);
+}
 
 function clampLevel(level: number): 1 | 2 | 3 {
   if (level <= 1) return 1;
@@ -64,7 +141,14 @@ export default function PaperPage({
   const [state, setState] = useState<PageState>({ type: "loading" });
   const [jobId, setJobId] = useState<string | null>(null);
   const [scrollProgress, setScrollProgress] = useState(0);
+  const [startingJob, setStartingJob] = useState(false);
   const demoSimRunning = useRef(false);
+  // Live paper preview while processing (sections appear at ~30% progress,
+  // videos pop in during the render phase). Ref, not state: the poll effect's
+  // closure would otherwise go stale between status ticks.
+  const previewRef = useRef<Paper | null>(null);
+  const pollTickRef = useRef(0);
+  const notifier = useCompletionNotifier();
 
   // Staged entrance:
   // 0.0s–0.7s  → pure black
@@ -121,7 +205,8 @@ export default function PaperPage({
   }, [arxivId]);
 
   const startProcessing = useCallback(async () => {
-    if (!arxivId) return;
+    if (!arxivId || startingJob) return;
+    setStartingJob(true);
 
     try {
       const response = await processArxivPaper(arxivId);
@@ -143,8 +228,10 @@ export default function PaperPage({
         type: "error",
         message: err instanceof Error ? err.message : "Failed to start processing",
       });
+    } finally {
+      setStartingJob(false);
     }
-  }, [arxivId]);
+  }, [arxivId, startingJob]);
 
   // Demo simulation: animate progress 0→100% over 5 seconds
   useEffect(() => {
@@ -218,18 +305,44 @@ export default function PaperPage({
           clearInterval(pollInterval);
           const paper = await getPaper(arxivId);
           if (paper) {
+            notifier.fire("Your paper is ready", "The visualizations finished rendering — come take a look.");
             setState({ type: "ready", paper });
           } else {
             setState({ type: "error", message: "Paper processing completed but paper not found" });
           }
         } else if (response.status === "failed") {
           clearInterval(pollInterval);
-          setState({
-            type: "error",
-            message: response.error || "Processing failed",
-          });
+          // The paper text often survives a failed pipeline (e.g. all renders
+          // failed) — show what exists instead of a dead end.
+          const paper = await getPaper(arxivId).catch(() => null);
+          if (paper) {
+            notifier.fire("Paper processed with problems", "The text is readable, but some visualizations failed.");
+            setState({
+              type: "ready",
+              paper,
+              notice:
+                response.error ||
+                "Some visualizations failed to render. The paper text is available below.",
+            });
+          } else {
+            notifier.fire("Processing failed", response.error || "The paper could not be processed.");
+            setState({ type: "error", message: response.error || "Processing failed" });
+          }
         } else {
-          setState({ type: "processing", status });
+          // Progressive reading: once the backend has stored the paper text
+          // (~30% progress), fetch it so the reader renders immediately.
+          // During the render phase, refetch every other tick (~4s) so each
+          // finished video pops into its section live.
+          pollTickRef.current += 1;
+          const shouldFetchPreview =
+            response.progress >= 0.3 &&
+            (previewRef.current === null ||
+              (response.progress >= 0.75 && pollTickRef.current % 2 === 0));
+          if (shouldFetchPreview) {
+            const preview = await getPaper(arxivId).catch(() => null);
+            if (preview) previewRef.current = preview;
+          }
+          setState({ type: "processing", status, paperPreview: previewRef.current });
         }
       } catch (err) {
         console.error("Error polling status:", err);
@@ -237,32 +350,43 @@ export default function PaperPage({
     }, 2000);
 
     return () => clearInterval(pollInterval);
-  }, [state.type, jobId, arxivId]);
+  }, [state.type, jobId, arxivId, notifier]);
 
   // Don't start loading until the background has had its moment
   useEffect(() => {
     if (bgReady) loadPaper();
   }, [bgReady, loadPaper]);
 
-  // Refetch when paper has sections but no videos (rendering may have just finished)
-  const hasSectionsWithoutVideos =
-    state.type === "ready" &&
-    state.paper.sections.some((s) => !s.video_url);
+  // Refetch while sections still lack videos (late renders trickle in). Keeps
+  // polling until EVERY section has its video or the retry budget runs out —
+  // the old `some()` stop condition abandoned all but the first-arriving video.
+  const missingVideoCount =
+    state.type === "ready"
+      ? state.paper.sections.filter((s) => !s.video_url).length
+      : 0;
   useEffect(() => {
-    if (!hasSectionsWithoutVideos || !arxivId) return;
+    if (missingVideoCount === 0 || !arxivId) return;
     let retries = 0;
     const maxRetries = 12; // ~2 min
     const refetchInterval = setInterval(async () => {
       retries++;
       if (retries > maxRetries) return clearInterval(refetchInterval);
-      const paper = await getPaper(arxivId);
-      if (paper && paper.sections.some((s) => s.video_url)) {
-        setState({ type: "ready", paper });
+      const paper = await getPaper(arxivId).catch(() => null);
+      if (!paper) return;
+      const stillMissing = paper.sections.filter((s) => !s.video_url).length;
+      if (stillMissing < missingVideoCount) {
+        setState((prev) => ({
+          type: "ready",
+          paper,
+          notice: prev.type === "ready" ? prev.notice : undefined,
+        }));
+        // missingVideoCount changes -> effect re-runs with a fresh budget,
+        // or stops naturally when stillMissing reaches 0.
         clearInterval(refetchInterval);
       }
     }, 10000);
     return () => clearInterval(refetchInterval);
-  }, [hasSectionsWithoutVideos, arxivId]);
+  }, [missingVideoCount, arxivId]);
 
   const onProgressChange = useCallback((progress: number) => {
     setScrollProgress(progress);
@@ -328,21 +452,43 @@ export default function PaperPage({
               {state.type === "loading" && <LoadingState message="Loading paper..." />}
 
               {state.type === "not_found" && (
-                <NotFoundState arxivId={state.arxivId} onProcess={startProcessing} />
+                <NotFoundState
+                  arxivId={state.arxivId}
+                  onProcess={startProcessing}
+                  starting={startingJob}
+                />
               )}
 
-              {state.type === "processing" && <ProcessingState status={state.status} />}
+              {state.type === "processing" && !state.paperPreview && (
+                <ProcessingState status={state.status} notifier={notifier} />
+              )}
+
+              {/* Progressive reading: paper text is in the DB — show the real
+                  reader now; videos pop into their sections as renders finish. */}
+              {state.type === "processing" && state.paperPreview && (
+                <>
+                  <ReadyState
+                    paper={state.paperPreview}
+                    absUrl={absUrl}
+                    onProgressChange={onProgressChange}
+                  />
+                  <ProcessingPill status={state.status} notifier={notifier} />
+                </>
+              )}
 
               {state.type === "error" && (
                 <ErrorState message={state.message} onRetry={loadPaper} />
               )}
 
               {state.type === "ready" && (
-                <ReadyState
-                  paper={state.paper}
-                  absUrl={absUrl}
-                  onProgressChange={onProgressChange}
-                />
+                <>
+                  {state.notice && <NoticeBanner notice={state.notice} />}
+                  <ReadyState
+                    paper={state.paper}
+                    absUrl={absUrl}
+                    onProgressChange={onProgressChange}
+                  />
+                </>
               )}
             </div>
           </motion.div>
@@ -503,9 +649,11 @@ function LoadingState({ message }: { message: string }) {
 function NotFoundState({
   arxivId,
   onProcess,
+  starting,
 }: {
   arxivId: string;
   onProcess: () => void;
+  starting: boolean;
 }) {
   return (
     <div className="flex items-center justify-center py-20 px-6">
@@ -535,12 +683,13 @@ function NotFoundState({
 
           <div className="mt-8 space-y-4">
             <motion.button
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
+              whileHover={{ scale: starting ? 1 : 1.02 }}
+              whileTap={{ scale: starting ? 1 : 0.98 }}
               onClick={onProcess}
-              className="w-full sm:w-auto rounded-2xl bg-white/[0.08] hover:bg-white/[0.12] px-8 py-4 text-sm font-medium text-white border border-white/[0.15] hover:border-white/[0.25] shadow-xl shadow-white/[0.03] transition-all duration-300"
+              disabled={starting}
+              className="w-full sm:w-auto rounded-2xl bg-white/[0.08] hover:bg-white/[0.12] px-8 py-4 text-sm font-medium text-white border border-white/[0.15] hover:border-white/[0.25] shadow-xl shadow-white/[0.03] transition-all duration-300 disabled:opacity-50 disabled:cursor-wait"
             >
-              Start Processing
+              {starting ? "Starting…" : "Start Processing"}
             </motion.button>
 
             <p className="text-xs text-white/40">
@@ -553,9 +702,6 @@ function NotFoundState({
   );
 }
 
-// Rough estimated seconds per pipeline step (total ~4-5 min)
-const STEP_TIME_ESTIMATES = [35, 50, 55, 90, 75]; // fetch, parse, analyze, generate, render
-
 function formatTimeLeft(seconds: number): string {
   if (seconds <= 0) return "almost done";
   const mins = Math.floor(seconds / 60);
@@ -564,48 +710,75 @@ function formatTimeLeft(seconds: number): string {
   return `~${secs}s`;
 }
 
-function ProcessingState({ status }: { status: ProcessingStatus }) {
-  const progressPercent = Math.round(status.progress * 100);
+/**
+ * Honest pipeline phases, mapped to the progress values the worker actually
+ * writes (0.10 fetch, 0.30 stored, 0.50 generation, 0.75+ rendering). The
+ * previous five steps used thresholds the backend never emits, so the UI
+ * routinely claimed steps were done before they had started.
+ */
+const PIPELINE_PHASES = [
+  { label: "Fetching & parsing the paper", start: 0.0, end: 0.3, icon: "\u222B", estSeconds: 40 },
+  { label: "AI designs & writes the animations", start: 0.3, end: 0.75, icon: "\u03BB", estSeconds: 110 },
+  { label: "Rendering narrated videos", start: 0.75, end: 1.0, icon: "\u221E", estSeconds: 240 },
+] as const;
 
-  const steps = [
-    { label: "Fetching paper from arXiv", threshold: 10, icon: "\u222B" },
-    { label: "Parsing sections and content", threshold: 30, icon: "\u2202" },
-    { label: "Analyzing concepts for visualization", threshold: 50, icon: "\u2207" },
-    { label: "Generating animations", threshold: 70, icon: "\u03BB" },
-    { label: "Rendering videos", threshold: 90, icon: "\u221E" },
-  ];
-
-  // Compute estimated time left based on current step and progress
-  let estimatedSecondsLeft = 0;
-  if (progressPercent >= 100) {
-    estimatedSecondsLeft = 0;
-  } else {
-    // Step ranges: 0-10, 10-30, 30-50, 50-70, 70-100
-    const stepBoundaries = [0, 10, 30, 50, 70, 100];
-    const currentStepIndex = stepBoundaries.findIndex(
-      (_, i) =>
-        i < stepBoundaries.length - 1 &&
-        progressPercent >= stepBoundaries[i] &&
-        progressPercent < stepBoundaries[i + 1]
-    );
-    const stepIdx = Math.max(0, Math.min(currentStepIndex, steps.length - 1));
-    const stepStart = stepBoundaries[stepIdx];
-    const stepEnd = stepBoundaries[stepIdx + 1];
-    const progressInStep = (stepEnd - stepStart > 0)
-      ? (progressPercent - stepStart) / (stepEnd - stepStart)
-      : 0;
-    const remainingInCurrentStep =
-      STEP_TIME_ESTIMATES[stepIdx] * Math.max(0, 1 - progressInStep);
-    const remainingFutureSteps = STEP_TIME_ESTIMATES.slice(stepIdx + 1).reduce(
-      (a, b) => a + b,
-      0
-    );
-    const baseSeconds = remainingInCurrentStep + remainingFutureSteps;
-    // Per-job variance (±15%) so each paper gets a different estimate
-    const jobHash = status.job_id.split("").reduce((a, c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 0);
-    const variance = 0.85 + ((Math.abs(jobHash) % 31) / 31) * 0.3;
-    estimatedSecondsLeft = Math.max(1, Math.round(baseSeconds * variance));
+function estimateSecondsLeft(status: ProcessingStatus): number {
+  const p = status.progress;
+  let remaining = 0;
+  for (const phase of PIPELINE_PHASES) {
+    if (p >= phase.end) continue;
+    if (p <= phase.start) {
+      remaining += phase.estSeconds;
+    } else {
+      remaining += phase.estSeconds * ((phase.end - p) / (phase.end - phase.start));
+    }
   }
+  // During rendering the honest signal is the per-video counter.
+  if (p >= 0.75 && status.sections_total > 0) {
+    const videosLeft = Math.max(0, status.sections_total - status.sections_completed);
+    remaining = videosLeft * 55;
+  }
+  return Math.round(remaining);
+}
+
+function NotifyButton({
+  notifier,
+  compact = false,
+}: {
+  notifier: ReturnType<typeof useCompletionNotifier>;
+  compact?: boolean;
+}) {
+  if (notifier.enabled) {
+    return (
+      <span className={`inline-flex items-center gap-2 text-white/40 ${compact ? "text-xs" : "text-sm"}`}>
+        <span className="text-[#7dd19b]">&#10003;</span>
+        We&apos;ll ding when it&apos;s ready &mdash; feel free to switch tabs
+      </span>
+    );
+  }
+  return (
+    <button
+      onClick={notifier.enable}
+      className={`inline-flex items-center gap-2 rounded-full bg-white/[0.06] border border-white/[0.12] text-white/70 transition-all hover:bg-white/[0.10] hover:text-white/90 ${
+        compact ? "px-3 py-1.5 text-xs" : "px-4 py-2 text-sm"
+      }`}
+    >
+      <span aria-hidden>&#128276;</span>
+      Notify me when it&apos;s ready
+    </button>
+  );
+}
+
+function ProcessingState({
+  status,
+  notifier,
+}: {
+  status: ProcessingStatus;
+  notifier: ReturnType<typeof useCompletionNotifier>;
+}) {
+  const progressPercent = Math.round(status.progress * 100);
+  const isRendering = status.progress >= 0.75;
+  const estimatedSecondsLeft = progressPercent >= 100 ? 0 : estimateSecondsLeft(status);
 
   return (
     <div className="flex items-center justify-center py-16 px-6">
@@ -649,23 +822,31 @@ function ProcessingState({ status }: { status: ProcessingStatus }) {
             </div>
           </div>
 
-          {/* Sections */}
-          {status.sections_total > 0 && (
+          {/* During the render phase these counts are real per-video progress */}
+          {isRendering && status.sections_total > 0 && (
             <div className="mt-4 flex items-center gap-3 text-sm">
-              <span className="text-white/30">Sections processed:</span>
+              <span className="text-white/30">Videos rendered:</span>
               <span className="font-mono text-white/60 bg-white/[0.06] px-2 py-0.5 rounded">
                 {status.sections_completed} / {status.sections_total}
               </span>
             </div>
           )}
 
-          {/* Steps */}
+          {/* Notify: lets people safely tab away during the wait */}
+          {status.job_id !== "demo" && (
+            <div className="mt-6">
+              <NotifyButton notifier={notifier} />
+            </div>
+          )}
+
+          {/* Phases — thresholds match what the worker actually writes */}
           <div className="mt-8 rounded-2xl bg-white/[0.03] p-6 border border-white/[0.06]">
             <div className="text-xs font-medium text-white/25 uppercase tracking-wider mb-4">Pipeline Progress</div>
             <ol className="space-y-3">
-              {steps.map((step, i) => {
-                const isActive = progressPercent >= step.threshold;
-                const isCurrent = progressPercent >= step.threshold && progressPercent < 100 && (i === steps.length - 1 || progressPercent < steps[i + 1].threshold);
+              {PIPELINE_PHASES.map((phase, i) => {
+                const isDone = status.progress >= phase.end;
+                const isCurrent =
+                  status.progress >= phase.start && status.progress < phase.end;
 
                 return (
                   <motion.li
@@ -675,11 +856,16 @@ function ProcessingState({ status }: { status: ProcessingStatus }) {
                     transition={{ delay: i * 0.1 }}
                     className="flex items-center gap-4"
                   >
-                    <span className={`text-xl transition-all duration-300 ${isActive ? 'text-white/50' : 'text-white/15'}`}>
-                      {step.icon}
+                    <span className={`text-xl transition-all duration-300 ${isDone || isCurrent ? 'text-white/50' : 'text-white/15'}`}>
+                      {phase.icon}
                     </span>
-                    <span className={`flex-1 text-sm transition-colors duration-300 ${isActive ? 'text-white/60' : 'text-white/20'}`}>
-                      {step.label}
+                    <span className={`flex-1 text-sm transition-colors duration-300 ${isDone || isCurrent ? 'text-white/60' : 'text-white/20'}`}>
+                      {phase.label}
+                      {isCurrent && i === 1 && (
+                        <span className="block text-xs text-white/30 mt-0.5">
+                          The slow part — each concept gets its own storyboard, code, and narration
+                        </span>
+                      )}
                     </span>
                     {isCurrent && (
                       <span className="flex items-center gap-2">
@@ -687,17 +873,83 @@ function ProcessingState({ status }: { status: ProcessingStatus }) {
                         <span className="text-xs text-white/40">In progress</span>
                       </span>
                     )}
-                    {isActive && !isCurrent && (
+                    {isDone && (
                       <span className="text-xs text-[#7dd19b] font-medium">Done</span>
                     )}
                   </motion.li>
                 );
               })}
             </ol>
+            {/* Once the text is parsed, the reader replaces this card — tell
+                people the wait is about the videos, not the words */}
+            {status.progress >= 0.3 && (
+              <p className="mt-4 text-xs text-white/30">
+                Loading the paper text&hellip; it will appear as soon as it&apos;s parsed.
+              </p>
+            )}
           </div>
         </GlassCard>
       </motion.div>
     </div>
+  );
+}
+
+/**
+ * Compact status pill shown while the reader is already visible (progressive
+ * reading) but videos are still rendering. Fixed bottom-center, out of the way.
+ */
+function ProcessingPill({
+  status,
+  notifier,
+}: {
+  status: ProcessingStatus;
+  notifier: ReturnType<typeof useCompletionNotifier>;
+}) {
+  const progressPercent = Math.round(status.progress * 100);
+  const isRendering = status.progress >= 0.75;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-full bg-black/80 backdrop-blur-xl border border-white/[0.12] px-5 py-3 shadow-2xl shadow-black/50"
+    >
+      <span className="relative flex h-3 w-3">
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white/30" />
+        <span className="relative inline-flex rounded-full h-3 w-3 bg-white/50" />
+      </span>
+      <span className="text-sm text-white/70 whitespace-nowrap">
+        {isRendering && status.sections_total > 0
+          ? `Rendering videos ${status.sections_completed}/${status.sections_total} — they'll appear below as they finish`
+          : `${status.current_step || "Processing"} · ${progressPercent}%`}
+      </span>
+      <span className="hidden sm:block">
+        <NotifyButton notifier={notifier} compact />
+      </span>
+    </motion.div>
+  );
+}
+
+/** Floating notice for partial failures — the paper is readable, but honest. */
+function NoticeBanner({ notice }: { notice: string }) {
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="fixed top-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 max-w-xl rounded-2xl bg-black/85 backdrop-blur-xl border border-[#e0b34e]/30 px-5 py-3 shadow-2xl shadow-black/50"
+    >
+      <span className="text-[#e0b34e]" aria-hidden>&#9888;</span>
+      <span className="text-sm text-white/70">{notice}</span>
+      <button
+        onClick={() => setDismissed(true)}
+        className="ml-1 text-white/40 hover:text-white/80 transition-colors"
+        aria-label="Dismiss"
+      >
+        &times;
+      </button>
+    </motion.div>
   );
 }
 

@@ -129,8 +129,55 @@ async def start_processing(
     job_id = await queries.create_job(db, arxiv_id)
     recent_jobs.put(arxiv_id, job_id)
 
-    # Start background processing
-    background_tasks.add_task(process_paper_job, job_id, arxiv_id)
+    # Durable path (USE_TEMPORAL=1): start a Temporal workflow. Execution
+    # happens on the worker app and survives restarts/redeploys; the workflow
+    # ID makes duplicate submissions structurally impossible at the
+    # orchestrator. Fail-open: any Temporal error falls back to the legacy
+    # in-process BackgroundTasks path so paper processing never breaks on
+    # orchestrator trouble.
+    started_durably = False
+    from .temporal_client import temporal_enabled
+
+    if temporal_enabled():
+        try:
+            from .temporal_client import get_temporal_client
+            from temporal_app.workflows import TASK_QUEUE, PaperPipelineWorkflow
+            from temporal_app.activities import PipelineInput
+            from temporalio.exceptions import WorkflowAlreadyStartedError
+
+            temporal = await get_temporal_client()
+            try:
+                await temporal.start_workflow(
+                    PaperPipelineWorkflow.run,
+                    PipelineInput(job_id=job_id, arxiv_id=arxiv_id),
+                    id=f"paper-{arxiv_id}",
+                    task_queue=TASK_QUEUE,
+                )
+                started_durably = True
+            except WorkflowAlreadyStartedError:
+                # A workflow for this paper is already running (race past the
+                # cheap dedupe). Retire the row we just created and point the
+                # caller at the active job.
+                await queries.update_job_status(
+                    db, job_id, status="failed",
+                    error="Duplicate submission; another run was already in flight.",
+                )
+                recent_jobs.clear(arxiv_id)
+                active = await queries.get_active_job_for_paper(db, arxiv_id)
+                return ProcessResponse(
+                    job_id=active.id if active else job_id,
+                    arxiv_id=arxiv_id,
+                    status=JobStatus(active.status) if active else JobStatus.queued,
+                    message="This paper is already being processed. Poll /api/status/{job_id} for updates.",
+                )
+        except Exception:
+            logger.exception(
+                "Temporal unavailable — falling back to in-process pipeline"
+            )
+
+    if not started_durably:
+        # Legacy path: in-process background task (does not survive restarts).
+        background_tasks.add_task(process_paper_job, job_id, arxiv_id)
 
     return ProcessResponse(
         job_id=job_id,

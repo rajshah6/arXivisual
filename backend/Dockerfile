@@ -34,19 +34,12 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY pyproject.toml uv.lock ./
 COPY manimations/pyproject.toml ./manimations/pyproject.toml
 
-# Create venv and install all deps via uv sync
+# Create venv and install the exact locked dependency set. This must fail the
+# build if uv.lock is missing or out of sync — a silent fallback to a
+# hand-maintained pip list previously shipped an incomplete/stale dependency
+# set (missing alembic/redis/modal, broken manim) that only surfaced at runtime.
 RUN uv venv /app/.venv && \
-    uv sync --python /app/.venv/bin/python --no-dev --frozen 2>/dev/null || \
-    uv pip install --python /app/.venv/bin/python \
-        "fastapi>=0.109.0" "uvicorn>=0.27.0" \
-        "pydantic>=2.0.0" "python-dotenv>=0.21.1,<0.22.0" \
-        "httpx>=0.25.0" "asyncio-throttle>=1.0.0" \
-        "sqlalchemy>=2.0.0" "aiosqlite>=0.19.0" "asyncpg>=0.29.0" "greenlet>=3.0.0" \
-        "arxiv>=2.0.0" "pymupdf4llm>=0.0.5" "pymupdf>=1.23.0" \
-        "beautifulsoup4>=4.12.0" "lxml>=5.0.0" \
-        "manim>=0.18.0" "manim-voiceover[gtts]>=0.3.0" \
-        "boto3>=1.34.0" "openai>=1.60.0" "setuptools>=65.0.0" \
-        "dedalus-labs>=0.2.0" "python-multipart>=0.0.6"
+    uv sync --python /app/.venv/bin/python --no-dev --frozen
 
 # ── Application ────────────────────────────────────────────
 FROM base AS runtime

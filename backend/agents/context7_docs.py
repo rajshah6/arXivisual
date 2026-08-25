@@ -536,17 +536,25 @@ async def get_manim_docs(
     """
     docs = ""
 
-    # Skip the Dedalus path entirely when the pipeline runs on another
-    # provider (e.g. Azure) — go straight to the Context7 REST API. Reuse the
-    # same resolver as call_llm so this can't diverge (base.py is Azure-first
-    # when both providers' creds are present and LLM_PROVIDER is unset).
-    try:
-        from .base import get_provider
-    except ImportError:
-        from agents.base import get_provider
-    dedalus_active = get_provider() == "dedalus"
+    # Use the Dedalus doc path only when explicitly requested AND the pipeline's
+    # resolved provider is Dedalus — reuse the same resolver as call_llm so this
+    # can't diverge (base.py is Azure-first when both providers' creds are present
+    # and LLM_PROVIDER is unset). Resolve the provider ONLY when use_dedalus is
+    # set: the direct Context7 REST path and static fallback don't need a provider
+    # and must keep working even when none is configured.
+    dedalus_active = False
+    if use_dedalus:
+        try:
+            from .base import get_provider
+        except ImportError:
+            from agents.base import get_provider
+        try:
+            dedalus_active = get_provider() == "dedalus"
+        except RuntimeError:
+            # No LLM provider configured — fall through to direct/static docs.
+            dedalus_active = False
 
-    if use_dedalus and dedalus_active:
+    if dedalus_active:
         docs = await fetch_manim_docs_via_dedalus(topic, max_tokens)
 
     if not docs:

@@ -1,0 +1,27 @@
+  # azapi_resource.billing_monthly_reset_budget will be imported
+  # azuread_application.github_deploy will be imported
+  # azuread_application_federated_identity_credential.github_main will be imported
+  # azuread_service_principal.github_deploy will be imported
+  # azurerm_cognitive_account.openai will be imported
+  # azurerm_cognitive_deployment.gpt_4o_mini_tts will be imported
+  # azurerm_cognitive_deployment.gpt_5_6_sol will be imported
+  # azurerm_cognitive_deployment.gpt_5_mini will be imported
+  # azurerm_consumption_budget_subscription.monthly will be imported
+  # azurerm_container_app.api will be imported
+  # azurerm_container_app.temporal will be updated in-place
+  # azurerm_container_app.worker will be updated in-place
+  # azurerm_container_app_environment.main will be imported
+  # azurerm_container_registry.main will be imported
+  # azurerm_log_analytics_workspace.main will be updated in-place
+  # azurerm_postgresql_flexible_server.main will be updated in-place
+  # azurerm_postgresql_flexible_server_configuration.azure_extensions will be imported
+  # azurerm_postgresql_flexible_server_database.arxiviz will be imported
+  # azurerm_postgresql_flexible_server_database.temporal will be imported
+  # azurerm_postgresql_flexible_server_database.temporal_visibility will be imported
+  # azurerm_postgresql_flexible_server_firewall_rule.allow_azure_services will be imported
+  # azurerm_resource_group.main will be imported
+  # azurerm_role_assignment.api_acr_pull will be imported
+  # azurerm_role_assignment.github_deploy_contributor will be imported
+  # azurerm_storage_account.tfstate will be imported
+  # azurerm_storage_container.tfstate will be imported
+Plan: 26 to import, 0 to add, 4 to change, 0 to destroy.

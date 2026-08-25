@@ -251,47 +251,43 @@ async def _process_paper_job_impl(job_id: str, arxiv_id: str):
             async def _render_one(viz: dict, index: int):
                 nonlocal completed_count
                 async with render_semaphore:
+                    status = "complete"
+                    video_url: str | None = None
+                    error: str | None = None
                     try:
                         logger.info(f"Starting render: {viz['id']}")
                         video_url = await process_visualization(
                             viz_id=viz["id"],
                             manim_code=viz["manim_code"],
-                            quality="low_quality"
+                            quality="low_quality",
                         )
                         logger.info(f"✓ Successfully rendered {viz['id']}")
-                        await queries.update_visualization_status(
-                            db, viz["id"],
-                            status="complete",
-                            video_url=video_url
-                        )
-                        progress_bar.update()
-
-                        # Update job progress incrementally (75% to 95%)
-                        async with progress_lock:
-                            completed_count += 1
-                            render_progress = 0.75 + (0.20 * (completed_count / len(viz_records)))
-                            await queries.update_job_status(
-                                db, job_id,
-                                progress=render_progress,
-                                sections_completed=completed_count
-                            )
                     except Exception as e:
-                        logger.error(f"✗ Failed to render {viz['id']}: {str(e)}")
-                        await queries.update_visualization_status(
-                            db, viz["id"],
-                            status="failed",
-                            error=str(e)
-                        )
-                        progress_bar.update()
+                        status = "failed"
+                        error = str(e)
+                        logger.error(f"✗ Failed to render {viz['id']}: {error}")
 
-                        # Still update progress even on failure
+                    # Each concurrent render commits through its OWN session.
+                    # A single AsyncSession is not safe to share across tasks
+                    # running under asyncio.gather — interleaved operations raise
+                    # InterfaceError / corrupt session state. The progress_lock
+                    # serializes the shared counter, progress bar, and job-row
+                    # write so they stay consistent.
+                    async with async_session_maker() as task_db:
+                        await queries.update_visualization_status(
+                            task_db, viz["id"],
+                            status=status,
+                            video_url=video_url,
+                            error=error,
+                        )
                         async with progress_lock:
                             completed_count += 1
+                            progress_bar.update()
                             render_progress = 0.75 + (0.20 * (completed_count / len(viz_records)))
                             await queries.update_job_status(
-                                db, job_id,
+                                task_db, job_id,
                                 progress=render_progress,
-                                sections_completed=completed_count
+                                sections_completed=completed_count,
                             )
 
             logger.info(f"Rendering {len(viz_records)} videos concurrently (max 3 parallel)...")

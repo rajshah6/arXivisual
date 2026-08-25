@@ -79,6 +79,16 @@ async def start_processing(
     """
     arxiv_id = request.arxiv_id
 
+    # Opportunistic hygiene: jobs stranded at queued/processing by an
+    # interrupted worker would otherwise satisfy the dedupe check forever and
+    # block re-processing. Reap them before looking for an active job.
+    try:
+        reaped = await queries.reap_stale_jobs(db)
+        if reaped:
+            logger.info("Reaped %d stale job(s) before submission", reaped)
+    except Exception:
+        logger.exception("Stale-job reaping failed; continuing with submission")
+
     # Dedupe: an in-flight job for this paper is returned as-is. The in-memory
     # map covers the seconds before the worker links job.paper_id; the DB query
     # covers everything after (including submissions from other clients).

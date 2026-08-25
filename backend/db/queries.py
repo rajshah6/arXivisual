@@ -5,7 +5,7 @@ CRUD operations for papers, sections, visualizations, and processing jobs.
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,24 +41,58 @@ async def get_job(db: AsyncSession, job_id: str) -> Optional[ProcessingJob]:
 
 
 async def get_active_job_for_paper(
-    db: AsyncSession, arxiv_id: str
+    db: AsyncSession, arxiv_id: str, max_age_hours: float = 2.0
 ) -> Optional[ProcessingJob]:
-    """Find an in-flight job for a paper, newest first.
+    """Find a genuinely in-flight job for a paper, newest first.
+
+    Jobs older than ``max_age_hours`` are ignored: a worker interrupted mid-run
+    (e.g. by a redeploy) strands its job at "processing" forever, and treating
+    such a zombie as active would block the paper from ever being re-processed
+    via dedupe. No real pipeline run approaches this age (p95 is ~7 minutes).
 
     Note: jobs are created with paper_id=None (FK) and linked by the worker a
     few seconds in, so this misses just-created jobs — callers pair it with the
     in-memory recent-jobs map in api.throttle for the immediate-duplicate window.
     """
+    cutoff = datetime.utcnow() - timedelta(hours=max_age_hours)
     result = await db.execute(
         select(ProcessingJob)
         .where(
             ProcessingJob.paper_id == arxiv_id,
             ProcessingJob.status.in_(("queued", "processing")),
+            ProcessingJob.created_at >= cutoff,
         )
         .order_by(ProcessingJob.created_at.desc())
         .limit(1)
     )
     return result.scalars().first()
+
+
+async def reap_stale_jobs(db: AsyncSession, max_age_hours: float = 2.0) -> int:
+    """Mark long-stranded queued/processing jobs as failed.
+
+    A worker killed mid-run (redeploy, crash, OOM) never updates its job row,
+    leaving it at "processing" forever — misleading pollers and, before the
+    dedupe staleness cutoff, blocking re-processing. Called opportunistically
+    on job submission; returns the number of jobs reaped.
+    """
+    cutoff = datetime.utcnow() - timedelta(hours=max_age_hours)
+    result = await db.execute(
+        select(ProcessingJob).where(
+            ProcessingJob.status.in_(("queued", "processing")),
+            ProcessingJob.created_at < cutoff,
+        )
+    )
+    stale = list(result.scalars().all())
+    for job in stale:
+        job.status = "failed"
+        job.error = (
+            "Job was interrupted (worker restarted mid-run) and never resumed. "
+            "Submit the paper again to re-process it."
+        )
+    if stale:
+        await db.commit()
+    return len(stale)
 
 
 async def update_job_status(

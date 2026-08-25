@@ -18,6 +18,14 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+try:
+    from langfuse import observe
+except ImportError:  # langfuse optional — degrade to no-op decorator
+    def observe(*_args, **_kwargs):
+        def _decorator(fn):
+            return fn
+        return _decorator
+
 # Handle both package and direct imports
 try:
     from ..models.paper import StructuredPaper
@@ -79,9 +87,11 @@ RENDER_MODE = os.getenv("RENDER_MODE", "local")
 ENABLE_RENDER_TESTING = RENDER_MODE != "modal"
 
 # Voiceover configuration
+# TTS defaults to Azure OpenAI (gpt-4o-mini-tts, routed via the OpenAI-compatible
+# endpoint at render time); set VOICEOVER_TTS_SERVICE=gtts for the free fallback.
 ENABLE_VOICEOVER = True
-VOICEOVER_TTS_SERVICE = "gtts"
-VOICEOVER_VOICE_NAME = ""
+VOICEOVER_TTS_SERVICE = os.getenv("VOICEOVER_TTS_SERVICE", "openai")
+VOICEOVER_VOICE_NAME = os.getenv("VOICEOVER_VOICE_NAME", "nova")
 VOICEOVER_NARRATION_STYLE = "friendly_tutor"
 VOICEOVER_TARGET_DURATION_SECONDS = (30, 45)
 
@@ -113,6 +123,7 @@ def _extract_voiceover_metadata(code: str) -> tuple[list[str], list[str]]:
     return [n.strip() for n in narrations if n.strip()], beats
 
 
+@observe(name="generate-visualizations", capture_input=False)
 async def generate_visualizations(
     paper: StructuredPaper,
     max_visualizations: int = MAX_VISUALIZATIONS,
@@ -269,6 +280,7 @@ async def _analyze_all_sections(
     return candidates
 
 
+@observe(name="generate-single-visualization", capture_input=False)
 async def generate_single_visualization(
     candidate: VisualizationCandidate,
     paper: StructuredPaper,

@@ -16,6 +16,29 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+def _tts_subprocess_env() -> dict[str, str]:
+    """Environment for the render subprocess.
+
+    manim-voiceover's OpenAIService talks to the module-level OpenAI client,
+    which reads ``OPENAI_API_KEY`` / ``OPENAI_BASE_URL``. When those aren't
+    already set but Azure OpenAI is configured, point them at Azure's
+    OpenAI-compatible endpoint so voiceover audio bills against Azure credits.
+    A pre-existing ``OPENAI_API_KEY`` (e.g. a real OpenAI key) is respected.
+    """
+    env = dict(os.environ)
+    if not env.get("OPENAI_API_KEY"):
+        endpoint = env.get("AZURE_OPENAI_ENDPOINT", "").rstrip("/")
+        key = env.get("AZURE_OPENAI_API_KEY", "")
+        if endpoint and key:
+            env["OPENAI_API_KEY"] = key
+            env["OPENAI_BASE_URL"] = f"{endpoint}/openai/v1/"
+            # Both OPENAI_* and AZURE_OPENAI_* are now present; the module-level
+            # OpenAI client refuses to guess between them. Pin it to the plain
+            # OpenAI code path — our base_url already targets the Azure endpoint.
+            env["OPENAI_API_TYPE"] = "openai"
+    return env
+
+
 def get_manim_executable() -> str:
     """Get Manim executable path from environment or venv, with system fallback."""
     env_val = os.getenv("MANIM_EXECUTABLE")
@@ -89,6 +112,8 @@ def _run_manim_subprocess(
                 text=True,
                 timeout=300,
                 cwd=tmpdir,
+                env=_tts_subprocess_env(),
+                stdin=subprocess.DEVNULL,
             )
             if result.stdout:
                 logger.debug(f"{tag} Manim stdout:\n{result.stdout}")

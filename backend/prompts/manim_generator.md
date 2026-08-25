@@ -49,10 +49,10 @@ The video must feel like a coherent teaching sequence, not a list of disconnecte
 ## Narration and Voiceover Requirements
 When voiceover is enabled (`{voiceover_enabled}` = true):
 1. Inherit from `VoiceoverScene`.
-2. Add these imports in the file:
+2. Add these imports in the file (use these EXACT lines, do not substitute a different service):
    - `from manim_voiceover import VoiceoverScene`
-   - service import matching `{tts_service}`
-3. In `construct`, configure TTS with this exact pattern:
+   - `{tts_import}`
+3. In `construct`, configure TTS with this EXACT line (copy it verbatim — do not change the service, model, or voice):
    - `{tts_setup_snippet}`
 4. For each content beat, wrap the core animation in:
    - `with self.voiceover(text="...") as tracker:`

@@ -86,6 +86,29 @@ _azure_async_client = None
 _azure_sync_client = None
 
 
+def _langfuse_enabled() -> bool:
+    """Langfuse tracing is on when both project keys are present in the env."""
+    return bool(
+        os.environ.get("LANGFUSE_PUBLIC_KEY")
+        and os.environ.get("LANGFUSE_SECRET_KEY")
+    )
+
+
+def _openai_classes():
+    """Return (OpenAI, AsyncOpenAI) classes.
+
+    When Langfuse is configured, return its drop-in wrappers so every LLM call
+    is traced automatically (model, token usage, cost, latency). The wrapper
+    imports must happen AFTER env vars are loaded — hence the deferred import.
+    Falls back to the plain SDK when Langfuse isn't configured (local dev).
+    """
+    if _langfuse_enabled():
+        from langfuse.openai import OpenAI, AsyncOpenAI
+    else:
+        from openai import OpenAI, AsyncOpenAI
+    return OpenAI, AsyncOpenAI
+
+
 def _azure_base_url() -> str:
     endpoint = os.environ["AZURE_OPENAI_ENDPOINT"].rstrip("/")
     return f"{endpoint}/openai/v1/"
@@ -94,7 +117,7 @@ def _azure_base_url() -> str:
 def _get_azure_client():
     global _azure_async_client
     if _azure_async_client is None:
-        from openai import AsyncOpenAI
+        _, AsyncOpenAI = _openai_classes()
         _azure_async_client = AsyncOpenAI(
             base_url=_azure_base_url(),
             api_key=os.environ["AZURE_OPENAI_API_KEY"],
@@ -106,7 +129,7 @@ def _get_azure_client():
 def _get_azure_sync_client():
     global _azure_sync_client
     if _azure_sync_client is None:
-        from openai import OpenAI
+        OpenAI, _ = _openai_classes()
         _azure_sync_client = OpenAI(
             base_url=_azure_base_url(),
             api_key=os.environ["AZURE_OPENAI_API_KEY"],
@@ -187,11 +210,20 @@ def get_model_name(model: str | None = None) -> str:
 # Standalone LLM call helpers (usable outside BaseAgent, e.g. validators)
 # ---------------------------------------------------------------------------
 
+def _with_trace_name(kwargs: dict, name: str | None) -> dict:
+    """Attach a Langfuse generation name — only when tracing is on, since the
+    plain OpenAI client rejects the unknown ``name`` kwarg."""
+    if name and _langfuse_enabled():
+        kwargs["name"] = name
+    return kwargs
+
+
 async def call_llm(
     prompt: str,
     model: str | None = None,
     system_prompt: str = "",
     max_tokens: int = 4096,
+    name: str | None = None,
 ) -> str:
     """Async LLM call routed through the configured provider."""
     provider = get_provider()
@@ -204,7 +236,10 @@ async def call_llm(
         try:
             client = _get_azure_client()
             resp = await client.chat.completions.create(
-                **_azure_request_kwargs(resolved, prompt, system_prompt, max_tokens)
+                **_with_trace_name(
+                    _azure_request_kwargs(resolved, prompt, system_prompt, max_tokens),
+                    name,
+                )
             )
             output = resp.choices[0].message.content or ""
             elapsed = time.monotonic() - t0
@@ -240,6 +275,7 @@ def call_llm_sync(
     model: str | None = None,
     system_prompt: str = "",
     max_tokens: int = 4096,
+    name: str | None = None,
 ) -> str:
     """Synchronous LLM call routed through the configured provider."""
     provider = get_provider()
@@ -248,7 +284,10 @@ def call_llm_sync(
         resolved = _azure_model(model)
         client = _get_azure_sync_client()
         resp = client.chat.completions.create(
-            **_azure_request_kwargs(resolved, prompt, system_prompt, max_tokens)
+            **_with_trace_name(
+                _azure_request_kwargs(resolved, prompt, system_prompt, max_tokens),
+                name,
+            )
         )
         return resp.choices[0].message.content or ""
 
@@ -283,6 +322,8 @@ class BaseAgent:
         self.max_tokens = max_tokens
         self.system_prompt = self._load_system_prompt()
         self.prompt_template = self._load_prompt(prompt_file)
+        # Readable Langfuse generation name, e.g. "manim_generator"
+        self._trace_name = Path(prompt_file).stem
 
         # Keep self.client for any code that still references it directly
         self.client = _get_client()
@@ -399,6 +440,7 @@ class BaseAgent:
             model=self.model,
             system_prompt=system_prompt or self.system_prompt,
             max_tokens=max_tokens or self.max_tokens,
+            name=self._trace_name,
         )
 
     def _call_llm_sync(
@@ -413,6 +455,7 @@ class BaseAgent:
             model=self.model,
             system_prompt=system_prompt or self.system_prompt,
             max_tokens=max_tokens or self.max_tokens,
+            name=self._trace_name,
         )
 
     # ------------------------------------------------------------------

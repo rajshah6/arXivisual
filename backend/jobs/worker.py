@@ -6,7 +6,27 @@ Processes papers asynchronously with progress tracking.
 
 import asyncio
 import logging
+import os
 from datetime import datetime
+
+try:
+    from langfuse import observe, get_client, propagate_attributes
+    _LANGFUSE_AVAILABLE = True
+except ImportError:  # langfuse optional — degrade to no-op decorator
+    _LANGFUSE_AVAILABLE = False
+
+    def observe(*_args, **_kwargs):
+        def _decorator(fn):
+            return fn
+        return _decorator
+
+
+def _langfuse_on() -> bool:
+    return _LANGFUSE_AVAILABLE and bool(
+        os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY")
+    )
+
+
 from db.connection import async_session_maker
 from db import queries
 from db.models import Section
@@ -59,7 +79,35 @@ class ProgressBar:
         logger.info(f"  [{self.name}] {bar} {percent_str} ({self.current}/{self.total}){eta_str}")
 
 
+@observe(name="process-paper")
 async def process_paper_job(job_id: str, arxiv_id: str):
+    """Traced entry point for the background paper pipeline.
+
+    Wraps the implementation so every LLM/render span for this job is grouped
+    under one Langfuse session (keyed by job_id) and traces are flushed before
+    the background task ends.
+    """
+    if not _langfuse_on():
+        await _process_paper_job_impl(job_id, arxiv_id)
+        return
+
+    with propagate_attributes(
+        session_id=job_id,
+        trace_name="process-paper",
+        tags=["pipeline"],
+        metadata={"arxiv_id": arxiv_id},
+    ):
+        try:
+            await _process_paper_job_impl(job_id, arxiv_id)
+        finally:
+            # Background task runs off-request; flush traces before it ends.
+            try:
+                get_client().flush()
+            except Exception:
+                logger.debug("Langfuse flush failed", exc_info=True)
+
+
+async def _process_paper_job_impl(job_id: str, arxiv_id: str):
     """
     Main job processing function. Called as a background task.
 

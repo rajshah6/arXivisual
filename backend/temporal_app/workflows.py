@@ -66,10 +66,14 @@ class PaperPipelineWorkflow:
                 retry_policy=_INFRA_RETRY,
             )
 
+            # 40 min: measured generation is ~2-8 min alone, but under
+            # multi-paper load it queues behind renders on the shared CPUs —
+            # 25 min timed out in production the first night. (Queue WAIT
+            # doesn't count here; start_to_close covers execution only.)
             render_inputs: list[RenderInput] = await workflow.execute_activity(
                 generate_visualizations_for_paper,
                 params,
-                start_to_close_timeout=timedelta(minutes=25),
+                start_to_close_timeout=timedelta(minutes=40),
                 retry_policy=_NO_RETRY,
             )
 

@@ -18,6 +18,14 @@ export type Paper = {
   sections: Section[];
 };
 
+export type PaperSummary = {
+  paper_id: string; // e.g. "1706.03762"
+  title: string;
+  authors: string[];
+  visualization_count: number;
+  processed_at: string; // ISO 8601 datetime string
+};
+
 export type Section = {
   id: string;
   title: string;

@@ -5,7 +5,7 @@
  */
 
 import { DEMO_PAPER_IDS, getDemoPaper, MOCK_PAPER, MOCK_STATUS } from "./mock-data";
-import type { Paper, ProcessingStatus, Section } from "./types";
+import type { Paper, PaperSummary, ProcessingStatus, Section } from "./types";
 
 // Toggle between mock and real API
 const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK === "true";
@@ -71,6 +71,19 @@ export interface PaperResponse {
   sections: SectionResponse[];
   visualizations: VisualizationResponse[];
   processed_at: string;
+}
+
+export interface PaperSummaryResponse {
+  paper_id: string;
+  title: string;
+  authors: string[];
+  visualization_count: number;
+  processed_at: string;
+}
+
+export interface PaperListResponse {
+  papers: PaperSummaryResponse[];
+  total: number;
 }
 
 export interface HealthResponse {
@@ -222,6 +235,45 @@ export async function getPaper(arxivId: string): Promise<Paper | null> {
     html_url: data.html_url,
     sections,
   };
+}
+
+/**
+ * List all processed papers as lightweight summaries for the Explore gallery.
+ * Calls GET /api/papers.
+ */
+export async function listPapers(): Promise<PaperSummary[]> {
+  if (USE_MOCK) {
+    await new Promise((r) => setTimeout(r, 400));
+    return Array.from(DEMO_PAPER_IDS)
+      .map((id) => getDemoPaper(id))
+      .filter((p): p is Paper => p !== null)
+      .map((p) => ({
+        paper_id: p.paper_id,
+        title: p.title,
+        authors: p.authors,
+        visualization_count:
+          p.sections.filter((s) => s.video_url).length || p.sections.length,
+        processed_at: new Date().toISOString(),
+      }));
+  }
+
+  const res = await fetch(`${API_BASE}/api/papers`);
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to list papers: ${res.status} - ${errorText}`);
+  }
+
+  const data: PaperListResponse = await res.json();
+
+  // Map backend summaries (paper_id) to the frontend PaperSummary type.
+  return data.papers.map((p) => ({
+    paper_id: p.paper_id,
+    title: p.title,
+    authors: p.authors,
+    visualization_count: p.visualization_count,
+    processed_at: p.processed_at,
+  }));
 }
 
 /**

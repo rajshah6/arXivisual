@@ -52,8 +52,13 @@ async def main() -> None:
     namespace = os.getenv("TEMPORAL_NAMESPACE", "default")
     render_concurrency = parse_render_concurrency()
 
-    logger.info("Connecting to Temporal at %s (namespace=%s)", address, namespace)
-    client = await Client.connect(address, namespace=namespace)
+    use_tls = os.getenv("TEMPORAL_TLS", "0") == "1"
+    logger.info(
+        "Connecting to Temporal at %s (namespace=%s, tls=%s)", address, namespace, use_tls
+    )
+    # Container Apps fronts gRPC with HTTP/2 ingress behind TLS (:443);
+    # raw TCP ingress proved unroutable on this environment.
+    client = await Client.connect(address, namespace=namespace, tls=use_tls)
     logger.info("Connected. Render concurrency: %d", render_concurrency)
 
     pipeline_worker = Worker(

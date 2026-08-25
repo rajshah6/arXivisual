@@ -24,5 +24,8 @@ async def get_temporal_client() -> Client:
         _client = await Client.connect(
             os.getenv("TEMPORAL_ADDRESS", "localhost:7233"),
             namespace=os.getenv("TEMPORAL_NAMESPACE", "default"),
+            # Container Apps fronts gRPC with HTTP/2 ingress behind TLS (:443);
+            # raw TCP ingress proved unroutable on this environment.
+            tls=os.getenv("TEMPORAL_TLS", "0") == "1",
         )
     return _client

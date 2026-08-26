@@ -55,6 +55,18 @@ resource "azurerm_postgresql_flexible_server_configuration" "azure_extensions" {
   value     = "BTREE_GIN"
 }
 
+# Connection headroom: API pool (≤15) + Temporal server (≤16 with capped
+# pools) + worker activities + KEDA scaler probes exceeded the B1ms default
+# of 50 during revision transitions (observed: "remaining connection slots
+# are reserved" crash-loops). Static parameter — a server restart is required
+# for it to take effect; do it deliberately (Temporal makes in-flight jobs
+# safe across the restart).
+resource "azurerm_postgresql_flexible_server_configuration" "max_connections" {
+  name      = "max_connections"
+  server_id = azurerm_postgresql_flexible_server.main.id
+  value     = "100"
+}
+
 # 0.0.0.0-0.0.0.0 is Azure's "allow Azure services" sentinel rule; Container
 # Apps reach the DB through it.
 resource "azurerm_postgresql_flexible_server_firewall_rule" "allow_azure_services" {

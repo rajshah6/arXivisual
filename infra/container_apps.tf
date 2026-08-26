@@ -389,10 +389,34 @@ resource "azurerm_container_app" "worker" {
     name  = "ca82c08e2eadacrazurecrio-ca82c08e2eadacr"
     value = var.acr_admin_password
   }
+  secret {
+    # libpq-style URI for the KEDA postgresql scaler (asyncpg's ssl= param is
+    # not understood by libpq; sslmode= is).
+    name  = "keda-pg-conn"
+    value = "postgresql://rabidcheese9:${urlencode(var.postgres_admin_password)}@${azurerm_postgresql_flexible_server.main.fqdn}:5432/arxiviz?sslmode=require"
+  }
 
   template {
+    # KEDA autoscaling off durable queue depth: papers queue on Temporal, and
+    # the count of active jobs in OUR domain table is the truthful backlog
+    # signal. One extra replica per ~2 active jobs, capped at 3 (each replica
+    # is 2 vCPU; the render concurrency cap applies per replica).
     min_replicas = 1
-    max_replicas = 1
+    max_replicas = 3
+
+    custom_scale_rule {
+      name             = "active-jobs"
+      custom_rule_type = "postgresql"
+      metadata = {
+        query                      = "SELECT COUNT(*) FROM processing_jobs WHERE status IN ('queued','processing')"
+        targetQueryValue           = "2"
+        activationTargetQueryValue = "0"
+      }
+      authentication {
+        secret_name       = "keda-pg-conn"
+        trigger_parameter = "connection"
+      }
+    }
 
     container {
       name    = "arxivisual-worker"

@@ -83,12 +83,9 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
-      # Non-blocking for now: main carries 12 pre-existing lint errors (impure
-      # calls during render, setState-in-effect). Surfaced on every run so they
-      # stay visible; flip to a hard gate once the existing violations are fixed.
+      # Hard gate: the tree is lint-clean, so any new violation fails CI.
       - name: Lint
         run: npm run lint
-        continue-on-error: true
 
       - name: Build
         run: npm run build

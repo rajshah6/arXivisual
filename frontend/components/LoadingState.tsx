@@ -51,6 +51,16 @@ export function LoadingSpinner({
 }
 
 /**
+ * Deterministic per-line width in the 60–100% range. Replaces Math.random()
+ * so render stays pure, while keeping the organic varied-width skeleton look
+ * (the value only feeds cosmetic variation, so a seeded hash is equivalent).
+ */
+function skeletonLineWidth(i: number): string {
+  const t = Math.abs(Math.sin((i + 1) * 12.9898) * 43758.5453) % 1;
+  return `${(60 + t * 40).toFixed(2)}%`;
+}
+
+/**
  * Skeleton loader for text content.
  */
 export function TextSkeleton({
@@ -66,7 +76,7 @@ export function TextSkeleton({
         <div
           key={i}
           className="h-4 animate-pulse rounded bg-white/[0.06]"
-          style={{ width: `${Math.random() * 40 + 60}%` }}
+          style={{ width: skeletonLineWidth(i) }}
         />
       ))}
     </div>

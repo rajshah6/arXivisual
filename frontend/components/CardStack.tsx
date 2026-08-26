@@ -55,7 +55,6 @@ function SlideCard({
   const prevSegStart = (index - 1) / N;
   const prevSegLen = 1 / N;
   const prevExitStart = prevSegStart + prevSegLen * CONTENT_FRACTION;
-  const prevSegEnd = index / N; // = segStart
 
   // --- slideX: horizontal position ---
   const slideX = useTransform(scrollYProgress, (v) => {

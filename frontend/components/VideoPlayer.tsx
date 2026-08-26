@@ -39,14 +39,19 @@ export function VideoPlayer({
     return Math.max(0, Math.min(100, (currentTime / duration) * 100));
   }, [currentTime, duration]);
 
-  useEffect(() => {
+  // Reset playback state when the video source changes — the "adjusting state
+  // when a prop changes" render pattern from
+  // https://react.dev/learn/you-might-not-need-an-effect (no effect needed).
+  const [prevSrc, setPrevSrc] = useState(src);
+  if (prevSrc !== src) {
+    setPrevSrc(src);
     setIsPlaying(false);
     setIsReady(false);
     setHadError(false);
     setProgress(0);
     setCurrentTime(0);
     setDuration(0);
-  }, [src]);
+  }
 
   function togglePlay() {
     const v = videoRef.current;

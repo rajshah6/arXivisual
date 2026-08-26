@@ -111,7 +111,6 @@ export function MosaicBackground({
         const fullWidth = offCtx.measureText("arXiv").width;
         const arWidth = offCtx.measureText("ar").width;
         const arXWidth = offCtx.measureText("arX").width;
-        const ivWidth = offCtx.measureText("iv").width;
 
         const textLeft = logoX - fullWidth / 2;
         const xLeft = textLeft + arWidth;

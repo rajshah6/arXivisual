@@ -121,9 +121,23 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       - name: Build backend image
+        id: build
+        # GitHub's cache service occasionally fails to reserve entries
+        # ("failed to reserve cache"), killing the build through no fault of
+        # the Dockerfile. First attempt uses the cache; the retry below drops
+        # it so a cache-service outage can't fail CI.
+        continue-on-error: true
         uses: docker/build-push-action@v6
         with:
           context: ./backend
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Build backend image (retry without cache)
+        if: steps.build.outcome == 'failure'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: false
+          no-cache: true

@@ -12,6 +12,7 @@ import os
 import re
 import sys
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 try:
@@ -92,6 +93,19 @@ VOICEOVER_TARGET_DURATION_SECONDS = (30, 45)
 VOICE_QUALITY_STRICT = True
 VOICE_QUALITY_RETRIES = 2
 VOICE_FAIL_BEHAVIOR = "return_silent"  # drop_viz | return_silent | hard_error
+
+# Optional observation seam for the eval harness (backend/evals). When set, it
+# is called after every quality gate as metrics_hook(gate_name, attempt, passed).
+# None (the default) changes no behavior.
+metrics_hook: Callable[[str, int, bool], None] | None = None
+
+
+def _report_gate(gate: str, attempt: int, passed: bool) -> None:
+    if metrics_hook is not None:
+        try:
+            metrics_hook(gate, attempt, passed)
+        except Exception:
+            logger.debug("metrics_hook raised for gate %s", gate, exc_info=True)
 
 
 def _extract_voiceover_metadata(code: str) -> tuple[list[str], list[str]]:
@@ -352,6 +366,7 @@ async def generate_single_visualization(
             # Stage 1: code validation
             logger.info("    [1/4] CodeValidator: Checking syntax & structure...")
             validation = validator.validate(code_result.code)
+            _report_gate("code_validator", attempt, validation.is_valid and not validation.needs_regeneration)
             if validation.needs_regeneration or not validation.is_valid:
                 logger.warning(
                     "    [1/4] FAILED: %s issues - regenerating",
@@ -368,6 +383,7 @@ async def generate_single_visualization(
             if spatial_validator:
                 logger.info("    [2/4] SpatialValidator: Checking positioning...")
                 spatial_result = spatial_validator.validate(current_code)
+                _report_gate("spatial_validator", attempt, not spatial_result.needs_regeneration)
                 if spatial_result.needs_regeneration:
                     logger.warning(
                         "    [2/4] FAILED: bounds=%s overlaps=%s - regenerating",
@@ -399,6 +415,7 @@ async def generate_single_visualization(
                     plan=plan,
                     candidate=candidate,
                 )
+                _report_gate("voiceover_script_validator", attempt, not voice_result.needs_regeneration)
 
                 if voice_result.needs_regeneration:
                     logger.warning(
@@ -420,6 +437,7 @@ async def generate_single_visualization(
             if render_tester:
                 logger.info("    [4/4] RenderTester: Testing import & execution...")
                 render_result = await render_tester.test_render(current_code)
+                _report_gate("render_tester", attempt, render_result.success)
                 if not render_result.success:
                     logger.warning(
                         "    [4/4] FAILED: %s - %s",

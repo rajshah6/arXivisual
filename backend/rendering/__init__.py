@@ -55,7 +55,12 @@ async def render_manim(code: str, scene_name: str, quality: str = "low_quality")
         return await render_manim_local(code, scene_name, quality)
 
 
-async def process_visualization(viz_id: str, manim_code: str, quality: str = "low_quality") -> str:
+async def process_visualization(
+    viz_id: str,
+    manim_code: str,
+    quality: str = "low_quality",
+    collect_qa: bool = False,
+):
     """
     Process a visualization: render Manim code and save the video.
 
@@ -63,9 +68,14 @@ async def process_visualization(viz_id: str, manim_code: str, quality: str = "lo
         viz_id: Unique identifier for this visualization
         manim_code: Complete Manim Python code
         quality: Rendering quality ("low_quality", "medium_quality", "high_quality")
+        collect_qa: When True, run the visual QA judge INLINE and return
+            ``(video_url, verdict)`` so the caller (the Temporal render
+            activity) can drive a repair pass. When False (legacy path),
+            returns just the URL and QA runs as background observe-mode.
 
     Returns:
-        URL path to the rendered video (e.g., "/api/video/viz_001")
+        URL path to the rendered video, or ``(url, VisualQAResult | None)``
+        when ``collect_qa`` is True.
 
     Raises:
         RuntimeError: If rendering fails
@@ -87,6 +97,11 @@ async def process_visualization(viz_id: str, manim_code: str, quality: str = "lo
     video_url = await save_video(video_bytes, f"{viz_id}.mp4")
     logger.info(f"[Processing Visualization] Video saved successfully")
     logger.info(f"[Processing Visualization] Video URL: {video_url}")
+
+    if collect_qa:
+        # Inline judging for the repair loop: the activity needs the verdict.
+        verdict = await _judge_and_score(viz_id, video_bytes)
+        return video_url, verdict
 
     # Visual QA (observe mode): judge sampled frames for overlap/cutoff defects.
     # Dispatched as supervised background work — logs + Langfuse score only,
@@ -118,14 +133,17 @@ def _dispatch_visual_qa(viz_id: str, video_bytes: bytes) -> None:
     task.add_done_callback(_done)
 
 
-async def _observe_visual_qa(viz_id: str, video_bytes: bytes) -> None:
-    """Run the vision layout judge; log + score only."""
+async def _judge_and_score(viz_id: str, video_bytes: bytes):
+    """Run the vision layout judge; log + Langfuse-score; return the verdict.
+
+    Never raises — a QA failure returns None so callers can proceed.
+    """
     try:
         from agents.visual_qa import judge_video
 
         verdict = await judge_video(video_bytes, viz_id=viz_id)
         if verdict is None:
-            return
+            return None
         if verdict.has_defects:
             logger.warning(
                 "[VisualQA] %s severity=%s overlap=%s cutoff=%s collisions=%s issues=%s",
@@ -146,5 +164,12 @@ async def _observe_visual_qa(viz_id: str, video_bytes: bytes) -> None:
         except Exception as exc:
             # Distinguish broken telemetry from intentional unconfiguration.
             logger.warning("[VisualQA] Langfuse scoring failed for %s: %s", viz_id, exc)
+        return verdict
     except Exception as exc:
-        logger.warning("[VisualQA] Observe-mode QA failed for %s: %s", viz_id, exc)
+        logger.warning("[VisualQA] QA failed for %s: %s", viz_id, exc)
+        return None
+
+
+async def _observe_visual_qa(viz_id: str, video_bytes: bytes) -> None:
+    """Background observe-mode wrapper around the judge."""
+    await _judge_and_score(viz_id, video_bytes)

@@ -35,11 +35,13 @@ with workflow.unsafe.imports_passed_through():
         ProgressUpdate,
         RenderInput,
         RenderResult,
+        RepairInput,
         finalize_job,
         generate_visualizations_for_paper,
         ingest_paper,
         mark_job_failed,
         render_visualization,
+        repair_visualization_code,
         update_render_progress,
     )
 
@@ -97,8 +99,10 @@ class PaperPipelineWorkflow:
 
             succeeded = 0
             completed = 0
+            results: list[RenderResult] = []
             for task in asyncio.as_completed(render_tasks):
                 result: RenderResult = await task
+                results.append(result)
                 completed += 1
                 if result.succeeded:
                     succeeded += 1
@@ -109,8 +113,26 @@ class PaperPipelineWorkflow:
                     retry_policy=_INFRA_RETRY,
                 )
 
+            # Repair pass (one round per viz, activity-gated via env): the
+            # judge's specific findings drive a targeted layout fix, then a
+            # re-render overwrites the video in place. A failed repair keeps
+            # the original video — defective beats absent.
+            code_by_viz = {ri.viz_id: ri.manim_code for ri in render_inputs}
+            to_repair = [r for r in results if r.repair_recommended]
+            if to_repair:
+                workflow.logger.info(
+                    "Repairing %d/%d defective visualization(s)", len(to_repair), total
+                )
+                repaired_ok = await asyncio.gather(
+                    *[self._repair_one(params.job_id, r, code_by_viz[r.viz_id]) for r in to_repair]
+                )
+                workflow.logger.info(
+                    "Repair pass: %d/%d now defect-free", sum(repaired_ok), len(to_repair)
+                )
+
             await self._finalize(params.job_id, succeeded=succeeded, total=total)
-            return f"rendered {succeeded}/{total}"
+            defective = sum(1 for r in results if r.severity == "major")
+            return f"rendered {succeeded}/{total} ({defective} flagged, {len(to_repair)} repaired)"
         except Exception:
             # Mark the job failed so pollers see the truth, then let Temporal
             # record the workflow failure with full history for debugging.
@@ -121,6 +143,38 @@ class PaperPipelineWorkflow:
                 retry_policy=_INFRA_RETRY,
             )
             raise
+
+    async def _repair_one(self, job_id: str, result: RenderResult, code: str) -> bool:
+        """Repair one defective visualization; returns True if the re-render
+        came back defect-free. Never raises — original video stays on failure."""
+        try:
+            fixed_code = await workflow.execute_activity(
+                repair_visualization_code,
+                RepairInput(
+                    job_id=job_id,
+                    viz_id=result.viz_id,
+                    manim_code=code,
+                    issues=result.issues,
+                ),
+                start_to_close_timeout=timedelta(minutes=10),
+                retry_policy=_NO_RETRY,  # a repair is one LLM call — don't double-spend
+            )
+            rerender: RenderResult = await workflow.execute_activity(
+                render_visualization,
+                RenderInput(
+                    job_id=job_id,
+                    viz_id=result.viz_id,
+                    manim_code=fixed_code,
+                    is_repair=True,
+                ),
+                task_queue=RENDER_TASK_QUEUE,
+                start_to_close_timeout=timedelta(minutes=15),
+                retry_policy=_NO_RETRY,  # original video already exists as fallback
+            )
+            return rerender.succeeded and rerender.severity != "major"
+        except Exception as exc:
+            workflow.logger.warning("Repair failed for %s: %s", result.viz_id, exc)
+            return False
 
     async def _finalize(self, job_id: str, succeeded: int, total: int) -> None:
         await workflow.execute_activity(

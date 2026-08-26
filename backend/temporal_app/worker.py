@@ -31,6 +31,7 @@ from temporalio.worker import Worker
 
 from temporal_app.activities import (
     finalize_job,
+    repair_visualization_code,
     generate_visualizations_for_paper,
     ingest_paper,
     mark_job_failed,
@@ -77,6 +78,7 @@ async def main() -> None:
             update_render_progress,
             finalize_job,
             mark_job_failed,
+            repair_visualization_code,
         ],
         max_concurrent_activities=pipeline_concurrency,
     )

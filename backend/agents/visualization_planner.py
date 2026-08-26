@@ -5,20 +5,20 @@ from pathlib import Path
 
 # Handle both package and direct imports
 try:
-    from .base import BaseAgent
     from ..models.generation import (
+        Scene,
         VisualizationCandidate,
         VisualizationPlan,
-        Scene,
         VisualizationType,
     )
+    from .base import BaseAgent
 except ImportError:
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from agents.base import BaseAgent
     from models.generation import (
+        Scene,
         VisualizationCandidate,
         VisualizationPlan,
-        Scene,
         VisualizationType,
     )
 

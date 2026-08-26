@@ -9,6 +9,7 @@ This agent catches runtime errors that static analysis cannot detect:
 """
 
 import asyncio
+import contextlib
 import importlib.util
 import os
 import sys
@@ -100,7 +101,7 @@ class RenderTester:
                 timeout=self.timeout_seconds
             )
             return result
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return RenderTestOutput(
                 success=False,
                 error_type="TimeoutError",
@@ -199,10 +200,8 @@ class RenderTester:
             
         finally:
             # Clean up temp file
-            try:
+            with contextlib.suppress(Exception):
                 temp_path.unlink()
-            except Exception:
-                pass
     
     def _parse_error(self, error: Exception, code: str) -> dict[str, Any]:
         """Parse an exception to extract useful error information."""

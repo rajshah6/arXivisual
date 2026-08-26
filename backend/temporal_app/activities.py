@@ -74,8 +74,8 @@ class ProgressUpdate:
 @activity.defn
 async def ingest_paper(params: PipelineInput) -> None:
     """Fetch + parse the paper into the DB (skips if already present)."""
-    from db.connection import async_session_maker
     from db import queries
+    from db.connection import async_session_maker
     from jobs.worker import _ingest_and_store_paper
 
     async with async_session_maker() as db:
@@ -107,9 +107,9 @@ async def generate_visualizations_for_paper(params: PipelineInput) -> list[Rende
     per viz, well under Temporal's payload limits) — this is what makes
     resume-without-re-paying-generation possible.
     """
-    from db.connection import async_session_maker
-    from db import queries
     from agents.pipeline import generate_visualizations
+    from db import queries
+    from db.connection import async_session_maker
     from jobs.worker import _build_structured_paper_from_db
 
     try:
@@ -181,8 +181,8 @@ async def render_visualization(params: RenderInput) -> RenderResult:
     """
     import os
 
-    from db.connection import async_session_maker
     from db import queries
+    from db.connection import async_session_maker
     from rendering import process_visualization
 
     qa_enabled = os.getenv("ENABLE_VISUAL_QA", "0") == "1"
@@ -296,8 +296,8 @@ async def repair_visualization_code(params: RepairInput) -> str:
 async def update_render_progress(params: ProgressUpdate) -> None:
     """Progress writes are driven by the workflow (which owns the counters),
     so concurrent render activities never share mutable state."""
-    from db.connection import async_session_maker
     from db import queries
+    from db.connection import async_session_maker
 
     async with async_session_maker() as db:
         await queries.update_job_status(
@@ -310,8 +310,8 @@ async def update_render_progress(params: ProgressUpdate) -> None:
 @activity.defn
 async def finalize_job(params: ProgressUpdate) -> None:
     """Write the honest terminal status (completed/failed + failure counts)."""
-    from db.connection import async_session_maker
     from db import queries
+    from db.connection import async_session_maker
     from jobs.worker import resolve_terminal_job_status
 
     status, step, error = resolve_terminal_job_status(params.completed, params.total)
@@ -328,8 +328,8 @@ async def finalize_job(params: ProgressUpdate) -> None:
 @activity.defn
 async def mark_job_failed(params: PipelineInput) -> None:
     """Terminal failure marker for unrecoverable workflow errors."""
-    from db.connection import async_session_maker
     from db import queries
+    from db.connection import async_session_maker
 
     async with async_session_maker() as db:
         await queries.update_job_status(

@@ -11,7 +11,6 @@ import re
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +145,9 @@ def _run_manim_subprocess(
                 logger.debug(f"{tag} Manim stderr:\n{result.stderr}")
         except subprocess.TimeoutExpired:
             logger.error(f"{tag} Rendering timeout after 300 seconds for {scene_name}")
-            raise RuntimeError(f"Manim render timed out after 300 seconds for scene {scene_name}")
+            raise RuntimeError(
+                f"Manim render timed out after 300 seconds for scene {scene_name}"
+            ) from None
 
         if result.returncode != 0:
             error_msg = result.stderr or result.stdout or "Unknown error"
@@ -195,7 +196,7 @@ def _render_manim_sync(
 
 async def render_manim_local(
     code: str,
-    scene_name: Optional[str] = None,
+    scene_name: str | None = None,
     quality: str = "low_quality"
 ) -> bytes:
     """

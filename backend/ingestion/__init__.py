@@ -14,7 +14,6 @@ Team 1 owns this module. Output goes to Team 2's AI agents.
 """
 
 import logging
-from typing import Optional
 
 from models.paper import (
     ArxivPaperMeta,
@@ -22,15 +21,16 @@ from models.paper import (
     Section,
     StructuredPaper,
 )
+
 from .arxiv_fetcher import (
-    fetch_paper_meta,
     download_pdf,
     fetch_html_content,
+    fetch_paper_meta,
     normalize_arxiv_id,
     validate_arxiv_id,
 )
+from .html_parser import fetch_and_parse_html, parse_html
 from .pdf_parser import parse_pdf
-from .html_parser import parse_html, fetch_and_parse_html
 from .section_extractor import extract_sections
 from .section_formatter import format_sections
 
@@ -145,7 +145,7 @@ async def _parse_pdf_content(pdf_url: str) -> ParsedContent:
     return content
 
 
-async def get_cached_paper(arxiv_id: str) -> Optional[StructuredPaper]:
+async def get_cached_paper(arxiv_id: str) -> StructuredPaper | None:
     """
     Check cache for previously processed paper.
 
@@ -172,29 +172,26 @@ def clear_cache() -> None:
 
 # Export public API
 __all__ = [
-    # Main function
-    "ingest_paper",
-
-    # Cache functions
-    "get_cached_paper",
-    "cache_paper",
-    "clear_cache",
-
-    # Lower-level functions for flexibility
-    "fetch_paper_meta",
-    "download_pdf",
-    "fetch_html_content",
-    "parse_pdf",
-    "parse_html",
-    "fetch_and_parse_html",
-    "extract_sections",
-    "format_sections",
-    "normalize_arxiv_id",
-    "validate_arxiv_id",
-
     # Models (re-exported for convenience)
     "ArxivPaperMeta",
     "ParsedContent",
     "Section",
     "StructuredPaper",
+    "cache_paper",
+    "clear_cache",
+    "download_pdf",
+    "extract_sections",
+    "fetch_and_parse_html",
+    "fetch_html_content",
+    # Lower-level functions for flexibility
+    "fetch_paper_meta",
+    "format_sections",
+    # Cache functions
+    "get_cached_paper",
+    # Main function
+    "ingest_paper",
+    "normalize_arxiv_id",
+    "parse_html",
+    "parse_pdf",
+    "validate_arxiv_id",
 ]

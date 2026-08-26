@@ -15,24 +15,23 @@ Usage (from the backend/ directory):
     uv run python tools/run_demo.py --max 3                 # Generate up to 3 visualizations
 """
 
-import asyncio
 import argparse
+import asyncio
 import logging
 import os
 import subprocess
 import sys
 import time
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
 # Add backend to path
 backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from models.paper import ArxivPaperMeta, Equation, Section, StructuredPaper
 from agents.pipeline import generate_visualizations
-
+from models.paper import ArxivPaperMeta, Equation, Section, StructuredPaper
 
 # ============================================================
 # LOGGING CONFIGURATION
@@ -461,14 +460,14 @@ def render_video(filepath: Path, quality: str = "medium", has_voiceover: bool = 
         )
         
         if result.returncode == 0:
-            print(f"   ✅ Render complete!")
+            print("   ✅ Render complete!")
             # Find the output video
             media_dir = filepath.parent / "media" / "videos"
             if media_dir.exists():
                 print(f"   📹 Videos saved to: {media_dir}")
             return True
         else:
-            print(f"   ❌ Render failed:")
+            print("   ❌ Render failed:")
             print(result.stderr[:500] if result.stderr else "Unknown error")
             return False
             
@@ -508,6 +507,7 @@ Examples:
     
     # Check for API key
     import os
+
     from dotenv import load_dotenv
     load_dotenv()
     

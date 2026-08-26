@@ -4,15 +4,13 @@ PDF parser for extracting structured content from arXiv papers.
 Uses pymupdf4llm for LLM-ready markdown output with good equation handling.
 """
 
-import re
 import io
-from typing import Optional
+import re
 
 import fitz  # PyMuPDF
 import pymupdf4llm
 
-from models.paper import ParsedContent, Equation, Figure, Table
-
+from models.paper import Equation, Figure, ParsedContent, Table
 
 # Regex patterns for extraction
 DISPLAY_EQUATION_PATTERN = re.compile(
@@ -112,7 +110,7 @@ def clean_pdf_text(text: str) -> str:
     lines = text.split('\n')
     cleaned_lines = []
     
-    for i, line in enumerate(lines):
+    for _i, line in enumerate(lines):
         stripped = line.strip()
         
         # Skip likely page numbers (standalone numbers)
@@ -150,7 +148,7 @@ def clean_pdf_text(text: str) -> str:
     return text.strip()
 
 
-def convert_to_markdown_header(line: str) -> Optional[str]:
+def convert_to_markdown_header(line: str) -> str | None:
     """
     Convert a line to markdown header if it looks like a section title.
     
@@ -281,7 +279,7 @@ def extract_equations(text: str) -> list[Equation]:
     return equations
 
 
-def extract_figures(text: str, doc: Optional[fitz.Document] = None) -> list[Figure]:
+def extract_figures(text: str, doc: fitz.Document | None = None) -> list[Figure]:
     """
     Extract figure references and captions from text.
     
@@ -322,7 +320,7 @@ def extract_figures(text: str, doc: Optional[fitz.Document] = None) -> list[Figu
     return figures
 
 
-def extract_tables(text: str, doc: Optional[fitz.Document] = None) -> list[Table]:
+def extract_tables(text: str, doc: fitz.Document | None = None) -> list[Table]:
     """
     Extract tables from PDF.
     

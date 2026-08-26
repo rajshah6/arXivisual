@@ -7,10 +7,10 @@ Processes papers asynchronously with progress tracking.
 import asyncio
 import logging
 import os
-from datetime import datetime
+import time
 
 try:
-    from langfuse import observe, get_client, propagate_attributes
+    from langfuse import get_client, observe, propagate_attributes
     _LANGFUSE_AVAILABLE = True
 except ImportError:  # langfuse optional — degrade to no-op decorator
     _LANGFUSE_AVAILABLE = False
@@ -27,19 +27,21 @@ def _langfuse_on() -> bool:
     )
 
 
-from db.connection import async_session_maker
-from db import queries
-from db.models import Section
-from rendering import process_visualization, get_video_path
 from agents.pipeline import generate_visualizations
+from db import queries
+from db.connection import async_session_maker
+from db.models import Section
 from models.paper import (
     ArxivPaperMeta,
     Equation,
     Figure,
-    Section as PaperSection,
     StructuredPaper,
     Table,
 )
+from models.paper import (
+    Section as PaperSection,
+)
+from rendering import process_visualization
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +103,7 @@ class ProgressBar:
         self.total = total
         self.current = 0
         self.name = name
-        self.start_time = datetime.now()
+        self.start_time = time.monotonic()
 
     def update(self, increment: int = 1):
         self.current += increment
@@ -117,7 +119,7 @@ class ProgressBar:
         filled = int(bar_length * percent)
         bar = "█" * filled + "░" * (bar_length - filled)
 
-        elapsed = (datetime.now() - self.start_time).total_seconds()
+        elapsed = time.monotonic() - self.start_time
         if self.current > 0 and percent > 0:
             avg_time = elapsed / self.current
             eta_seconds = avg_time * (self.total - self.current)
@@ -404,7 +406,7 @@ async def _process_paper_job_impl(job_id: str, arxiv_id: str):
 
         except Exception as e:
             logger.exception(f"✗ JOB FAILED: {job_id} for paper {arxiv_id}")
-            logger.error(f"Error: {str(e)}")
+            logger.error(f"Error: {e!s}")
             try:
                 await db.rollback()
                 await queries.update_job_status(

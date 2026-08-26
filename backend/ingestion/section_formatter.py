@@ -15,7 +15,7 @@ import logging
 import re
 
 from agents.base import call_llm
-from models.paper import Section, ArxivPaperMeta
+from models.paper import ArxivPaperMeta, Section
 
 logger = logging.getLogger(__name__)
 

@@ -2,8 +2,6 @@
 
 import asyncio
 
-import pytest
-
 from agents import visual_qa
 from agents.visual_qa import VisualQAResult, _parse_verdict
 

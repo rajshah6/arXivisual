@@ -21,7 +21,7 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from agents.visual_qa import judge_video  # noqa: E402
+from agents.visual_qa import judge_video
 
 DEFAULT_API = "https://arxivisual-api.purplepond-ac9e2dc5.eastus2.azurecontainerapps.io"
 
@@ -77,7 +77,8 @@ async def main() -> int:
                 continue
             completed += 1
             defects += 1 if verdict.has_defects else 0
-            flag = lambda b: "Y" if b else "-"
+            def flag(b):
+                return "Y" if b else "-"
             print(
                 f"{viz_id:<20}{verdict.severity:<10}"
                 f"{flag(verdict.overlap):<5}{flag(verdict.cutoff):<5}{flag(verdict.collisions):<5}"

@@ -1,6 +1,7 @@
 """Paper data models used across ingestion and generation."""
 
 from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 

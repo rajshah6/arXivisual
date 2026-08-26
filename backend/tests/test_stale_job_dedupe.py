@@ -8,7 +8,6 @@ them so the jobs table tells the truth.
 
 from datetime import datetime, timedelta
 
-import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 

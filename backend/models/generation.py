@@ -1,6 +1,7 @@
 """Generation pipeline models for Team 2 agents."""
 
 from enum import Enum
+
 from pydantic import BaseModel, Field
 
 

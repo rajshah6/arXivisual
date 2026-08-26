@@ -6,7 +6,9 @@ Automatically switches to PostgreSQL when DATABASE_URL environment variable is s
 """
 
 import os
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
 from .models import Base
 
 # Use DATABASE_URL from environment (Railway/Render) or fallback to SQLite

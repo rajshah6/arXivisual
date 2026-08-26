@@ -15,22 +15,22 @@ from pathlib import Path
 
 # Handle both package and direct imports
 try:
-    from .base import BaseAgent
     from ..models.generation import (
-        VisualizationPlan,
         GeneratedCode,
+        VisualizationPlan,
         VisualizationType,
     )
+    from .base import BaseAgent
     from .context7_docs import get_manim_docs
 except ImportError:
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from agents.base import BaseAgent
+    from agents.context7_docs import get_manim_docs
     from models.generation import (
-        VisualizationPlan,
         GeneratedCode,
+        VisualizationPlan,
         VisualizationType,
     )
-    from agents.context7_docs import get_manim_docs
 
 logger = logging.getLogger(__name__)
 
@@ -129,8 +129,8 @@ class ManimGenerator(BaseAgent):
                 f'transcription_model=None))'
             )
         return (
-            f"self.set_speech_service(GTTSService("
-            f'transcription_model=None))'
+            "self.set_speech_service(GTTSService("
+            'transcription_model=None))'
         )
 
     def _get_tts_import(self, tts_service: str) -> str:

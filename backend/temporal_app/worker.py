@@ -29,17 +29,17 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from temporalio.client import Client
 from temporalio.worker import Worker
 
+from jobs.worker import parse_render_concurrency
 from temporal_app.activities import (
     finalize_job,
-    repair_visualization_code,
     generate_visualizations_for_paper,
     ingest_paper,
     mark_job_failed,
     render_visualization,
+    repair_visualization_code,
     update_render_progress,
 )
 from temporal_app.workflows import RENDER_TASK_QUEUE, TASK_QUEUE, PaperPipelineWorkflow
-from jobs.worker import parse_render_concurrency
 
 logging.basicConfig(
     level=logging.INFO,

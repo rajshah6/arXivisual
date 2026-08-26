@@ -7,8 +7,9 @@ Set RENDER_MODE environment variable to "local" or "modal".
 
 import logging
 import os
-from .local_runner import render_manim_local, extract_scene_name
-from .storage import save_video, get_video_path, get_video_url, list_videos, get_backend
+
+from .local_runner import extract_scene_name, render_manim_local
+from .storage import get_backend, get_video_path, get_video_url, list_videos, save_video
 
 logger = logging.getLogger(__name__)
 
@@ -16,16 +17,16 @@ logger = logging.getLogger(__name__)
 RENDER_MODE = os.getenv("RENDER_MODE", "local")
 
 __all__ = [
-    "render_manim_local",
+    "RENDER_MODE",
     "extract_scene_name",
-    "save_video",
+    "get_backend",
     "get_video_path",
     "get_video_url",
     "list_videos",
     "process_visualization",
     "render_manim",
-    "get_backend",
-    "RENDER_MODE",
+    "render_manim_local",
+    "save_video",
 ]
 
 
@@ -43,6 +44,7 @@ async def render_manim(code: str, scene_name: str, quality: str = "low_quality")
     """
     if RENDER_MODE == "modal":
         import asyncio
+
         import modal
         # Look up the deployed function by app + function name.
         # This works from any external Python process (Render, scripts, etc.)
@@ -88,14 +90,14 @@ async def process_visualization(
     logger.info(f"[Processing Visualization] Scene name: {scene_name}")
 
     # Render the video using configured backend
-    logger.info(f"[Processing Visualization] Starting rendering phase...")
+    logger.info("[Processing Visualization] Starting rendering phase...")
     video_bytes = await render_manim(manim_code, scene_name, quality)
     logger.info(f"[Processing Visualization] Rendering complete ({len(video_bytes):,} bytes)")
 
     # Save to storage FIRST — visual QA must never delay video delivery.
-    logger.info(f"[Processing Visualization] Saving to storage...")
+    logger.info("[Processing Visualization] Saving to storage...")
     video_url = await save_video(video_bytes, f"{viz_id}.mp4")
-    logger.info(f"[Processing Visualization] Video saved successfully")
+    logger.info("[Processing Visualization] Video saved successfully")
     logger.info(f"[Processing Visualization] Video URL: {video_url}")
 
     if collect_qa:

@@ -5,8 +5,9 @@ Deploy with: modal deploy rendering/modal_runner.py
 Test with: modal run rendering/modal_runner.py
 """
 
-import modal
 from pathlib import Path
+
+import modal
 
 # Define the Modal app
 app = modal.App("arxiviz-manim")

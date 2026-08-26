@@ -8,6 +8,7 @@ Docs at: http://localhost:8000/docs
 import logging
 import os
 from contextlib import asynccontextmanager
+
 from dotenv import load_dotenv
 
 # Load environment variables BEFORE any local imports

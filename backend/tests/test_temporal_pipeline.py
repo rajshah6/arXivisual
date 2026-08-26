@@ -15,7 +15,13 @@ import uuid
 
 import pytest
 
-from temporal_app.activities import PipelineInput, ProgressUpdate, RenderInput, RenderResult, RepairInput
+from temporal_app.activities import (
+    PipelineInput,
+    ProgressUpdate,
+    RenderInput,
+    RenderResult,
+    RepairInput,
+)
 from temporal_app.workflows import RENDER_TASK_QUEUE, TASK_QUEUE, PaperPipelineWorkflow
 
 requires_temporal = pytest.mark.skipif(
@@ -84,21 +90,20 @@ class TestWorkflowOrchestration:
         from temporalio.worker import Worker
 
         pipeline_acts, render_acts = self._mock_activities(calls, viz_count, fail_viz_ids)
-        async with await WorkflowEnvironment.start_local() as env:
-            async with Worker(
-                env.client, task_queue=TASK_QUEUE,
-                workflows=[PaperPipelineWorkflow], activities=pipeline_acts,
-            ), Worker(
-                env.client, task_queue=RENDER_TASK_QUEUE, activities=render_acts,
-            ):
-                wf_id = f"paper-test-{uuid.uuid4().hex[:8]}"
-                result = await env.client.execute_workflow(
-                    PaperPipelineWorkflow.run,
-                    PipelineInput(job_id="job_t", arxiv_id="1706.03762"),
-                    id=wf_id,
-                    task_queue=TASK_QUEUE,
-                )
-                return result
+        async with await WorkflowEnvironment.start_local() as env, Worker(
+            env.client, task_queue=TASK_QUEUE,
+            workflows=[PaperPipelineWorkflow], activities=pipeline_acts,
+        ), Worker(
+            env.client, task_queue=RENDER_TASK_QUEUE, activities=render_acts,
+        ):
+            wf_id = f"paper-test-{uuid.uuid4().hex[:8]}"
+            result = await env.client.execute_workflow(
+                PaperPipelineWorkflow.run,
+                PipelineInput(job_id="job_t", arxiv_id="1706.03762"),
+                id=wf_id,
+                task_queue=TASK_QUEUE,
+            )
+            return result
 
     def test_happy_path_orders_and_aggregates(self, calls):
         result = asyncio.run(self._run(calls, viz_count=3))
@@ -128,26 +133,25 @@ class TestWorkflowOrchestration:
 
         async def run():
             pipeline_acts, render_acts = self._mock_activities(calls, viz_count=1)
-            async with await WorkflowEnvironment.start_local() as env:
-                async with Worker(
-                    env.client, task_queue=TASK_QUEUE,
-                    workflows=[PaperPipelineWorkflow], activities=pipeline_acts,
-                ), Worker(env.client, task_queue=RENDER_TASK_QUEUE, activities=render_acts):
-                    handle = await env.client.start_workflow(
+            async with await WorkflowEnvironment.start_local() as env, Worker(
+                env.client, task_queue=TASK_QUEUE,
+                workflows=[PaperPipelineWorkflow], activities=pipeline_acts,
+            ), Worker(env.client, task_queue=RENDER_TASK_QUEUE, activities=render_acts):
+                handle = await env.client.start_workflow(
+                    PaperPipelineWorkflow.run,
+                    PipelineInput(job_id="job_a", arxiv_id="9999.00001"),
+                    id="paper-9999.00001",
+                    task_queue=TASK_QUEUE,
+                )
+                # Structural dedupe: same workflow ID while running -> rejected.
+                with pytest.raises(WorkflowAlreadyStartedError):
+                    await env.client.start_workflow(
                         PaperPipelineWorkflow.run,
-                        PipelineInput(job_id="job_a", arxiv_id="9999.00001"),
+                        PipelineInput(job_id="job_b", arxiv_id="9999.00001"),
                         id="paper-9999.00001",
                         task_queue=TASK_QUEUE,
                     )
-                    # Structural dedupe: same workflow ID while running -> rejected.
-                    with pytest.raises(WorkflowAlreadyStartedError):
-                        await env.client.start_workflow(
-                            PaperPipelineWorkflow.run,
-                            PipelineInput(job_id="job_b", arxiv_id="9999.00001"),
-                            id="paper-9999.00001",
-                            task_queue=TASK_QUEUE,
-                        )
-                    await handle.result()
+                await handle.result()
 
         asyncio.run(run())
 
@@ -221,17 +225,16 @@ class TestRepairLoop:
 
         async def go():
             pipeline_acts, render_acts = self._acts(calls, **kw)
-            async with await WorkflowEnvironment.start_local() as env:
-                async with Worker(
-                    env.client, task_queue=TASK_QUEUE,
-                    workflows=[PaperPipelineWorkflow], activities=pipeline_acts,
-                ), Worker(env.client, task_queue=RENDER_TASK_QUEUE, activities=render_acts):
-                    return await env.client.execute_workflow(
-                        PaperPipelineWorkflow.run,
-                        PipelineInput(job_id="job_r", arxiv_id="1706.03762"),
-                        id=f"paper-repair-{uuid.uuid4().hex[:8]}",
-                        task_queue=TASK_QUEUE,
-                    )
+            async with await WorkflowEnvironment.start_local() as env, Worker(
+                env.client, task_queue=TASK_QUEUE,
+                workflows=[PaperPipelineWorkflow], activities=pipeline_acts,
+            ), Worker(env.client, task_queue=RENDER_TASK_QUEUE, activities=render_acts):
+                return await env.client.execute_workflow(
+                    PaperPipelineWorkflow.run,
+                    PipelineInput(job_id="job_r", arxiv_id="1706.03762"),
+                    id=f"paper-repair-{uuid.uuid4().hex[:8]}",
+                    task_queue=TASK_QUEUE,
+                )
         return asyncio.run(go())
 
     def test_defective_render_triggers_targeted_repair_and_rerender(self):

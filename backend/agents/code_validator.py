@@ -4,7 +4,6 @@ import ast
 import re
 import sys
 from pathlib import Path
-from typing import Optional
 
 # Handle both package and direct imports
 try:
@@ -99,7 +98,7 @@ class CodeValidator:
             needs_regeneration=needs_regeneration,
         )
     
-    def _check_syntax(self, code: str) -> Optional[str]:
+    def _check_syntax(self, code: str) -> str | None:
         """Check Python syntax using AST parser."""
         try:
             ast.parse(code)
@@ -164,7 +163,7 @@ class CodeValidator:
         
         return fixed_code, fixes
     
-    def _fix_common_typos(self, code: str) -> Optional[tuple[str, list[str]]]:
+    def _fix_common_typos(self, code: str) -> tuple[str, list[str]] | None:
         """
         Fix common typos in Manim code.
         

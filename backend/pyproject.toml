@@ -60,3 +60,32 @@ asyncio_mode = "auto"
 # collects the argparse scripts under tools/ and backend root, some of which
 # fire real Azure OpenAI calls and network fetches on collection/execution.
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["generated_output", "demo_scenes", "examples"]
+
+[tool.ruff.lint]
+allowed-confusables = ["\u222a"]  # pdf_parser matches literal set-union glyphs in papers
+# Correctness + hygiene set. Style-only churn (quotes, formatting) is left to
+# the formatter; rules here catch real mistakes.
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM", "DTZ", "PLW", "RUF"]
+ignore = [
+  "B008",    # FastAPI Depends() in defaults is idiomatic
+  "BLE001",  # pipeline gates intentionally catch broad exceptions (fail-open design)
+  "SIM102",  # nested ifs are often clearer than compound conditions here
+  "RUF012",  # class-level dict constants (prompt/example maps) are de facto frozen
+  "PLW1510", # subprocess.run return codes are checked explicitly where they matter
+  "UP042",   # (str, Enum) bases are shared with pydantic response models; churn > value
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tools/*" = ["E402", "DTZ"]           # CLI scripts: sys.path setup + local timestamps
+"tests/*" = ["E402", "DTZ"]           # fixtures use naive datetimes on purpose
+"test_*.py" = ["E402"]                # root-level CLI scripts
+"temporal_app/worker.py" = ["E402"]
+"jobs/worker.py" = ["E402"]           # optional-langfuse import shim precedes app imports
+"main.py" = ["E402"]                  # load_dotenv() MUST run before app imports
+"ingestion/arxiv_fetcher.py" = ["E402"]  # dotenv-before-arxiv-import, same reason
+"db/queries.py" = ["E402"]            # naive-utc helper defined before ORM imports

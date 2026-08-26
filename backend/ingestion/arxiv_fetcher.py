@@ -8,15 +8,13 @@ Also checks for ar5iv HTML availability.
 import asyncio
 import logging
 import re
+
 import arxiv
 import httpx
-from datetime import datetime
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 from models.paper import ArxivPaperMeta
-
 
 # Regex to normalize arXiv IDs
 ARXIV_ID_PATTERN = re.compile(r'^(\d{4}\.\d{4,5})(v\d+)?$|^([a-z-]+/\d{7})(v\d+)?$')
@@ -44,7 +42,7 @@ def normalize_arxiv_id(arxiv_id: str) -> str:
     return arxiv_id
 
 
-def extract_version(arxiv_id: str) -> Optional[int]:
+def extract_version(arxiv_id: str) -> int | None:
     """Extract version number from arXiv ID if present."""
     match = re.search(r'v(\d+)$', arxiv_id)
     if match:
@@ -120,16 +118,16 @@ async def fetch_paper_meta(arxiv_id: str) -> ArxivPaperMeta:
 
             # Non-retryable errors — raise immediately
             if "400" in error_msg or "Bad Request" in error_msg:
-                raise ValueError(f"Invalid arXiv ID: '{arxiv_id}' - arXiv API rejected the request")
+                raise ValueError(f"Invalid arXiv ID: '{arxiv_id}' - arXiv API rejected the request") from e
             elif "404" in error_msg or "Not Found" in error_msg:
-                raise ValueError(f"Paper not found on arXiv: '{arxiv_id}'")
+                raise ValueError(f"Paper not found on arXiv: '{arxiv_id}'") from e
             elif "timeout" in error_msg.lower() or "connection" in error_msg.lower():
-                raise ConnectionError(f"Could not connect to arXiv API: {e}")
+                raise ConnectionError(f"Could not connect to arXiv API: {e}") from e
             else:
-                raise ValueError(f"Error fetching paper '{arxiv_id}': {e}")
+                raise ValueError(f"Error fetching paper '{arxiv_id}': {e}") from e
     else:
         # All retries exhausted
-        raise ValueError(f"Error fetching paper '{arxiv_id}' after {max_retries} retries: {last_error}")
+        raise ValueError(f"Error fetching paper '{arxiv_id}' after {max_retries} retries: {last_error}") from last_error
     
     if not results:
         raise ValueError(f"Paper not found on arXiv: '{arxiv_id}'")
@@ -155,7 +153,7 @@ async def fetch_paper_meta(arxiv_id: str) -> ArxivPaperMeta:
     )
 
 
-async def check_ar5iv_available(arxiv_id: str) -> Optional[str]:
+async def check_ar5iv_available(arxiv_id: str) -> str | None:
     """
     Check if ar5iv HTML version is available for this paper.
     

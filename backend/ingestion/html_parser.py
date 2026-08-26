@@ -8,12 +8,11 @@ ar5iv provides HTML versions of arXiv papers with clean structure:
 """
 
 import re
-from typing import Optional
 
 import httpx
 from bs4 import BeautifulSoup, NavigableString
 
-from models.paper import ParsedContent, Equation, Figure, Table
+from models.paper import Equation, Figure, ParsedContent, Table
 
 
 async def fetch_and_parse_html(html_url: str) -> ParsedContent:
@@ -346,7 +345,7 @@ def convert_to_markdown(soup: BeautifulSoup) -> str:
             # Get section title if available
             title = element.find(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
             if title:
-                title_text = extract_text_with_math(title)
+                extract_text_with_math(title)
                 sec_class = ' '.join(element.get('class', []))
                 
                 # Determine level from class or header

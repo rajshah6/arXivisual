@@ -1,0 +1,85 @@
+# Nightly LLM generation-quality evals — gates on regressions via
+# backend/evals/check_regression.py (see backend/evals/README.md).
+#
+# Required repository secrets (Settings > Secrets and variables > Actions):
+#   AZURE_OPENAI_API_KEY      — Azure OpenAI key used by the agent pipeline
+#   AZURE_OPENAI_ENDPOINT     — e.g. https://<resource>.openai.azure.com
+#   AZURE_OPENAI_DEPLOYMENT   — deployment name (e.g. gpt-5-mini)
+# The run makes real, billable LLM calls (~$0.05–0.15 per paper without
+# rendering); paper count and per-paper viz cap keep cost bounded.
+name: Evals
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # nightly 06:00 UTC — evaluates 5 golden-set papers
+  workflow_dispatch:
+    inputs:
+      papers:
+        description: "Number of golden-set papers to evaluate"
+        required: false
+        default: "3"
+
+# Never overlap eval runs (they share the LLM quota); queue instead of cancel
+# so a manual dispatch doesn't kill a nightly run mid-flight.
+concurrency:
+  group: evals
+  cancel-in-progress: false
+
+jobs:
+  evals:
+    name: Golden-set generation evals
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      LLM_PROVIDER: azure
+      AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+      AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+      AZURE_OPENAI_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_DEPLOYMENT }}
+      # Cost control: cheapest reasoning tier is plenty for the eval workload.
+      AZURE_OPENAI_REASONING_EFFORT: low
+      # Evals measure the LLM gates, not ffmpeg: disables local render testing.
+      # run_evals.py also forces this before importing the pipeline.
+      RENDER_MODE: modal
+    steps:
+      - uses: actions/checkout@v4
+
+      # No rendering happens, but `uv sync` still builds manim's manimpango
+      # from sdist on Linux (no manylinux wheels), which needs pango/cairo
+      # headers. Same apt line as ci.yml.
+      - name: Install system build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libcairo2-dev libpango1.0-dev
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run golden-set evals
+        run: |
+          uv run python evals/run_evals.py \
+            --papers ${{ github.event.inputs.papers || '5' }} \
+            --max-viz 2 \
+            --output report.json
+
+      - name: Check for regressions
+        run: uv run python evals/check_regression.py report.json evals/baselines.json
+
+      - name: Upload eval report
+        if: always() # keep the report even when the regression gate fails
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: backend/report.json
+          if-no-files-found: warn

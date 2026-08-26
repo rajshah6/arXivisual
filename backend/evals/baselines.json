@@ -1,0 +1,17 @@
+{
+  "_comment": [
+    "Regression thresholds for check_regression.py. Keys under 'metrics' are",
+    "dotted paths into report['aggregate']; values are {'min': x} or {'max': x}.",
+    "These carry generous initial slack. Once 3+ real nightly runs establish",
+    "variance, tighten them toward the observed floor — procedure in",
+    "backend/evals/README.md. render_tester has no threshold: evals run with",
+    "RENDER_MODE=modal, so that gate is disabled by design."
+  ],
+  "metrics": {
+    "viz_yield_rate": { "min": 0.5 },
+    "gates.code_validator.first_attempt_rate": { "min": 0.4 },
+    "gates.code_validator.eventual_rate": { "min": 0.7 },
+    "gates.spatial_validator.eventual_rate": { "min": 0.7 },
+    "gates.voiceover_script_validator.eventual_rate": { "min": 0.7 }
+  }
+}

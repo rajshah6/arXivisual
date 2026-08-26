@@ -1,0 +1,9 @@
+# Gitleaks configuration — extends the default ruleset.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Container image tags pinned to git commit SHAs (gh-<sha>) are public identifiers, not secrets; gitleaks' generic-api-key rule trips on their entropy."
+regexes = [
+  '''azurecr\.io/arxivisual-api:gh-[0-9a-f]{40}''',
+]

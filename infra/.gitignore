@@ -1,0 +1,12 @@
+# Local Terraform working files
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# Real variable values must never be committed (use terraform.tfvars.example
+# as the template). The dependency lock file IS committed on purpose.
+terraform.tfvars
+*.auto.tfvars
+
+# Local backend override used only for offline plan dry-runs
+backend_override.tf

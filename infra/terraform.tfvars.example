@@ -1,0 +1,24 @@
+# Copy to terraform.tfvars (git-ignored) and fill in the real values, or
+# export them as TF_VAR_* environment variables instead. NEVER commit real
+# values.
+
+# Postgres admin password for rabidcheese9@arxivisual-db (also the Temporal
+# app's pg-pwd secret).
+postgres_admin_password = "REPLACE_ME"
+
+# postgresql+asyncpg style connection string used by the API/worker apps.
+database_url = "postgresql://user:REPLACE_ME@arxivisual-db.postgres.database.azure.com:5432/arxiviz?sslmode=require"
+
+# az cognitiveservices account keys list -n arxivisual-openai -g arxivisual-rg
+azure_openai_api_key = "REPLACE_ME"
+
+# Cloudflare R2 credentials for the arxivisual bucket.
+s3_access_key = "REPLACE_ME"
+s3_secret_key = "REPLACE_ME"
+
+# Langfuse (us.cloud.langfuse.com) project keys.
+langfuse_public_key = "pk-lf-REPLACE_ME"
+langfuse_secret_key = "sk-lf-REPLACE_ME"
+
+# az acr credential show -n ca82c08e2eadacr --query "passwords[0].value"
+acr_admin_password = "REPLACE_ME"

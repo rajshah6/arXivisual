@@ -1,0 +1,45 @@
+{
+  "_comment": "Golden-set papers for generation-quality evals. Order matters: --papers N takes the first N, so cheaper, most load-bearing papers come first (the nightly run uses 5, manual dispatch defaults to 3). The longest/most expensive papers sit at the end.",
+  "papers": [
+    {
+      "arxiv_id": "1706.03762",
+      "title": "Attention Is All You Need",
+      "why": "Core ML architecture paper and the project's canonical demo; attention data-flow diagrams stress the planner and spatial gate."
+    },
+    {
+      "arxiv_id": "1512.03385",
+      "title": "Deep Residual Learning for Image Recognition",
+      "why": "Short, dense architecture paper; residual-block diagrams test structural visualizations."
+    },
+    {
+      "arxiv_id": "2010.11929",
+      "title": "An Image is Worth 16x16 Words (ViT)",
+      "why": "Patch-embedding pipeline; tests grid/patch layouts that historically trigger spatial-validator failures."
+    },
+    {
+      "arxiv_id": "1810.04805",
+      "title": "BERT: Pre-training of Deep Bidirectional Transformers",
+      "why": "Masked-LM objectives; tests token-level sequence visualizations and narration alignment."
+    },
+    {
+      "arxiv_id": "1406.2661",
+      "title": "Generative Adversarial Networks",
+      "why": "Theory-flavored minimax game with equations; tests conceptual/game-dynamics visuals and equation narration."
+    },
+    {
+      "arxiv_id": "1412.6980",
+      "title": "Adam: A Method for Stochastic Optimization",
+      "why": "Optimization theory: update-rule math and convergence intuition; stresses equation-heavy voiceover quality."
+    },
+    {
+      "arxiv_id": "2304.02643",
+      "title": "Segment Anything",
+      "why": "Applied CV system paper; prompt/mask pipeline visuals outside the pure-architecture core."
+    },
+    {
+      "arxiv_id": "2005.14165",
+      "title": "Language Models are Few-Shot Learners (GPT-3)",
+      "why": "Very long applied paper; stresses ingestion + section summarization and plot-style scaling visuals. Kept last for cost."
+    }
+  ]
+}

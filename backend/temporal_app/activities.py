@@ -35,12 +35,33 @@ class RenderInput:
     job_id: str
     viz_id: str
     manim_code: str
+    # Set on repair re-renders so the activity doesn't recommend repairing the
+    # repair (one round max, decided by the workflow).
+    is_repair: bool = False
 
 
 @dataclass
 class RenderResult:
     viz_id: str
     succeeded: bool
+    # Visual QA verdict for the rendered video (empty/none when QA is off,
+    # failed, or unavailable). The workflow uses repair_recommended — computed
+    # HERE from env + severity so the workflow itself stays deterministic.
+    severity: str = "none"
+    issues: list[str] = None  # type: ignore[assignment]
+    repair_recommended: bool = False
+
+    def __post_init__(self) -> None:
+        if self.issues is None:
+            self.issues = []
+
+
+@dataclass
+class RepairInput:
+    job_id: str
+    viz_id: str
+    manim_code: str
+    issues: list[str]
 
 
 @dataclass
@@ -151,35 +172,124 @@ async def generate_visualizations_for_paper(params: PipelineInput) -> list[Rende
 
 @activity.defn
 async def render_visualization(params: RenderInput) -> RenderResult:
-    """Render one video and record its status. Never raises for a render
-    failure — the outcome travels back to the workflow, which owns aggregation.
-    (Raising is reserved for infrastructure faults, which Temporal retries.)"""
+    """Render one video, judge it (when visual QA is on), record status.
+
+    Never raises for a render failure — the outcome travels back to the
+    workflow, which owns aggregation. (Raising is reserved for infrastructure
+    faults, which Temporal retries.) The repair recommendation is computed
+    here from env so the workflow stays deterministic on replay.
+    """
+    import os
+
     from db.connection import async_session_maker
     from db import queries
     from rendering import process_visualization
 
+    qa_enabled = os.getenv("ENABLE_VISUAL_QA", "0") == "1"
+    repair_enabled = os.getenv("VISUAL_QA_REPAIR", "0") == "1"
+
     succeeded = True
     video_url: str | None = None
     error: str | None = None
+    severity = "none"
+    issues: list[str] = []
     try:
-        video_url = await process_visualization(
-            viz_id=params.viz_id,
-            manim_code=params.manim_code,
-            quality="low_quality",
-        )
+        if qa_enabled:
+            video_url, verdict = await process_visualization(
+                viz_id=params.viz_id,
+                manim_code=params.manim_code,
+                quality="low_quality",
+                collect_qa=True,
+            )
+            if verdict is not None:
+                severity = verdict.severity
+                issues = list(verdict.issues)
+        else:
+            video_url = await process_visualization(
+                viz_id=params.viz_id,
+                manim_code=params.manim_code,
+                quality="low_quality",
+            )
     except Exception as exc:
         succeeded = False
         error = str(exc)
         logger.error("Render failed for %s: %s", params.viz_id, error)
 
-    async with async_session_maker() as db:
-        await queries.update_visualization_status(
-            db, params.viz_id,
-            status="complete" if succeeded else "failed",
-            video_url=video_url,
-            error=error,
+    if params.is_repair and not succeeded:
+        # A failed repair re-render must not clobber the original video's
+        # record — the pre-repair video is still stored and serving.
+        logger.warning("Repair re-render failed for %s; keeping original video", params.viz_id)
+    else:
+        async with async_session_maker() as db:
+            await queries.update_visualization_status(
+                db, params.viz_id,
+                status="complete" if succeeded else "failed",
+                video_url=video_url,
+                error=error,
+            )
+    return RenderResult(
+        viz_id=params.viz_id,
+        succeeded=succeeded,
+        severity=severity,
+        issues=issues,
+        repair_recommended=(
+            repair_enabled
+            and succeeded
+            and severity == "major"
+            and not params.is_repair
+        ),
+    )
+
+
+REPAIR_PROMPT = """You are fixing LAYOUT DEFECTS in a working Manim animation.
+A vision model inspected the rendered video frames and found these problems:
+
+{issues}
+
+Here is the current code (it renders successfully — do NOT restructure it):
+
+```python
+{code}
+```
+
+Fix ONLY the layout problems listed above: reposition or scale elements, add
+FadeOut between beats, move labels off arrows, keep everything inside x in
+[-6, 6], y in [-3.5, 3.5]. PRESERVE the narration text, voiceover structure,
+scene class name, beat comments, and overall animation flow exactly.
+
+Return ONLY the complete corrected Python code. No markdown, no prose."""
+
+
+@activity.defn
+async def repair_visualization_code(params: RepairInput) -> str:
+    """Targeted layout repair: judge findings -> focused LLM fix -> validated code.
+
+    Raises on failure (unusable output) so the workflow keeps the original
+    video — a defective video beats no video.
+    """
+    from agents.base import call_llm
+    from agents.code_validator import CodeValidator
+
+    prompt = REPAIR_PROMPT.format(
+        issues="\n".join(f"- {i}" for i in params.issues[:8]),
+        code=params.manim_code,
+    )
+    raw = await call_llm(prompt, max_tokens=10000, name="visual_qa_repair")
+
+    # Strip a markdown fence if the model added one despite instructions.
+    import re
+
+    fence = re.search(r"```(?:python)?\s*\n(.*?)```", raw, re.DOTALL)
+    code = (fence.group(1) if fence else raw).strip()
+
+    validation = CodeValidator().validate(code)
+    if not validation.is_valid:
+        raise RuntimeError(
+            f"Repair produced invalid code for {params.viz_id}: "
+            + "; ".join(validation.issues_found[:3])
         )
-    return RenderResult(viz_id=params.viz_id, succeeded=succeeded)
+    logger.info("Repair code ready for %s (%d chars)", params.viz_id, len(validation.code))
+    return validation.code
 
 
 @activity.defn

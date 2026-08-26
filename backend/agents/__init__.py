@@ -17,35 +17,35 @@ Usage:
 
 try:
     from .base import BaseAgent
+    from .code_validator import CodeValidator
+    from .context7_docs import clear_docs_cache, get_manim_docs
+    from .manim_generator import ManimGenerator
+    from .pipeline import generate_single_visualization, generate_visualizations
     from .section_analyzer import SectionAnalyzer
     from .visualization_planner import VisualizationPlanner
-    from .manim_generator import ManimGenerator
-    from .code_validator import CodeValidator
     from .voiceover_script_validator import VoiceoverScriptValidator
-    from .context7_docs import get_manim_docs, clear_docs_cache
-    from .pipeline import generate_visualizations, generate_single_visualization
 except ImportError:
     from base import BaseAgent
+    from code_validator import CodeValidator
+    from context7_docs import clear_docs_cache, get_manim_docs
+    from manim_generator import ManimGenerator
+    from pipeline import generate_single_visualization, generate_visualizations
     from section_analyzer import SectionAnalyzer
     from visualization_planner import VisualizationPlanner
-    from manim_generator import ManimGenerator
-    from code_validator import CodeValidator
     from voiceover_script_validator import VoiceoverScriptValidator
-    from context7_docs import get_manim_docs, clear_docs_cache
-    from pipeline import generate_visualizations, generate_single_visualization
 
 __all__ = [
     # Base agents
     "BaseAgent",
+    "CodeValidator",
+    "ManimGenerator",
     # Pipeline agents
     "SectionAnalyzer",
     "VisualizationPlanner",
-    "ManimGenerator",
-    "CodeValidator",
     "VoiceoverScriptValidator",
+    "clear_docs_cache",
+    "generate_single_visualization",
+    "generate_visualizations",
     # Utilities
     "get_manim_docs",
-    "clear_docs_cache",
-    "generate_visualizations",
-    "generate_single_visualization",
 ]

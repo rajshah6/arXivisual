@@ -2,19 +2,18 @@
 
 import sys
 from pathlib import Path
-from typing import Any
 
 # Handle both package and direct imports
 try:
-    from .base import BaseAgent
-    from ..models.paper import Section
     from ..models.generation import AnalyzerOutput, VisualizationCandidate, VisualizationType
+    from ..models.paper import Section
+    from .base import BaseAgent
 except ImportError:
     # Add parent to path for direct execution
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from agents.base import BaseAgent
-    from models.paper import Section
     from models.generation import AnalyzerOutput, VisualizationCandidate, VisualizationType
+    from models.paper import Section
 
 
 class SectionAnalyzer(BaseAgent):

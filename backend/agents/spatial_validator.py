@@ -9,7 +9,6 @@ Analyzes generated Manim code for:
 """
 
 import re
-from typing import Any
 
 # Handle imports for both package and direct execution
 try:
@@ -232,7 +231,7 @@ class SpatialValidator:
                         element_name=pos.element_name,
                         line_number=pos.line_number,
                         issue=f"Element '{pos.element_name}' at x={pos.x_position:.1f} is near screen edge (safe area: |x| < 6)",
-                        suggested_fix=f"Consider moving closer to center for better visibility"
+                        suggested_fix="Consider moving closer to center for better visibility"
                     ))
             
             # Check Y bounds
@@ -242,14 +241,14 @@ class SpatialValidator:
                         element_name=pos.element_name,
                         line_number=pos.line_number,
                         issue=f"CRITICAL: Element '{pos.element_name}' at y={pos.y_position:.1f} is outside screen bounds (max |y| = 4)",
-                        suggested_fix=f"Use y position between -3.5 and 3.5. Reduce the multiplier."
+                        suggested_fix="Use y position between -3.5 and 3.5. Reduce the multiplier."
                     ))
                 elif abs(pos.y_position) > self.SAFE_BOUNDS_Y[1]:
                     issues.append(BoundsIssue(
                         element_name=pos.element_name,
                         line_number=pos.line_number,
                         issue=f"Element '{pos.element_name}' at y={pos.y_position:.1f} is near screen edge (safe area: |y| < 3.5)",
-                        suggested_fix=f"Consider moving closer to center for better visibility"
+                        suggested_fix="Consider moving closer to center for better visibility"
                     ))
         
         return issues

@@ -103,9 +103,9 @@ def _openai_classes():
     Falls back to the plain SDK when Langfuse isn't configured (local dev).
     """
     if _langfuse_enabled():
-        from langfuse.openai import OpenAI, AsyncOpenAI
+        from langfuse.openai import AsyncOpenAI, OpenAI
     else:
-        from openai import OpenAI, AsyncOpenAI
+        from openai import AsyncOpenAI, OpenAI
     return OpenAI, AsyncOpenAI
 
 
@@ -115,7 +115,7 @@ def _azure_base_url() -> str:
 
 
 def _get_azure_client():
-    global _azure_async_client
+    global _azure_async_client  # noqa: PLW0603 — lazy singleton cache
     if _azure_async_client is None:
         _, AsyncOpenAI = _openai_classes()
         _azure_async_client = AsyncOpenAI(
@@ -127,7 +127,7 @@ def _get_azure_client():
 
 
 def _get_azure_sync_client():
-    global _azure_sync_client
+    global _azure_sync_client  # noqa: PLW0603 — lazy singleton cache
     if _azure_sync_client is None:
         OpenAI, _ = _openai_classes()
         _azure_sync_client = OpenAI(
@@ -175,7 +175,7 @@ _dedalus_runner = None
 
 def _get_dedalus_runner():
     """Get or create the shared DedalusRunner instance."""
-    global _dedalus_runner
+    global _dedalus_runner  # noqa: PLW0603 — lazy singleton cache
     if _dedalus_runner is None:
         from dedalus_labs import AsyncDedalus, DedalusRunner
         client = AsyncDedalus(
@@ -396,7 +396,7 @@ class BaseAgent:
         try:
             return json.loads(content.strip())
         except json.JSONDecodeError as e:
-            raise ValueError(f"Failed to parse JSON from response: {e}\nContent: {content[:500]}")
+            raise ValueError(f"Failed to parse JSON from response: {e}\nContent: {content[:500]}") from e
 
     def _extract_code_block(self, content: str, language: str = "python") -> str:
         """

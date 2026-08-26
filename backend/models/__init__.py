@@ -1,39 +1,39 @@
 """Data models for ingestion + generation pipeline."""
 
+from .generation import (
+    AnalyzerOutput,
+    GeneratedCode,
+    Scene,
+    ValidatorOutput,
+    Visualization,
+    VisualizationCandidate,
+    VisualizationPlan,
+)
 from .paper import (
     ArxivPaperMeta,
     Equation,
     Figure,
-    Table,
     ParsedContent,
     Section,
     StructuredPaper,
-)
-from .generation import (
-    VisualizationCandidate,
-    AnalyzerOutput,
-    Scene,
-    VisualizationPlan,
-    GeneratedCode,
-    ValidatorOutput,
-    Visualization,
+    Table,
 )
 from .voiceover import VoiceoverValidationOutput
 
 __all__ = [
+    "AnalyzerOutput",
     "ArxivPaperMeta",
     "Equation",
     "Figure",
-    "Table",
+    "GeneratedCode",
     "ParsedContent",
+    "Scene",
     "Section",
     "StructuredPaper",
-    "VisualizationCandidate",
-    "AnalyzerOutput",
-    "Scene",
-    "VisualizationPlan",
-    "GeneratedCode",
+    "Table",
     "ValidatorOutput",
     "Visualization",
+    "VisualizationCandidate",
+    "VisualizationPlan",
     "VoiceoverValidationOutput",
 ]

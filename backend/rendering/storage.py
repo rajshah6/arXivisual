@@ -10,7 +10,7 @@ import asyncio
 import logging
 import os
 from pathlib import Path
-from typing import Optional, Protocol
+from typing import Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +22,8 @@ STORAGE_MODE = os.getenv("STORAGE_MODE", "local")
 
 class StorageBackend(Protocol):
     async def save_video(self, video_bytes: bytes, filename: str) -> str: ...
-    def get_video_path(self, video_id: str) -> Optional[Path]: ...
-    def get_video_url(self, video_id: str) -> Optional[str]: ...
+    def get_video_path(self, video_id: str) -> Path | None: ...
+    def get_video_url(self, video_id: str) -> str | None: ...
     def list_videos(self) -> list[str]: ...
     def delete_video(self, video_id: str) -> bool: ...
 
@@ -46,10 +46,10 @@ class LocalStorageBackend:
         file_path.write_bytes(video_bytes)
         video_id = filename.replace(".mp4", "")
         url = f"/api/video/{video_id}"
-        logger.debug(f"  [LocalStorage] File written successfully")
+        logger.debug("  [LocalStorage] File written successfully")
         return url
 
-    def get_video_path(self, video_id: str) -> Optional[Path]:
+    def get_video_path(self, video_id: str) -> Path | None:
         file_path = self.media_dir / f"{video_id}.mp4"
         if file_path.exists():
             return file_path
@@ -58,7 +58,7 @@ class LocalStorageBackend:
             return file_path
         return None
 
-    def get_video_url(self, video_id: str) -> Optional[str]:
+    def get_video_url(self, video_id: str) -> str | None:
         if self.get_video_path(video_id):
             return f"/api/video/{video_id}"
         return None
@@ -135,11 +135,11 @@ class R2StorageBackend:
                     logger.error(f"  [R2Storage] Upload failed after retry: {e}")
                     raise
 
-    def get_video_path(self, video_id: str) -> Optional[Path]:
+    def get_video_path(self, video_id: str) -> Path | None:
         # Cloud storage has no local path
         return None
 
-    def get_video_url(self, video_id: str) -> Optional[str]:
+    def get_video_url(self, video_id: str) -> str | None:
         key = self._key(video_id)
         try:
             self.client.head_object(Bucket=self.bucket, Key=key)
@@ -203,12 +203,12 @@ async def save_video(video_bytes: bytes, filename: str) -> str:
     return url
 
 
-def get_video_path(video_id: str) -> Optional[Path]:
+def get_video_path(video_id: str) -> Path | None:
     """Get local file path for a video. Returns None for cloud storage."""
     return _backend.get_video_path(video_id)
 
 
-def get_video_url(video_id: str) -> Optional[str]:
+def get_video_url(video_id: str) -> str | None:
     """Get the URL for a video if it exists."""
     return _backend.get_video_url(video_id)
 

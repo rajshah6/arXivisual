@@ -18,10 +18,10 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
-def resolve_metric(aggregate: dict, dotted_path: str) -> Optional[Any]:
+def resolve_metric(aggregate: dict, dotted_path: str) -> Any | None:
     """Look up a dotted path (e.g. 'gates.code_validator.eventual_rate')."""
     node: Any = aggregate
     for part in dotted_path.split("."):
@@ -80,7 +80,7 @@ def print_table(rows: list[dict]) -> None:
     for r in rows:
         status = "OK" if r["ok"] else f"FAIL ({r['detail']})"
         actual = "-" if r["actual"] is None else r["actual"]
-        print(f"{r['metric']:<{width}}{r['constraint']:>12}{str(actual):>10}  {status}")
+        print(f"{r['metric']:<{width}}{r['constraint']:>12}{actual!s:>10}  {status}")
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -98,12 +98,10 @@ class PaperPipelineWorkflow:
             ]
 
             succeeded = 0
-            completed = 0
             results: list[RenderResult] = []
-            for task in asyncio.as_completed(render_tasks):
+            for completed, task in enumerate(asyncio.as_completed(render_tasks), start=1):
                 result: RenderResult = await task
                 results.append(result)
-                completed += 1
                 if result.succeeded:
                     succeeded += 1
                 await workflow.execute_activity(

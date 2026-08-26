@@ -65,7 +65,7 @@ test_scene_file.write_text(TEST_SCENE_CODE)
 print(f"\nGenerated test scene (gTTS): {test_scene_file}")
 print("\nTo render the scene with voiceover, run:")
 print(f"  cd {output_dir}")
-print(f"  manim -pql voiceover_test_scene.py VoiceoverTestScene --disable_caching")
+print("  manim -pql voiceover_test_scene.py VoiceoverTestScene --disable_caching")
 print("\nNote: --disable_caching is required for voiceover sync to work correctly.")
 
 # Optionally try to render
@@ -89,4 +89,4 @@ if "--render" in sys.argv:
         print(f"\nRendering failed with exit code {result.returncode}")
 else:
     print("\nTip: Run with --render flag to automatically render the scene:")
-    print(f"  python3 test_voiceover.py --render")
+    print("  python3 test_voiceover.py --render")

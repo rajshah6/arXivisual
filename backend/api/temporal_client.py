@@ -19,7 +19,7 @@ def temporal_enabled() -> bool:
 
 
 async def get_temporal_client() -> Client:
-    global _client
+    global _client  # noqa: PLW0603 — lazy singleton cache
     if _client is None:
         _client = await Client.connect(
             os.getenv("TEMPORAL_ADDRESS", "localhost:7233"),

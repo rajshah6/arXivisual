@@ -18,12 +18,12 @@ Usage:
     cd backend && python test_ingestion.py
 """
 
-import asyncio
 import argparse
+import asyncio
 import json
-import sys
 import logging
 import os
+import sys
 
 # Handle imports for both running as module and as standalone script
 # When run as `python -m backend.test_ingestion` from project root
@@ -40,12 +40,12 @@ if _script_dir not in sys.path:
 # Try different import strategies
 try:
     # When running as `python -m backend.test_ingestion` from project root
-    from backend.ingestion import ingest_paper, clear_cache
+    from backend.ingestion import clear_cache, ingest_paper
     from backend.models.paper import StructuredPaper
 except ImportError:
     try:
         # When running as `python test_ingestion.py` from backend/
-        from ingestion import ingest_paper, clear_cache
+        from ingestion import clear_cache, ingest_paper
         from models.paper import StructuredPaper
     except ImportError as e:
         print(f"Import error: {e}")

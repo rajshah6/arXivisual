@@ -19,8 +19,8 @@ Usage:
     python test_video_generation.py --code-file examples/voiceover_equation.py --keep-temp
 """
 
-import asyncio
 import argparse
+import asyncio
 import logging
 import sys
 from pathlib import Path
@@ -109,7 +109,7 @@ Examples:
 
     # Import rendering function
     try:
-        from rendering import process_visualization, extract_scene_name
+        from rendering import extract_scene_name, process_visualization
     except ImportError as e:
         logger.error(f"Failed to import rendering module: {e}")
         logger.error("Make sure you're running this from the backend directory")

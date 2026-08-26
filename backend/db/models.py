@@ -8,9 +8,10 @@ Models:
 - ProcessingJob: Background processing job status
 """
 
-from sqlalchemy import Column, String, Text, DateTime, Integer, ForeignKey, Float, JSON
-from sqlalchemy.orm import relationship, declarative_base
 from datetime import datetime
+
+from sqlalchemy import JSON, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
 

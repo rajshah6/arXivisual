@@ -1,3 +1,4 @@
+from agents.voiceover_script_validator import VoiceoverScriptValidator
 from models.generation import (
     GeneratedCode,
     Scene,
@@ -5,7 +6,6 @@ from models.generation import (
     VisualizationPlan,
     VisualizationType,
 )
-from agents.voiceover_script_validator import VoiceoverScriptValidator
 
 
 def _candidate() -> VisualizationCandidate:

@@ -32,6 +32,15 @@ if str(backend_dir) not in sys.path:
 import asyncio
 from datetime import datetime
 
+from agents.code_validator import CodeValidator
+from models.generation import (
+    GeneratedCode,
+    Scene,
+    VisualizationCandidate,
+    VisualizationPlan,
+    VisualizationType,
+)
+
 # Now imports will work
 from models.paper import (
     ArxivPaperMeta,
@@ -39,14 +48,6 @@ from models.paper import (
     Section,
     StructuredPaper,
 )
-from models.generation import (
-    VisualizationType,
-    VisualizationCandidate,
-    VisualizationPlan,
-    Scene,
-    GeneratedCode,
-)
-from agents.code_validator import CodeValidator
 
 
 def create_test_paper() -> StructuredPaper:

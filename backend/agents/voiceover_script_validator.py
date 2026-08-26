@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import re
 import json
-from typing import Optional
+import re
 
 # Handle imports for both package and direct execution
 try:
-    from .base import call_llm_sync, get_model_name
     from ..models.generation import GeneratedCode, VisualizationCandidate, VisualizationPlan
     from ..models.voiceover import VoiceoverValidationOutput
+    from .base import call_llm_sync, get_model_name
 except ImportError:
     import sys
     from pathlib import Path
@@ -28,7 +27,7 @@ class VoiceoverScriptValidator:
     STOPWORDS = {
         "the", "and", "that", "with", "from", "this", "these", "those", "into", "onto",
         "their", "about", "each", "for", "are", "its", "while", "where", "when", "then",
-        "using", "through", "across", "between", "before", "after", "over", "under", "into",
+        "using", "through", "across", "between", "before", "after", "over", "under",
     }
 
     def __init__(
@@ -39,7 +38,7 @@ class VoiceoverScriptValidator:
         alignment_threshold: float = 0.45,
         educational_threshold: float = 0.50,
         use_llm_judge: bool = True,
-        model: Optional[str] = None,
+        model: str | None = None,
     ):
         self.strict = strict
         self.min_words = min_words
@@ -59,7 +58,6 @@ class VoiceoverScriptValidator:
         issues: list[str] = []
         code = generated_code.code
         narrations = generated_code.narration_lines
-        beat_labels = generated_code.narration_beats
 
         # Required voiceover structures (hard fail — code won't work without these)
         if "VoiceoverScene" not in code:
@@ -211,7 +209,7 @@ class VoiceoverScriptValidator:
         candidate: VisualizationCandidate,
         plan: VisualizationPlan,
         narrations: list[str],
-    ) -> tuple[Optional[float], Optional[float], Optional[str]]:
+    ) -> tuple[float | None, float | None, str | None]:
         """LLM rubric scorer. Returns None scores if unavailable."""
         try:
             prompt = (
@@ -241,5 +239,5 @@ class VoiceoverScriptValidator:
             score_alignment = float(result.get("score_alignment", 0.0))
             score_educational = float(result.get("score_educational", 0.0))
             return score_alignment, score_educational, None
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return None, None, f"LLM judge unavailable: {type(exc).__name__}"

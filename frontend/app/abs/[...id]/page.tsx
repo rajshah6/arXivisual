@@ -136,7 +136,6 @@ export default function PaperPage({
   const resolvedParams = use(params);
   const arxivId = normalizeArxivId(resolvedParams.id);
   const absUrl = arxivId ? `https://arxiv.org/abs/${arxivId}` : "https://arxiv.org";
-  const pdfUrl = arxivId ? `https://arxiv.org/pdf/${arxivId}.pdf` : "https://arxiv.org";
 
   const [state, setState] = useState<PageState>({ type: "loading" });
   const [jobId, setJobId] = useState<string | null>(null);
@@ -233,11 +232,16 @@ export default function PaperPage({
     }
   }, [arxivId, startingJob]);
 
+  // Derived before the effect so it can sit in the dependency array
+  // (state.status only exists on the "processing" variant).
+  const demoSectionsTotal =
+    state.type === "processing" ? state.status.sections_total : 0;
+
   // Demo simulation: animate progress 0→100% over 5 seconds
   useEffect(() => {
     if (state.type !== "processing" || !demoSimRunning.current) return;
 
-    const totalSections = state.status.sections_total;
+    const totalSections = demoSectionsTotal;
     const startTime = Date.now();
     const timer = setInterval(async () => {
       const elapsed = Date.now() - startTime;
@@ -290,7 +294,7 @@ export default function PaperPage({
       clearInterval(timer);
       demoSimRunning.current = false;
     };
-  }, [state.type, arxivId]);
+  }, [state.type, demoSectionsTotal, arxivId]);
 
   // Real API polling (non-demo papers)
   useEffect(() => {

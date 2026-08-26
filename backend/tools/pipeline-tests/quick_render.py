@@ -18,8 +18,8 @@ Usage:
     python quick_render.py examples/voiceover_equation.py --scene MyScene
 """
 
-import asyncio
 import argparse
+import asyncio
 import logging
 import sys
 import uuid
@@ -90,7 +90,7 @@ async def main():
     logger.info(f"Quality: {args.quality}")
 
     try:
-        from rendering import process_visualization, extract_scene_name
+        from rendering import extract_scene_name, process_visualization
 
         # Detect or use provided scene name
         if args.scene:

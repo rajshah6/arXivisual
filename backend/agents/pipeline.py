@@ -12,8 +12,8 @@ import os
 import re
 import sys
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Optional
 
 try:
     from langfuse import observe
@@ -25,44 +25,42 @@ except ImportError:  # langfuse optional — degrade to no-op decorator
 
 # Handle both package and direct imports
 try:
-    from ..models.paper import StructuredPaper
     from ..models.generation import (
-        Visualization,
-        VisualizationCandidate,
-        VisualizationPlan,
         GeneratedCode,
         ValidatorOutput,
+        Visualization,
+        VisualizationCandidate,
         VisualizationStatus,
     )
+    from ..models.paper import StructuredPaper
     from ..models.spatial import SpatialValidatorOutput
     from ..models.voiceover import VoiceoverValidationOutput
-    from .section_analyzer import SectionAnalyzer
-    from .visualization_planner import VisualizationPlanner
-    from .manim_generator import ManimGenerator
     from .code_validator import CodeValidator
-    from .spatial_validator import SpatialValidator
+    from .manim_generator import ManimGenerator
     from .render_tester import RenderTester, RenderTestOutput
+    from .section_analyzer import SectionAnalyzer
+    from .spatial_validator import SpatialValidator
+    from .visualization_planner import VisualizationPlanner
     from .voiceover_script_validator import VoiceoverScriptValidator
 except ImportError:
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from models.paper import StructuredPaper
+    from agents.code_validator import CodeValidator
+    from agents.manim_generator import ManimGenerator
+    from agents.render_tester import RenderTester, RenderTestOutput
+    from agents.section_analyzer import SectionAnalyzer
+    from agents.spatial_validator import SpatialValidator
+    from agents.visualization_planner import VisualizationPlanner
+    from agents.voiceover_script_validator import VoiceoverScriptValidator
     from models.generation import (
-        Visualization,
-        VisualizationCandidate,
-        VisualizationPlan,
         GeneratedCode,
         ValidatorOutput,
+        Visualization,
+        VisualizationCandidate,
         VisualizationStatus,
     )
+    from models.paper import StructuredPaper
     from models.spatial import SpatialValidatorOutput
     from models.voiceover import VoiceoverValidationOutput
-    from agents.section_analyzer import SectionAnalyzer
-    from agents.visualization_planner import VisualizationPlanner
-    from agents.manim_generator import ManimGenerator
-    from agents.code_validator import CodeValidator
-    from agents.spatial_validator import SpatialValidator
-    from agents.render_tester import RenderTester, RenderTestOutput
-    from agents.voiceover_script_validator import VoiceoverScriptValidator
 
 
 logger = logging.getLogger(__name__)
@@ -99,14 +97,14 @@ VOICE_FAIL_BEHAVIOR = "return_silent"  # drop_viz | return_silent | hard_error
 # Optional observation seam for the eval harness (backend/evals). When set, it
 # is called after every quality gate as metrics_hook(gate_name, attempt, passed).
 # None (the default) changes no behavior.
-metrics_hook: Optional[Callable[[str, int, bool], None]] = None
+metrics_hook: Callable[[str, int, bool], None] | None = None
 
 
 def _report_gate(gate: str, attempt: int, passed: bool) -> None:
     if metrics_hook is not None:
         try:
             metrics_hook(gate, attempt, passed)
-        except Exception:  # noqa: BLE001 — metrics must never break generation
+        except Exception:
             logger.debug("metrics_hook raised for gate %s", gate, exc_info=True)
 
 
@@ -273,7 +271,7 @@ async def _analyze_all_sections(
                 )
                 if result.needs_visualization:
                     candidates.extend(result.candidates)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.error("Failed to analyze section %s: %s", section.id, exc)
 
     return candidates
@@ -286,10 +284,10 @@ async def generate_single_visualization(
     planner: VisualizationPlanner,
     generator: ManimGenerator,
     validator: CodeValidator,
-    spatial_validator: Optional[SpatialValidator] = None,
-    voiceover_script_validator: Optional[VoiceoverScriptValidator] = None,
-    render_tester: Optional[RenderTester] = None,
-) -> Optional[Visualization]:
+    spatial_validator: SpatialValidator | None = None,
+    voiceover_script_validator: VoiceoverScriptValidator | None = None,
+    render_tester: RenderTester | None = None,
+) -> Visualization | None:
     """Generate one visualization with strict quality gates."""
     viz_id = f"viz_{uuid.uuid4().hex[:8]}"
     logger.info("")
@@ -311,11 +309,11 @@ async def generate_single_visualization(
         )
         logger.info("  Plan ready: %s scenes, %ss target", len(plan.scenes), plan.duration_seconds)
 
-        code_result: Optional[GeneratedCode] = None
-        validation: Optional[ValidatorOutput] = None
-        spatial_result: Optional[SpatialValidatorOutput] = None
-        voice_result: Optional[VoiceoverValidationOutput] = None
-        render_result: Optional[RenderTestOutput] = None
+        code_result: GeneratedCode | None = None
+        validation: ValidatorOutput | None = None
+        spatial_result: SpatialValidatorOutput | None = None
+        voice_result: VoiceoverValidationOutput | None = None
+        render_result: RenderTestOutput | None = None
 
         voiceover_enabled_for_generation = ENABLE_VOICEOVER
         max_attempts = MAX_RETRIES + (VOICE_QUALITY_RETRIES if voiceover_enabled_for_generation else 0)
@@ -485,7 +483,7 @@ async def generate_single_visualization(
             status=VisualizationStatus.PENDING,
         )
 
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.error("Failed to generate visualization %s: %s", viz_id, exc)
         return None
 

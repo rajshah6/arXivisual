@@ -23,18 +23,17 @@ import re
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
 # Handle imports for both package and direct execution
 try:
-    from .base import _get_azure_client, _azure_model, get_provider
+    from .base import _azure_model, _get_azure_client, get_provider
 except ImportError:  # pragma: no cover - direct execution path
     import sys
 
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from agents.base import _get_azure_client, _azure_model, get_provider
+    from agents.base import _azure_model, _get_azure_client, get_provider
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +138,7 @@ def _parse_verdict(text: str) -> VisualQAResult:
     )
 
 
-async def judge_video(video_bytes: bytes, viz_id: str = "") -> Optional[VisualQAResult]:
+async def judge_video(video_bytes: bytes, viz_id: str = "") -> VisualQAResult | None:
     """Judge a rendered video's frames for layout defects.
 
     Returns None when QA can't run (non-Azure provider, ffmpeg failure, API

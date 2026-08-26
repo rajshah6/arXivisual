@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import contextvars
 from dataclasses import dataclass, field
-from typing import Optional
 
 #: Gates in pipeline order. Every generate_single_visualization run evaluates
 #: ``code_validator`` first on attempt 0, exactly once — which is what lets the
@@ -73,7 +72,7 @@ class GateMetrics:
 
     def __init__(self) -> None:
         self.traces: list[VizTrace] = []
-        self._current: contextvars.ContextVar[Optional[VizTrace]] = contextvars.ContextVar(
+        self._current: contextvars.ContextVar[VizTrace | None] = contextvars.ContextVar(
             f"gate_metrics_current_{id(self)}", default=None
         )
 
@@ -127,7 +126,7 @@ class GateMetrics:
         }
 
 
-def _rate(numerator: int, denominator: int) -> Optional[float]:
+def _rate(numerator: int, denominator: int) -> float | None:
     return round(numerator / denominator, 4) if denominator else None
 
 

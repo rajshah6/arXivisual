@@ -22,7 +22,6 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Optional
 
 import httpx
 
@@ -394,7 +393,7 @@ async def fetch_manim_docs_via_dedalus_with_tools(
 # Direct Context7 REST API fallback (no Dedalus SDK)
 # ---------------------------------------------------------------------------
 
-async def _resolve_library_id(library_name: str) -> Optional[str]:
+async def _resolve_library_id(library_name: str) -> str | None:
     """
     Resolve a library name to a Context7 library ID.
 
@@ -441,7 +440,7 @@ async def _get_library_docs(
     library_id: str,
     query: str = "animations mobjects scenes",
     max_tokens: int = 5000,
-) -> Optional[str]:
+) -> str | None:
     """
     Fetch documentation for a library from Context7.
 

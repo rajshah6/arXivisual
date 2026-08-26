@@ -5,14 +5,19 @@ CRUD operations for papers, sections, visualizations, and processing jobs.
 """
 
 import uuid
-from datetime import datetime, timedelta
-from typing import Optional
+from datetime import UTC, datetime, timedelta
+
+
+def _utcnow_naive() -> datetime:
+    """Naive UTC now — DB columns are TIMESTAMP WITHOUT TIME ZONE, so values
+    must stay naive; this just replaces the deprecated _utcnow_naive()."""
+    return datetime.now(UTC).replace(tzinfo=None)
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .models import Paper, Section, Visualization, ProcessingJob
-
+from .models import Paper, ProcessingJob, Section, Visualization
 
 # === Processing Jobs ===
 
@@ -25,14 +30,14 @@ async def create_job(db: AsyncSession, arxiv_id: str) -> str:
         status="queued",
         progress=0.0,
         current_step="Queued for processing",
-        created_at=datetime.utcnow(),
+        created_at=_utcnow_naive(),
     )
     db.add(job)
     await db.commit()
     return job_id
 
 
-async def get_job(db: AsyncSession, job_id: str) -> Optional[ProcessingJob]:
+async def get_job(db: AsyncSession, job_id: str) -> ProcessingJob | None:
     """Get a processing job by ID."""
     result = await db.execute(
         select(ProcessingJob).where(ProcessingJob.id == job_id)
@@ -42,7 +47,7 @@ async def get_job(db: AsyncSession, job_id: str) -> Optional[ProcessingJob]:
 
 async def get_active_job_for_paper(
     db: AsyncSession, arxiv_id: str, max_age_hours: float = 2.0
-) -> Optional[ProcessingJob]:
+) -> ProcessingJob | None:
     """Find a genuinely in-flight job for a paper, newest first.
 
     Jobs older than ``max_age_hours`` are ignored: a worker interrupted mid-run
@@ -54,7 +59,7 @@ async def get_active_job_for_paper(
     few seconds in, so this misses just-created jobs — callers pair it with the
     in-memory recent-jobs map in api.throttle for the immediate-duplicate window.
     """
-    cutoff = datetime.utcnow() - timedelta(hours=max_age_hours)
+    cutoff = _utcnow_naive() - timedelta(hours=max_age_hours)
     result = await db.execute(
         select(ProcessingJob)
         .where(
@@ -76,7 +81,7 @@ async def reap_stale_jobs(db: AsyncSession, max_age_hours: float = 2.0) -> int:
     dedupe staleness cutoff, blocking re-processing. Called opportunistically
     on job submission; returns the number of jobs reaped.
     """
-    cutoff = datetime.utcnow() - timedelta(hours=max_age_hours)
+    cutoff = _utcnow_naive() - timedelta(hours=max_age_hours)
     result = await db.execute(
         select(ProcessingJob).where(
             ProcessingJob.status.in_(("queued", "processing")),
@@ -98,12 +103,12 @@ async def reap_stale_jobs(db: AsyncSession, max_age_hours: float = 2.0) -> int:
 async def update_job_status(
     db: AsyncSession,
     job_id: str,
-    status: Optional[str] = None,
-    progress: Optional[float] = None,
-    current_step: Optional[str] = None,
-    sections_completed: Optional[int] = None,
-    sections_total: Optional[int] = None,
-    error: Optional[str] = None,
+    status: str | None = None,
+    progress: float | None = None,
+    current_step: str | None = None,
+    sections_completed: int | None = None,
+    sections_total: int | None = None,
+    error: str | None = None,
 ):
     """Update a processing job's status."""
     job = await get_job(db, job_id)
@@ -123,7 +128,7 @@ async def update_job_status(
     if error is not None:
         job.error = error
     if status == "completed":
-        job.completed_at = datetime.utcnow()
+        job.completed_at = _utcnow_naive()
 
     await db.commit()
     return job
@@ -131,7 +136,7 @@ async def update_job_status(
 
 # === Papers ===
 
-async def get_paper(db: AsyncSession, arxiv_id: str) -> Optional[Paper]:
+async def get_paper(db: AsyncSession, arxiv_id: str) -> Paper | None:
     """Get a paper by arXiv ID with all related sections and visualizations."""
     result = await db.execute(
         select(Paper)
@@ -151,7 +156,7 @@ async def create_paper(
     authors: list[str],
     abstract: str,
     pdf_url: str,
-    html_url: Optional[str] = None,
+    html_url: str | None = None,
 ) -> Paper:
     """Create a new paper."""
     paper = Paper(
@@ -199,9 +204,9 @@ async def create_section(
     content: str,
     level: int = 1,
     order_index: int = 0,
-    equations: Optional[list] = None,
-    figures: Optional[list] = None,
-    tables: Optional[list] = None,
+    equations: list | None = None,
+    figures: list | None = None,
+    tables: list | None = None,
 ) -> Section:
     """Create a new section."""
     section = Section(
@@ -229,9 +234,9 @@ async def create_visualization(
     section_id: str,
     concept: str,
     status: str = "pending",
-    video_url: Optional[str] = None,
-    storyboard: Optional[dict] = None,
-    manim_code: Optional[str] = None,
+    video_url: str | None = None,
+    storyboard: dict | None = None,
+    manim_code: str | None = None,
 ) -> Visualization:
     """Create a new visualization."""
     viz = Visualization(
@@ -253,8 +258,8 @@ async def update_visualization_status(
     db: AsyncSession,
     viz_id: str,
     status: str,
-    video_url: Optional[str] = None,
-    error: Optional[str] = None,
+    video_url: str | None = None,
+    error: str | None = None,
 ):
     """Update a visualization's status."""
     result = await db.execute(
@@ -281,9 +286,9 @@ async def upsert_visualization(
     section_id: str,
     concept: str,
     status: str = "pending",
-    video_url: Optional[str] = None,
-    storyboard: Optional[dict] = None,
-    manim_code: Optional[str] = None,
+    video_url: str | None = None,
+    storyboard: dict | None = None,
+    manim_code: str | None = None,
 ) -> Visualization:
     """Create or update a visualization."""
     result = await db.execute(

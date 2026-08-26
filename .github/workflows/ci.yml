@@ -55,6 +55,10 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev --frozen
 
+      # Hard gate: the backend is ruff-clean (policy in pyproject [tool.ruff]).
+      - name: Lint (ruff)
+        run: uvx ruff check .
+
       - name: Run tests
         run: uv run pytest tests/ -v
 
@@ -79,12 +83,9 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
-      # Non-blocking for now: main carries 12 pre-existing lint errors (impure
-      # calls during render, setState-in-effect). Surfaced on every run so they
-      # stay visible; flip to a hard gate once the existing violations are fixed.
+      # Hard gate: the tree is lint-clean, so any new violation fails CI.
       - name: Lint
         run: npm run lint
-        continue-on-error: true
 
       - name: Build
         run: npm run build

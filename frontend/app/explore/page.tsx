@@ -35,23 +35,31 @@ function formatDate(iso: string): string | null {
 export default function ExplorePage() {
   const [state, setState] = useState<ExploreState>({ type: "loading" });
 
-  const load = useCallback(async () => {
-    setState({ type: "loading" });
-    try {
-      const papers = await listPapers();
-      if (papers.length === 0) {
-        setState({ type: "empty" });
-        return;
-      }
-      setState({ type: "ready", papers });
-    } catch (err) {
-      console.error("Error loading papers:", err);
-      setState({
-        type: "error",
-        message: err instanceof Error ? err.message : "Failed to load papers",
+  // setState only happens in the fetch's async callbacks, so the mount effect
+  // never sets state synchronously (initial state is already "loading").
+  const load = useCallback(() => {
+    listPapers()
+      .then((papers) => {
+        if (papers.length === 0) {
+          setState({ type: "empty" });
+          return;
+        }
+        setState({ type: "ready", papers });
+      })
+      .catch((err: unknown) => {
+        console.error("Error loading papers:", err);
+        setState({
+          type: "error",
+          message: err instanceof Error ? err.message : "Failed to load papers",
+        });
       });
-    }
   }, []);
+
+  // Retry from the error card: show the skeleton grid again, then refetch.
+  const retry = useCallback(() => {
+    setState({ type: "loading" });
+    load();
+  }, [load]);
 
   useEffect(() => {
     load();
@@ -116,7 +124,7 @@ export default function ExplorePage() {
             body={state.message}
             action={
               <button
-                onClick={load}
+                onClick={retry}
                 className="rounded-2xl bg-white/[0.06] px-8 py-4 text-sm font-medium text-white/80 border border-white/[0.10] transition hover:bg-white/[0.10]"
               >
                 Try Again

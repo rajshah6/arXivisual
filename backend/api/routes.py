@@ -8,33 +8,35 @@ import hmac
 import logging
 import os
 import uuid
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Header, Request
+from datetime import timedelta
+
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse
-from datetime import datetime, timedelta
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from db import queries
+from db.connection import get_db
+from db.queries import _utcnow_naive
+from jobs import process_paper_job
+from rendering import extract_scene_name, get_video_path, get_video_url, process_visualization
 
 from .schemas import (
-    ProcessRequest,
-    ProcessResponse,
-    StatusResponse,
-    StepInfo,
-    PaperResponse,
-    PaperListResponse,
-    PaperSummary,
-    SectionResponse,
-    VisualizationResponse,
-    VideoResponse,
     HealthResponse,
     JobStatus,
-    VisualizationStatus,
+    PaperListResponse,
+    PaperResponse,
+    PaperSummary,
+    ProcessRequest,
+    ProcessResponse,
     RenderRequest,
     RenderResponse,
+    SectionResponse,
+    StatusResponse,
+    StepInfo,
+    VisualizationResponse,
+    VisualizationStatus,
 )
-from db.connection import get_db
-from db import queries
-from rendering import process_visualization, get_video_path, get_video_url, extract_scene_name
-from jobs import process_paper_job
 from .throttle import client_ip, global_limiter, per_ip_limiter, recent_jobs
 
 logger = logging.getLogger(__name__)
@@ -140,10 +142,12 @@ async def start_processing(
 
     if temporal_enabled():
         try:
-            from .temporal_client import get_temporal_client
-            from temporal_app.workflows import TASK_QUEUE, PaperPipelineWorkflow
-            from temporal_app.activities import PipelineInput
             from temporalio.exceptions import WorkflowAlreadyStartedError
+
+            from temporal_app.activities import PipelineInput
+            from temporal_app.workflows import TASK_QUEUE, PaperPipelineWorkflow
+
+            from .temporal_client import get_temporal_client
 
             temporal = await get_temporal_client()
             try:
@@ -303,7 +307,7 @@ async def get_paper(arxiv_id: str, db: AsyncSession = Depends(get_db)):
                 )
                 for v in paper.visualizations
             ],
-            processed_at=paper.updated_at or paper.created_at or datetime.utcnow(),
+            processed_at=paper.updated_at or paper.created_at or _utcnow_naive(),
         )
 
     raise HTTPException(
@@ -328,7 +332,7 @@ async def list_papers(db: AsyncSession = Depends(get_db)):
                 title=p.title,
                 authors=p.authors or [],
                 visualization_count=len(p.visualizations) if p.visualizations else 0,
-                processed_at=p.updated_at or p.created_at or datetime.utcnow(),
+                processed_at=p.updated_at or p.created_at or _utcnow_naive(),
             )
             for p in papers
         ],
@@ -402,14 +406,14 @@ async def render_manim(
     except RuntimeError as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Rendering failed: {str(e)}"
-        )
+            detail=f"Rendering failed: {e!s}"
+        ) from e
     except Exception:
         logger.exception("Unexpected error while rendering Manim code")
         raise HTTPException(
             status_code=500,
             detail="Internal error while rendering. See server logs.",
-        )
+        ) from None
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -419,15 +423,15 @@ async def health_check(db: AsyncSession = Depends(get_db)):
 
     Returns status of the API and dependent services.
     """
-    import subprocess
     import os
+    import subprocess
 
     # Test database connection
     db_status = "connected"
     try:
         await db.execute(text("SELECT 1"))
     except Exception as e:
-        db_status = f"error: {str(e)}"
+        db_status = f"error: {e!s}"
 
     # Test Manim availability
     manim_status = "not found"
@@ -448,7 +452,7 @@ async def health_check(db: AsyncSession = Depends(get_db)):
     except FileNotFoundError:
         manim_status = "not installed"
     except Exception as e:
-        manim_status = f"error: {str(e)}"
+        manim_status = f"error: {e!s}"
 
     # Test storage connectivity
     from rendering.storage import STORAGE_MODE, get_backend

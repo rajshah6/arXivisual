@@ -14,8 +14,8 @@ backend_dir = Path(__file__).parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from models.generation import VisualizationPlan, Scene, VisualizationType
 from agents.manim_generator import ManimGenerator
+from models.generation import Scene, VisualizationPlan, VisualizationType
 
 
 async def test_voiceover_transformation():

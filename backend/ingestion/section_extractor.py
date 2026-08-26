@@ -6,17 +6,15 @@ Builds parent-child hierarchy and filters out unwanted sections.
 """
 
 import re
-from typing import Optional
 
 from models.paper import (
-    ParsedContent,
     ArxivPaperMeta,
-    Section,
     Equation,
     Figure,
+    ParsedContent,
+    Section,
     Table,
 )
-
 
 # Common section titles to recognize
 EXPECTED_SECTIONS = [
@@ -411,7 +409,7 @@ def build_hierarchy(sections: list[Section]) -> list[Section]:
         return sections
     
     # Stack to track parent sections at each level
-    parent_stack: list[Optional[Section]] = [None] * 7  # Levels 0-6
+    parent_stack: list[Section | None] = [None] * 7  # Levels 0-6
     
     for section in sections:
         level = section.level

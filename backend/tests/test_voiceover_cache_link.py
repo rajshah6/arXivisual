@@ -1,6 +1,5 @@
 """Tests for the runner-side persistent voiceover cache and concurrency parse."""
 
-from pathlib import Path
 
 from jobs.worker import parse_render_concurrency
 from rendering.local_runner import _link_persistent_voiceover_cache

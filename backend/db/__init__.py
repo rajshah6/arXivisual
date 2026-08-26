@@ -1,15 +1,15 @@
 """Database package for ArXiviz."""
 
-from .connection import get_db, init_db, engine
-from .models import Base, Paper, Section, Visualization, ProcessingJob
+from .connection import engine, get_db, init_db
+from .models import Base, Paper, ProcessingJob, Section, Visualization
 
 __all__ = [
-    "get_db",
-    "init_db",
-    "engine",
     "Base",
     "Paper",
+    "ProcessingJob",
     "Section",
     "Visualization",
-    "ProcessingJob",
+    "engine",
+    "get_db",
+    "init_db",
 ]

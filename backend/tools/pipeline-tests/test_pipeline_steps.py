@@ -22,11 +22,10 @@ Usage:
     python test_pipeline_steps.py --help
 """
 
-import asyncio
 import argparse
+import asyncio
 import logging
 import sys
-from pathlib import Path
 
 # Configure logging
 logging.basicConfig(
@@ -86,8 +85,9 @@ async def render_videos(visualizations):
     logger.info("=" * 60)
 
     try:
-        from rendering import process_visualization
         import uuid
+
+        from rendering import process_visualization
 
         render_results = []
         for i, viz in enumerate(visualizations, 1):

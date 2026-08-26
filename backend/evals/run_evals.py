@@ -24,7 +24,7 @@ import json
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
@@ -80,7 +80,7 @@ async def eval_paper(entry: dict, max_viz: int, pipeline, ingest_paper) -> dict:
         vizzes = await pipeline.generate_visualizations(
             paper, max_visualizations=max_viz
         )
-    except Exception as exc:  # noqa: BLE001 — one bad paper must not kill the run
+    except Exception as exc:
         result["error"] = f"{type(exc).__name__}: {exc}"
     finally:
         pipeline.metrics_hook = None
@@ -115,7 +115,7 @@ async def run_all(entries: list[dict], max_viz: int) -> list[dict]:
 def build_report(paper_results: list[dict], max_viz: int) -> dict:
     ok = [p for p in paper_results if p.get("error") is None]
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "config": {
             "max_visualizations": max_viz,
             "render_testing_enabled": False,
@@ -148,8 +148,8 @@ def print_summary(report: dict) -> None:
     print(f"\n{'gate':<28}{'first-attempt':>14}{'eventual':>10}{'avg attempts':>14}")
     for gate, row in agg["gates"].items():
         print(
-            f"{gate:<28}{str(row['first_attempt_rate']):>14}"
-            f"{str(row['eventual_rate']):>10}{str(row['avg_attempts']):>14}"
+            f"{gate:<28}{row['first_attempt_rate']!s:>14}"
+            f"{row['eventual_rate']!s:>10}{row['avg_attempts']!s:>14}"
         )
     print("=" * 72)
 

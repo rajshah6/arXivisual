@@ -4,11 +4,10 @@ Pydantic schemas defining the API contract between Team 3 (Backend) and Team 4 (
 These schemas are THE CONTRACT - Team 4 builds their frontend against these response formats.
 """
 
-from pydantic import BaseModel, Field
-from typing import Optional
-from enum import Enum
 from datetime import datetime
+from enum import Enum
 
+from pydantic import BaseModel, Field
 
 # === Enums ===
 
@@ -76,7 +75,7 @@ class StepInfo(BaseModel):
     """Individual processing step status."""
     name: str = Field(..., description="Step name (e.g., 'fetch_paper', 'render_videos')")
     status: str = Field(..., description="Step status: pending, in_progress, complete, failed")
-    duration_ms: Optional[int] = Field(None, description="Time taken in milliseconds, null if not started")
+    duration_ms: int | None = Field(None, description="Time taken in milliseconds, null if not started")
 
 
 class StatusResponse(BaseModel):
@@ -85,13 +84,13 @@ class StatusResponse(BaseModel):
     arxiv_id: str
     status: JobStatus
     progress: float = Field(..., ge=0.0, le=1.0, description="Progress 0.0 to 1.0")
-    current_step: Optional[str] = Field(None, description="Current processing step description")
+    current_step: str | None = Field(None, description="Current processing step description")
     sections_completed: int = Field(0, description="Number of sections processed")
     sections_total: int = Field(0, description="Total number of sections")
     steps_completed: list[StepInfo] = Field(default_factory=list, description="Detailed step-by-step progress")
-    error: Optional[str] = Field(None, description="Error message if status is failed")
+    error: str | None = Field(None, description="Error message if status is failed")
     created_at: datetime
-    estimated_completion: Optional[datetime] = None
+    estimated_completion: datetime | None = None
 
 
 class SectionResponse(BaseModel):
@@ -99,11 +98,11 @@ class SectionResponse(BaseModel):
     id: str
     title: str
     content: str
-    summary: Optional[str] = Field(None, description="LLM-formatted summary of the section content")
+    summary: str | None = Field(None, description="LLM-formatted summary of the section content")
     level: int = Field(..., description="Heading level (1=H1, 2=H2, etc.)")
     order_index: int = Field(..., description="Order in which sections appear")
     equations: list[str] = Field(default_factory=list, description="LaTeX equations in this section")
-    video_url: Optional[str] = Field(None, description="URL to visualization video for this section, if available")
+    video_url: str | None = Field(None, description="URL to visualization video for this section, if available")
 
 
 class VisualizationResponse(BaseModel):
@@ -111,7 +110,7 @@ class VisualizationResponse(BaseModel):
     id: str
     section_id: str = Field(..., description="ID of the section this visualization belongs to")
     concept: str = Field(..., description="Human-readable concept being visualized")
-    video_url: Optional[str] = Field(None, description="URL to rendered video, null if not ready")
+    video_url: str | None = Field(None, description="URL to rendered video, null if not ready")
     status: VisualizationStatus
 
 
@@ -122,7 +121,7 @@ class PaperResponse(BaseModel):
     authors: list[str]
     abstract: str
     pdf_url: str
-    html_url: Optional[str] = None
+    html_url: str | None = None
     sections: list[SectionResponse]
     visualizations: list[VisualizationResponse]
     processed_at: datetime

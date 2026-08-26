@@ -10,3 +10,4 @@ terraform.tfvars
 
 # Local backend override used only for offline plan dry-runs
 backend_override.tf
+tfplan*

@@ -274,9 +274,8 @@ def test_fetch_rendered_video_skips_relative_and_missing_urls():
     class _Viz:
         video_url = "/api/video/viz_x"  # relative — local mode
 
-    with patch.object(activities, "_fetch_rendered_video", wraps=activities._fetch_rendered_video):
-        with patch("db.queries.get_visualization", new=AsyncMock(return_value=_Viz())):
-            out = asyncio.run(activities._fetch_rendered_video("viz_x"))
+    with patch("db.queries.get_visualization", new=AsyncMock(return_value=_Viz())):
+        out = asyncio.run(activities._fetch_rendered_video("viz_x"))
     assert out is None
 
     with patch("db.queries.get_visualization", new=AsyncMock(return_value=None)):

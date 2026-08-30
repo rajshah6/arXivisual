@@ -58,6 +58,11 @@ class LocalStorageBackend:
             return file_path
         return None
 
+    async def load_video(self, video_id: str) -> bytes | None:
+        """Authoritative read of a stored video (no CDN in the path)."""
+        path = self.get_video_path(video_id)
+        return path.read_bytes() if path else None
+
     def get_video_url(self, video_id: str) -> str | None:
         if self.get_video_path(video_id):
             return f"/api/video/{video_id}"
@@ -138,6 +143,24 @@ class R2StorageBackend:
     def get_video_path(self, video_id: str) -> Path | None:
         # Cloud storage has no local path
         return None
+
+    async def load_video(self, video_id: str) -> bytes | None:
+        """Authoritative S3 GetObject read.
+
+        The public URL is behind a CDN with a one-year cache on a STABLE key
+        (re-runs overwrite videos/{viz_id}.mp4), so an edge cache can serve a
+        previous run's video. Anything that must see the just-uploaded bytes —
+        e.g. vision-grounded repair — reads through this, never the public URL.
+        """
+        key = self._key(video_id)
+        try:
+            resp = await asyncio.to_thread(
+                self.client.get_object, Bucket=self.bucket, Key=key
+            )
+            return resp["Body"].read()
+        except Exception as e:
+            logger.warning(f"  [R2Storage] load_video failed for {key}: {e}")
+            return None
 
     def get_video_url(self, video_id: str) -> str | None:
         key = self._key(video_id)

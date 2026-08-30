@@ -254,6 +254,14 @@ async def create_visualization(
     return viz
 
 
+async def get_visualization(db: AsyncSession, viz_id: str) -> Visualization | None:
+    """Get a single visualization by id."""
+    result = await db.execute(
+        select(Visualization).where(Visualization.id == viz_id)
+    )
+    return result.scalar_one_or_none()
+
+
 async def update_visualization_status(
     db: AsyncSession,
     viz_id: str,

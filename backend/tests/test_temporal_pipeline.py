@@ -261,3 +261,29 @@ class TestRepairLoop:
         self._run(calls, defective=frozenset({"viz_1", "viz_2"}), repair_fixes=False)
         assert len(calls["repairs"]) == 2
         assert len([r for r in calls["renders"] if r[1]]) == 2  # exactly 2 re-renders
+
+
+def test_fetch_rendered_video_reads_storage_and_fails_open():
+    """The repair video read goes through the storage backend (authoritative —
+    the public CDN URL can serve a previous run's video for the same key), and
+    ANY failure returns None so the caller falls back to text-only repair."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from temporal_app import activities
+
+    backend = MagicMock()
+    backend.load_video = AsyncMock(return_value=b"mp4-bytes")
+    with patch("rendering.get_backend", return_value=backend):
+        out = asyncio.run(activities._fetch_rendered_video("viz_x"))
+    assert out == b"mp4-bytes"
+    backend.load_video.assert_awaited_once_with("viz_x")
+
+    # Missing object -> None
+    backend.load_video = AsyncMock(return_value=None)
+    with patch("rendering.get_backend", return_value=backend):
+        assert asyncio.run(activities._fetch_rendered_video("viz_gone")) is None
+
+    # Backend construction blowing up (e.g. missing R2 env) -> None, not raise
+    with patch("rendering.get_backend", side_effect=RuntimeError("no creds")):
+        assert asyncio.run(activities._fetch_rendered_video("viz_x")) is None

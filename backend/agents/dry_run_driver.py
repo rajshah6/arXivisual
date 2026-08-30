@@ -9,8 +9,10 @@ written) with all external effects stubbed out:
   its own and would otherwise call the real service from construct()).
 - Scene.add_sound is a no-op — it shells out to ffmpeg for mp3->wav
   conversion, which validation doesn't need.
-- Subcaptions are disabled — the .srt writer crashes under dry_run because
-  there is no output file to derive a path from.
+- Subcaptions are disabled — under dry_run ``config.output_file`` stays an
+  empty string (not None, so the writer's None-guard doesn't fire) and
+  ``Path("").with_suffix(".srt")`` raises at finish(). Observed empirically
+  against manim 0.19.
 
 Protocol: prints DRY_RUN_OK and exits 0 on success; prints the traceback to
 stderr, then DRY_RUN_FAIL, and exits 1 on a scene failure. Any exit without a
@@ -85,15 +87,22 @@ def _load_scene_classes(scene_path: str) -> list[type]:
 
 def main() -> int:
     scene_path = sys.argv[1]
+    scene_name = sys.argv[2] if len(sys.argv) > 2 else None
     _prepare_manim()
+    # BaseException, not Exception: generated code calling sys.exit() must be a
+    # scene failure (fail closed), not a missing-sentinel harness fault (which
+    # fails open). KeyboardInterrupt can't reach a stdin-less subprocess.
     try:
         scene_classes = _load_scene_classes(scene_path)
+        if scene_name:
+            scene_classes = [c for c in scene_classes if c.__name__ == scene_name] or scene_classes
         if not scene_classes:
-            print("No Scene class with construct() found", file=sys.stderr)
+            # Typed line so the caller's traceback parser preserves the error class.
+            print("MissingSceneError: No Scene class with construct() found", file=sys.stderr)
             print(SENTINEL_FAIL)
             return 1
         scene_classes[0]().render()
-    except Exception:
+    except BaseException:
         traceback.print_exc()
         print(SENTINEL_FAIL)
         return 1

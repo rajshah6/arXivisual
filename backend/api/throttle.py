@@ -97,6 +97,14 @@ class RecentJobs:
             self._jobs.pop(arxiv_id, None)
 
 
+# Feedback is cheap to store but still abusable; own bucket, looser than
+# /api/process since it spends no money.
+feedback_limiter = SlidingWindowLimiter(
+    max_events=_int_env("RATE_LIMIT_FEEDBACK_PER_IP", 30),
+    window_seconds=_int_env("RATE_LIMIT_PROCESS_WINDOW_SECONDS", 3600),
+)
+
+
 def client_ip(request: Request) -> str:
     """Client IP, honoring the ingress proxy's X-Forwarded-For (first hop)."""
     forwarded = request.headers.get("x-forwarded-for", "")

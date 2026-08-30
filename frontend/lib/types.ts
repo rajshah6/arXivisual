@@ -35,5 +35,6 @@ export type Section = {
   order_index: number;
   equations: string[];
   video_url?: string;
+  viz_id?: string;
 };
 

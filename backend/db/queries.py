@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .models import Paper, ProcessingJob, Section, Visualization
+from .models import Feedback, Paper, ProcessingJob, Section, Visualization
 
 # === Processing Jobs ===
 
@@ -132,6 +132,33 @@ async def update_job_status(
 
     await db.commit()
     return job
+
+
+# === Feedback ===
+
+async def create_feedback(
+    db: AsyncSession,
+    kind: str,
+    viz_id: str | None = None,
+    paper_id: str | None = None,
+    vote: str | None = None,
+    reason: str | None = None,
+    comment: str | None = None,
+) -> Feedback:
+    """Store one piece of viewer feedback."""
+    fb = Feedback(
+        id=f"fb_{uuid.uuid4().hex[:12]}",
+        kind=kind,
+        viz_id=viz_id,
+        paper_id=paper_id,
+        vote=vote,
+        reason=reason,
+        comment=comment,
+        created_at=_utcnow_naive(),
+    )
+    db.add(fb)
+    await db.commit()
+    return fb
 
 
 # === Papers ===

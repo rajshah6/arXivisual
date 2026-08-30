@@ -223,6 +223,7 @@ export async function getPaper(arxivId: string): Promise<Paper | null> {
       order_index: s.order_index,
       equations: s.equations,
       video_url: resolveVideoUrl(viz?.video_url),
+      viz_id: viz?.id,
     };
   });
 
@@ -324,4 +325,31 @@ export function toProcessingStatus(response: StatusResponse): ProcessingStatus {
     current_step: response.current_step,
     error: response.error,
   };
+}
+
+/**
+ * Send viewer feedback. Video votes are labeled ground truth for the
+ * backend's visual-QA loop; site comments are feature requests.
+ * Fire-and-forget friendly: callers may ignore the promise.
+ */
+export async function sendVideoFeedback(
+  vizId: string,
+  vote: "up" | "down",
+  reason?: string
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: "video", viz_id: vizId, vote, reason }),
+  });
+  if (!res.ok) throw new Error(`Feedback failed: ${res.status}`);
+}
+
+export async function sendSiteFeedback(comment: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: "site", comment }),
+  });
+  if (!res.ok) throw new Error(`Feedback failed: ${res.status}`);
 }

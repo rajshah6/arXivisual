@@ -22,6 +22,8 @@ from jobs import process_paper_job
 from rendering import extract_scene_name, get_video_path, get_video_url, process_visualization
 
 from .schemas import (
+    FeedbackRequest,
+    FeedbackResponse,
     HealthResponse,
     JobStatus,
     PaperListResponse,
@@ -37,7 +39,7 @@ from .schemas import (
     VisualizationResponse,
     VisualizationStatus,
 )
-from .throttle import client_ip, global_limiter, per_ip_limiter, recent_jobs
+from .throttle import client_ip, feedback_limiter, global_limiter, per_ip_limiter, recent_jobs
 
 logger = logging.getLogger(__name__)
 
@@ -414,6 +416,61 @@ async def render_manim(
             status_code=500,
             detail="Internal error while rendering. See server logs.",
         ) from None
+
+
+@router.post("/feedback", response_model=FeedbackResponse)
+async def submit_feedback(
+    request: FeedbackRequest,
+    http_request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Store viewer feedback.
+
+    kind=video: a verdict on one rendered visualization — this is labeled
+    ground truth the visual-QA judge can be calibrated against, so the viz
+    must exist and carry a vote. kind=site: a free-text suggestion.
+    """
+    ip = client_ip(http_request)
+    allowed, retry_after = feedback_limiter.allow(ip)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too much feedback from this address. Try again later.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    paper_id = None
+    if request.kind == "video":
+        if not request.viz_id or not request.vote:
+            raise HTTPException(
+                status_code=422,
+                detail="Video feedback requires viz_id and vote.",
+            )
+        viz = await queries.get_visualization(db, request.viz_id)
+        if viz is None:
+            raise HTTPException(status_code=404, detail="Visualization not found")
+        paper_id = viz.paper_id
+    elif not (request.comment and request.comment.strip()):
+        raise HTTPException(
+            status_code=422,
+            detail="Site feedback requires a comment.",
+        )
+
+    await queries.create_feedback(
+        db,
+        kind=request.kind,
+        viz_id=request.viz_id if request.kind == "video" else None,
+        paper_id=paper_id,
+        vote=request.vote if request.kind == "video" else None,
+        reason=request.reason,
+        comment=request.comment,
+    )
+    logger.info(
+        "Feedback stored: kind=%s viz=%s vote=%s",
+        request.kind, request.viz_id, request.vote,
+    )
+    return FeedbackResponse()
 
 
 @router.get("/health", response_model=HealthResponse)

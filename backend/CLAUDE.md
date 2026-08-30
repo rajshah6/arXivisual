@@ -38,7 +38,7 @@ POST /api/process  (api/routes.py: rate-limit + dedupe [api/throttle.py] + stale
 | 4 | CodeValidator | `agents/code_validator.py` | gate: AST/structure/auto-fixes, no LLM |
 | 5 | SpatialValidator | `agents/spatial_validator.py` | gate: bounds/overlap regex, no LLM |
 | 6 | VoiceoverScriptValidator | `agents/voiceover_script_validator.py` | gate: narration quality, heuristics + LLM judge |
-| 7 | RenderTester | `agents/render_tester.py` | gate: compile + import test (auto-skipped when `RENDER_MODE=modal`) |
+| 7 | RenderTester | `agents/render_tester.py` | gate: dry-run construct() execution in a stubbed subprocess (auto-skipped when `RENDER_MODE=modal`) |
 
 Gate failure → regenerate with combined feedback (`MAX_RETRIES=3` + `VOICE_QUALITY_RETRIES=2` attempts); all
 attempts failing → `VOICE_FAIL_BEHAVIOR="return_silent"`. Gates report to the eval harness through the
@@ -94,6 +94,10 @@ backend ruff and frontend eslint are both HARD gates). `security.yml` — gitlea
 - `RENDER_CONCURRENCY` (3) — parallel manim renders per host; `PIPELINE_CONCURRENCY` (2) — concurrent
   generations on the Temporal worker (surplus queues on the server).
 - `RENDER_MODE` `local|modal` (default `local`; `modal` also disables the local RenderTester gate).
+- `RENDER_TEST_EXECUTE=1` (default) — RenderTester executes `construct()` in a dry-run subprocess with TTS
+  stubbed (`agents/dry_run_driver.py`, ~0.2s/scene, no network): catches the runtime-error class import
+  testing can't (e.g. numpy truth-value `if` on `get_center()`). `0` = legacy import-only validation.
+  `RENDER_TEST_TIMEOUT_SECONDS` (60) bounds it; harness breakage fails open.
 
 ## Conventions — do not violate
 

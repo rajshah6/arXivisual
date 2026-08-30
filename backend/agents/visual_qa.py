@@ -176,3 +176,85 @@ async def judge_video(video_bytes: bytes, viz_id: str = "") -> VisualQAResult | 
     except Exception as exc:
         logger.warning("[VisualQA] Judge call failed for %s: %s", viz_id, exc)
         return None
+
+
+# ---------------------------------------------------------------------------
+# Vision-grounded repair (v2)
+#
+# Two production experiments proved text-only feedback insufficient for layout:
+# prompt hardening moved the defect rate 0%, and a text-only repair pass fixed
+# 0/6 flagged videos (the model fixes the issues it is TOLD about, then the
+# judge finds the ones the text never captured). The fix the data demands:
+# show the repair model the actual defective frames.
+# ---------------------------------------------------------------------------
+
+VISUAL_QA_REPAIR_MODEL = os.getenv("VISUAL_QA_REPAIR_MODEL", VISUAL_QA_MODEL)
+
+REPAIR_VISION_PROMPT = """You are repairing layout defects in a Manim animation.
+The attached frames were rendered from the code below and show the ACTUAL defects
+on screen. Study the frames first: identify exactly which elements overlap, collide
+with arrows, or are cut off by the frame edges, and where they sit.
+
+The judge flagged these issues:
+{issues}
+
+Fix ONLY the layout problems you can SEE in the frames (the list above may be
+incomplete — trust the pixels): reposition or scale the offending elements, add
+FadeOut between beats so diagrams never stack, move labels off arrows with
+next_to(..., buff=0.3), and keep everything inside x in [-6, 6], y in [-3.5, 3.5]
+(scale_to_fit_width(12) for wide groups). PRESERVE the narration text, voiceover
+structure, scene class name, beat comments, and overall animation flow exactly.
+
+Current code:
+```python
+{code}
+```
+
+Return ONLY the complete corrected Python code. No markdown, no prose."""
+
+
+async def repair_code_with_frames(
+    code: str, issues: list[str], video_bytes: bytes, viz_id: str = ""
+) -> str | None:
+    """Vision-grounded layout repair: defect frames + issues + code -> new code.
+
+    Returns the model's raw output (caller strips fences and validates), or
+    None when the vision path is unavailable — the caller falls back to
+    text-only repair, so this can never make things worse.
+    """
+    if get_provider() != "azure":
+        return None
+    try:
+        frames = await asyncio.to_thread(sample_frames, video_bytes)
+    except Exception as exc:
+        logger.warning("[VisualQA] Repair frame sampling failed for %s: %s", viz_id, exc)
+        return None
+
+    content: list[dict] = [
+        {
+            "type": "text",
+            "text": REPAIR_VISION_PROMPT.format(
+                issues="\n".join(f"- {i}" for i in issues[:8]) or "- (see frames)",
+                code=code,
+            ),
+        }
+    ]
+    for frame in frames:
+        b64 = base64.b64encode(frame).decode()
+        content.append(
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}}
+        )
+
+    try:
+        client = _get_azure_client()
+        resp = await client.chat.completions.create(
+            model=_azure_model(VISUAL_QA_REPAIR_MODEL),
+            messages=[{"role": "user", "content": content}],
+            # Full corrected scene (~3-4k tokens) + reasoning headroom.
+            max_completion_tokens=16000,
+        )
+        out = resp.choices[0].message.content or ""
+        return out if out.strip() else None
+    except Exception as exc:
+        logger.warning("[VisualQA] Vision repair call failed for %s: %s", viz_id, exc)
+        return None

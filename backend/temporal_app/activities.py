@@ -260,21 +260,63 @@ scene class name, beat comments, and overall animation flow exactly.
 Return ONLY the complete corrected Python code. No markdown, no prose."""
 
 
+async def _fetch_rendered_video(viz_id: str) -> bytes | None:
+    """Download the just-rendered video for vision-grounded repair.
+
+    Only absolute URLs (R2 mode — what production runs) are fetched; local-mode
+    relative URLs return None and the caller falls back to text-only repair.
+    """
+    import httpx
+
+    from db import queries
+    from db.connection import async_session_maker
+
+    async with async_session_maker() as db:
+        viz = await queries.get_visualization(db, viz_id)
+        url = viz.video_url if viz else None
+    if not url or not url.startswith("http"):
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=60) as http:
+            resp = await http.get(url)
+            resp.raise_for_status()
+            return resp.content
+    except Exception as exc:
+        logger.warning("Could not fetch video for repair of %s: %s", viz_id, exc)
+        return None
+
+
 @activity.defn
 async def repair_visualization_code(params: RepairInput) -> str:
     """Targeted layout repair: judge findings -> focused LLM fix -> validated code.
 
-    Raises on failure (unusable output) so the workflow keeps the original
-    video — a defective video beats no video.
+    v2 is vision-grounded: the rendered video is fetched back, defect frames are
+    sampled, and the repair model SEES the actual defects (two experiments proved
+    text-only feedback insufficient — the model fixes what it's told about while
+    the judge finds what the text never captured). Falls back to text-only repair
+    when the video can't be retrieved, and raises on unusable output so the
+    workflow keeps the original video — a defective video beats no video.
     """
     from agents.base import call_llm
     from agents.code_validator import CodeValidator
+    from agents.visual_qa import repair_code_with_frames
 
-    prompt = REPAIR_PROMPT.format(
-        issues="\n".join(f"- {i}" for i in params.issues[:8]),
-        code=params.manim_code,
-    )
-    raw = await call_llm(prompt, max_tokens=10000, name="visual_qa_repair")
+    raw = None
+    video_bytes = await _fetch_rendered_video(params.viz_id)
+    if video_bytes:
+        raw = await repair_code_with_frames(
+            params.manim_code, params.issues, video_bytes, viz_id=params.viz_id
+        )
+        if raw:
+            logger.info("Vision-grounded repair produced code for %s", params.viz_id)
+
+    if raw is None:
+        logger.info("Falling back to text-only repair for %s", params.viz_id)
+        prompt = REPAIR_PROMPT.format(
+            issues="\n".join(f"- {i}" for i in params.issues[:8]),
+            code=params.manim_code,
+        )
+        raw = await call_llm(prompt, max_tokens=10000, name="visual_qa_repair")
 
     # Strip a markdown fence if the model added one despite instructions.
     import re

@@ -261,3 +261,24 @@ class TestRepairLoop:
         self._run(calls, defective=frozenset({"viz_1", "viz_2"}), repair_fixes=False)
         assert len(calls["repairs"]) == 2
         assert len([r for r in calls["renders"] if r[1]]) == 2  # exactly 2 re-renders
+
+
+def test_fetch_rendered_video_skips_relative_and_missing_urls():
+    """Local-mode relative URLs (and missing rows) must fall back to text-only
+    repair rather than attempting a download."""
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    from temporal_app import activities
+
+    class _Viz:
+        video_url = "/api/video/viz_x"  # relative — local mode
+
+    with patch.object(activities, "_fetch_rendered_video", wraps=activities._fetch_rendered_video):
+        with patch("db.queries.get_visualization", new=AsyncMock(return_value=_Viz())):
+            out = asyncio.run(activities._fetch_rendered_video("viz_x"))
+    assert out is None
+
+    with patch("db.queries.get_visualization", new=AsyncMock(return_value=None)):
+        out = asyncio.run(activities._fetch_rendered_video("viz_missing"))
+    assert out is None

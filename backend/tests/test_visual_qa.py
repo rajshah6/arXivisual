@@ -89,3 +89,35 @@ def test_judge_video_survives_ffmpeg_failure(monkeypatch):
     monkeypatch.setattr(visual_qa, "sample_frames", boom)
     result = asyncio.run(visual_qa.judge_video(b"not-a-video"))
     assert result is None
+
+
+class TestVisionGroundedRepair:
+    """v2 repair: the model sees the defect frames; text-only is the fallback."""
+
+    def test_non_azure_provider_returns_none(self, monkeypatch):
+        monkeypatch.setattr(visual_qa, "get_provider", lambda: "dedalus")
+        out = asyncio.run(
+            visual_qa.repair_code_with_frames("code", ["overlap"], b"video")
+        )
+        assert out is None
+
+    def test_frame_sampling_failure_returns_none(self, monkeypatch):
+        monkeypatch.setattr(visual_qa, "get_provider", lambda: "azure")
+
+        def boom(video_bytes, count=3):
+            raise RuntimeError("ffprobe failed")
+
+        monkeypatch.setattr(visual_qa, "sample_frames", boom)
+        out = asyncio.run(
+            visual_qa.repair_code_with_frames("code", ["overlap"], b"video")
+        )
+        assert out is None
+
+    def test_prompt_includes_issues_and_code(self):
+        text = visual_qa.REPAIR_VISION_PROMPT.format(
+            issues="- labels overlap arrows", code="from manim import *"
+        )
+        assert "labels overlap arrows" in text
+        assert "from manim import *" in text
+        # The prompt must tell the model to trust the pixels over the list.
+        assert "trust the pixels" in text

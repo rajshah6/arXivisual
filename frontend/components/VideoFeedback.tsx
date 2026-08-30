@@ -37,7 +37,12 @@ export function VideoFeedback({ vizId }: { vizId: string }) {
     () => false
   );
 
-  function markDone() {
+  function submitVote(v: "up" | "down", reason?: string) {
+    // Exactly ONE row per user action: a bare 👎 only opens the reason stage,
+    // and the POST fires when that stage resolves (chip or Skip). Sending on
+    // the initial 👎 too would double-count downvotes in the labeled dataset.
+    // Fire-and-forget: a lost vote is not worth interrupting reading for.
+    sendVideoFeedback(vizId, v, reason).catch(() => {});
     try {
       localStorage.setItem(storageKey, "1");
     } catch {
@@ -45,16 +50,6 @@ export function VideoFeedback({ vizId }: { vizId: string }) {
     }
     setThanked(true);
     setStage("done");
-  }
-
-  function vote(v: "up" | "down", reason?: string) {
-    // Fire-and-forget: a lost vote is not worth interrupting reading for.
-    sendVideoFeedback(vizId, v, reason).catch(() => {});
-    if (v === "down" && !reason) {
-      setStage("reason");
-    } else {
-      markDone();
-    }
   }
 
   if (alreadyVoted && stage === "vote") return null;
@@ -75,10 +70,7 @@ export function VideoFeedback({ vizId }: { vizId: string }) {
           <button
             key={r}
             type="button"
-            onClick={() => {
-              sendVideoFeedback(vizId, "down", r).catch(() => {});
-              markDone();
-            }}
+            onClick={() => submitVote("down", r)}
             className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[11px] text-white/50 transition hover:bg-white/[0.08] hover:text-white/80"
           >
             {r}
@@ -86,7 +78,7 @@ export function VideoFeedback({ vizId }: { vizId: string }) {
         ))}
         <button
           type="button"
-          onClick={markDone}
+          onClick={() => submitVote("down")}
           className="px-1.5 py-1 text-[11px] text-white/25 transition hover:text-white/50"
         >
           Skip
@@ -101,7 +93,7 @@ export function VideoFeedback({ vizId }: { vizId: string }) {
       <button
         type="button"
         aria-label="Yes, helpful"
-        onClick={() => vote("up")}
+        onClick={() => submitVote("up")}
         className="rounded-md border border-white/[0.08] bg-white/[0.03] px-2 py-1 text-[12px] text-white/50 transition hover:bg-white/[0.08] hover:text-white/80"
       >
         👍
@@ -109,7 +101,7 @@ export function VideoFeedback({ vizId }: { vizId: string }) {
       <button
         type="button"
         aria-label="No, something is off"
-        onClick={() => vote("down")}
+        onClick={() => setStage("reason")}
         className="rounded-md border border-white/[0.08] bg-white/[0.03] px-2 py-1 text-[12px] text-white/50 transition hover:bg-white/[0.08] hover:text-white/80"
       >
         👎

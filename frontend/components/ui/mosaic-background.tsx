@@ -252,9 +252,16 @@ export function MosaicBackground({
     };
 
     window.addEventListener("resize", handleResize);
+    // A parent that was zero-sized at mount (hidden tab, unsettled layout)
+    // fires no window resize when it gains size — observe the parent itself
+    // so the guard's skipped draw happens once layout exists.
+    const parent = canvasRef.current?.parentElement;
+    const observer = parent ? new ResizeObserver(handleResize) : null;
+    if (parent && observer) observer.observe(parent);
     return () => {
       clearTimeout(timeout);
       window.removeEventListener("resize", handleResize);
+      observer?.disconnect();
     };
   }, [render]);
 

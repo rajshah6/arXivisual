@@ -332,24 +332,23 @@ export function toProcessingStatus(response: StatusResponse): ProcessingStatus {
  * backend's visual-QA loop; site comments are feature requests.
  * Fire-and-forget friendly: callers may ignore the promise.
  */
-export async function sendVideoFeedback(
-  vizId: string,
-  vote: "up" | "down",
-  reason?: string
-): Promise<void> {
+async function postFeedback(body: Record<string, unknown>): Promise<void> {
   const res = await fetch(`${API_BASE}/api/feedback`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ kind: "video", viz_id: vizId, vote, reason }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`Feedback failed: ${res.status}`);
 }
 
-export async function sendSiteFeedback(comment: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/feedback`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ kind: "site", comment }),
-  });
-  if (!res.ok) throw new Error(`Feedback failed: ${res.status}`);
+export function sendVideoFeedback(
+  vizId: string,
+  vote: "up" | "down",
+  reason?: string
+): Promise<void> {
+  return postFeedback({ kind: "video", viz_id: vizId, vote, reason });
+}
+
+export function sendSiteFeedback(comment: string): Promise<void> {
+  return postFeedback({ kind: "site", comment });
 }

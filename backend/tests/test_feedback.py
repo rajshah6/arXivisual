@@ -35,7 +35,7 @@ async def client(db):
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_db] = lambda: db
-    feedback_limiter._events.clear()  # isolate rate-limit state between tests
+    feedback_limiter.reset()  # isolate rate-limit state between tests
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
@@ -92,10 +92,12 @@ async def test_site_feedback_requires_comment(client):
 async def test_site_feedback_never_stores_viz_or_vote(client, db):
     await client.post("/api/feedback", json={
         "kind": "site", "comment": "great tool",
-        "viz_id": "viz_smuggled", "vote": "up",
+        "viz_id": "viz_smuggled", "vote": "up", "reason": "smuggled category",
     })
     fb = (await db.execute(select(Feedback))).scalars().one()
     assert fb.viz_id is None and fb.vote is None
+    # reason is the downvote category — site rows must not carry one either
+    assert fb.reason is None
 
 
 async def test_oversized_comment_is_rejected(client):

@@ -41,6 +41,11 @@ class SlidingWindowLimiter:
         self._events: dict[str, deque[float]] = {}
         self._lock = threading.Lock()
 
+    def reset(self) -> None:
+        """Drop all recorded events (used by tests)."""
+        with self._lock:
+            self._events.clear()
+
     def allow(self, key: str, now: float | None = None) -> tuple[bool, int]:
         """Record-and-check. Returns (allowed, retry_after_seconds)."""
         if self.max_events == 0:
@@ -97,14 +102,6 @@ class RecentJobs:
             self._jobs.pop(arxiv_id, None)
 
 
-# Feedback is cheap to store but still abusable; own bucket, looser than
-# /api/process since it spends no money.
-feedback_limiter = SlidingWindowLimiter(
-    max_events=_int_env("RATE_LIMIT_FEEDBACK_PER_IP", 30),
-    window_seconds=_int_env("RATE_LIMIT_PROCESS_WINDOW_SECONDS", 3600),
-)
-
-
 def client_ip(request: Request) -> str:
     """Client IP, honoring the ingress proxy's X-Forwarded-For (first hop)."""
     forwarded = request.headers.get("x-forwarded-for", "")
@@ -127,3 +124,10 @@ global_limiter = SlidingWindowLimiter(
     window_seconds=_int_env("RATE_LIMIT_PROCESS_WINDOW_SECONDS", 3600),
 )
 recent_jobs = RecentJobs(ttl_seconds=_int_env("PROCESS_DEDUPE_TTL_SECONDS", 600))
+
+# Feedback is cheap to store but still abusable; own bucket AND own window —
+# tuning the /api/process cost fuse must not silently retune feedback.
+feedback_limiter = SlidingWindowLimiter(
+    max_events=_int_env("RATE_LIMIT_FEEDBACK_PER_IP", 30),
+    window_seconds=_int_env("RATE_LIMIT_FEEDBACK_WINDOW_SECONDS", 3600),
+)

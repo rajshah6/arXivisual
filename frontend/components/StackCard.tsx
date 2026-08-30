@@ -198,8 +198,8 @@ export function StackCard({
             <div className="mt-8">
               <div className="rounded-xl overflow-hidden border border-white/[0.06] bg-black/30">
                 <VideoPlayer src={section.videoUrl} title="Visualization" />
-                {section.vizId && <VideoFeedback vizId={section.vizId} />}
               </div>
+              {section.vizId && <VideoFeedback vizId={section.vizId} />}
             </div>
           )}
         </motion.div>

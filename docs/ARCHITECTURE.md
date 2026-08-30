@@ -121,6 +121,7 @@ self.set_speech_service(OpenAIService(voice="nova", model="gpt-4o-mini-tts", tra
 | GET | `/api/papers` | Explore gallery: all processed papers |
 | GET | `/api/video/{video_id}` | Serve or redirect to a rendered video |
 | POST | `/api/render` | Dev-only raw Manim render — in production, 404 unless `RENDER_API_SECRET` is configured and presented via `X-Render-Secret` (timing-safe compare) |
+| POST | `/api/feedback` | Store viewer feedback: per-video 👍/👎 (labeled QA ground truth) or site suggestion |
 | GET | `/api/health` | Database / Manim / storage health |
 
 CORS allows `arxivisual.org`, this project's Vercel preview deployments, and localhost dev.

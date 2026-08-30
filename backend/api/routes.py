@@ -463,7 +463,8 @@ async def submit_feedback(
         viz_id=request.viz_id if request.kind == "video" else None,
         paper_id=paper_id,
         vote=request.vote if request.kind == "video" else None,
-        reason=request.reason,
+        # reason is the downvote category — meaningless on site rows.
+        reason=request.reason if request.kind == "video" else None,
         comment=request.comment,
     )
     logger.info(

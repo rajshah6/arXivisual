@@ -15,6 +15,39 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+# Import-time chatter manim/manim-voiceover print to stderr before any real
+# error. Matched per line when no traceback is found.
+_WARNING_NOISE = ("UserWarning", "SyntaxWarning", "DeprecationWarning", "warnings.warn")
+
+# The DB error column and log pipelines surface the head of this string, so
+# keep it short enough to read but long enough to hold a full traceback box.
+_ERROR_MSG_LIMIT = 4000
+
+
+def _extract_render_error(stderr: str, stdout: str) -> str:
+    """Distill a failed render's output into the part that names the error.
+
+    Manim prints deprecation/syntax warnings at import time, BEFORE any
+    traceback — a raw ``stderr`` head is all warning and no error (a real
+    production failure was stored as just the pkg_resources deprecation
+    notice, hiding the actual ValueError). Prefer everything from the last
+    traceback onward; otherwise drop known warning lines; otherwise keep the
+    tail, where Python puts the exception.
+    """
+    text = (stderr or stdout or "").strip()
+    if not text:
+        return "Unknown error"
+    idx = text.rfind("Traceback (most recent call last)")
+    if idx != -1:
+        return text[idx:][:_ERROR_MSG_LIMIT]
+    lines = [
+        line for line in text.splitlines()
+        if not any(marker in line for marker in _WARNING_NOISE)
+    ]
+    cleaned = "\n".join(lines).strip() or text
+    return cleaned[-_ERROR_MSG_LIMIT:]
+
+
 def _tts_subprocess_env() -> dict[str, str]:
     """Environment for the render subprocess.
 
@@ -150,7 +183,7 @@ def _run_manim_subprocess(
             ) from None
 
         if result.returncode != 0:
-            error_msg = result.stderr or result.stdout or "Unknown error"
+            error_msg = _extract_render_error(result.stderr, result.stdout)
             logger.error(f"{tag} Manim render failed with return code {result.returncode}")
             logger.error(f"{tag} Error: {error_msg}")
             raise RuntimeError(f"Manim render failed: {error_msg}")

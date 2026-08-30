@@ -52,6 +52,10 @@ export function MosaicBackground({
     const dpr = window.devicePixelRatio || 1;
     const w = parent.clientWidth;
     const h = parent.clientHeight;
+    // A zero-sized parent (layout not settled yet, hidden tab) would make
+    // getImageData below throw IndexSizeError and crash the whole React tree
+    // to a black page. Skip drawing — this is decoration, not content.
+    if (w < 1 || h < 1) return;
 
     canvas.width = w * dpr;
     canvas.height = h * dpr;

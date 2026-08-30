@@ -6,7 +6,6 @@ visualizations, the paper id is denormalized from the viz (never trusted from
 the client), and junk requests are rejected before they reach the table.
 """
 
-import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient

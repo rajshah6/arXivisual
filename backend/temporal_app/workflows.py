@@ -154,7 +154,10 @@ class PaperPipelineWorkflow:
                     manim_code=code,
                     issues=result.issues,
                 ),
-                start_to_close_timeout=timedelta(minutes=10),
+                # 18 min: vision-grounded repair (frames + 16k reasoning budget)
+                # measured slower than the text path — a 10-min cap timed out a
+                # repair that was on track in the first production benchmark.
+                start_to_close_timeout=timedelta(minutes=18),
                 retry_policy=_NO_RETRY,  # a repair is one LLM call — don't double-spend
             )
             rerender: RenderResult = await workflow.execute_activity(

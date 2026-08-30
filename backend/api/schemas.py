@@ -6,6 +6,7 @@ These schemas are THE CONTRACT - Team 4 builds their frontend against these resp
 
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -28,6 +29,20 @@ class VisualizationStatus(str, Enum):
 
 
 # === Request Schemas ===
+
+class FeedbackRequest(BaseModel):
+    """Request body for POST /api/feedback."""
+    kind: Literal["video", "site"] = Field(..., description="What the feedback is about")
+    viz_id: str | None = Field(None, max_length=64, description="Visualization id (required for kind=video)")
+    vote: Literal["up", "down"] | None = Field(None, description="Verdict on the video (required for kind=video)")
+    reason: str | None = Field(None, max_length=200, description="Short category, e.g. 'overlapping text'")
+    comment: str | None = Field(None, max_length=2000, description="Free-text detail or suggestion")
+
+
+class FeedbackResponse(BaseModel):
+    """Response for POST /api/feedback."""
+    status: str = "ok"
+
 
 class ProcessRequest(BaseModel):
     """Request body for POST /api/process."""

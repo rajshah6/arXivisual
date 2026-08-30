@@ -73,6 +73,21 @@ class Visualization(Base):
     paper = relationship("Paper", back_populates="visualizations")
 
 
+class Feedback(Base):
+    """Viewer feedback: a per-video verdict (the labeled data the visual QA
+    loop can be calibrated against) or a site-level suggestion."""
+    __tablename__ = "feedback"
+
+    id = Column(String, primary_key=True)  # fb_<hex>
+    kind = Column(String, nullable=False)  # "video" | "site"
+    viz_id = Column(String, ForeignKey("visualizations.id"), nullable=True)
+    paper_id = Column(String, nullable=True)  # denormalized for easy grouping
+    vote = Column(String, nullable=True)  # "up" | "down" (video kind only)
+    reason = Column(String, nullable=True)  # short category, e.g. "overlapping text"
+    comment = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class ProcessingJob(Base):
     """Background processing job for paper pipeline."""
     __tablename__ = "processing_jobs"

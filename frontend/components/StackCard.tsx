@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useEffect, useCallback } from "react";
 import { motion, type MotionValue, useMotionValue, useMotionTemplate } from "framer-motion";
+import { VideoFeedback } from "@/components/VideoFeedback";
 import { VideoPlayer } from "@/components/VideoPlayer";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { cn } from "@/lib/utils";
@@ -56,6 +57,7 @@ interface StackCardProps {
     level?: 1 | 2 | 3;
     equations?: string[];
     videoUrl?: string;
+    vizId?: string;
   };
   index: number;
   totalSections: number;
@@ -197,6 +199,7 @@ export function StackCard({
               <div className="rounded-xl overflow-hidden border border-white/[0.06] bg-black/30">
                 <VideoPlayer src={section.videoUrl} title="Visualization" />
               </div>
+              {section.vizId && <VideoFeedback vizId={section.vizId} />}
             </div>
           )}
         </motion.div>

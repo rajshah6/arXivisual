@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, useMotionValue, useMotionTemplate } from "framer-motion";
+import { VideoFeedback } from "@/components/VideoFeedback";
 import { VideoPlayer } from "@/components/VideoPlayer";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { cn } from "@/lib/utils";
@@ -13,6 +14,7 @@ export type ScrollySectionModel = {
   level?: 1 | 2 | 3;
   equations?: string[];
   videoUrl?: string;
+  vizId?: string;
 };
 
 function mergeContentWithEquations(content: string, equations?: string[]): string {
@@ -224,6 +226,7 @@ export function ScrollySection({
                     pauseWhenInactive={!isActive}
                   />
                 </div>
+                {section.vizId && <VideoFeedback vizId={section.vizId} />}
               </motion.div>
             )}
           </div>

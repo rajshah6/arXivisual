@@ -76,6 +76,9 @@ backend ruff and frontend eslint are both HARD gates). `security.yml` — gitlea
   `X-Render-Secret` header. The endpoint executes caller-supplied Python; keep it locked.
 - `RATE_LIMIT_PROCESS_PER_IP` (5/h), `RATE_LIMIT_PROCESS_GLOBAL` (30/h), `RATE_LIMIT_PROCESS_WINDOW_SECONDS`
   (3600), `PROCESS_DEDUPE_TTL_SECONDS` (600) — cost fuse on `/api/process` (`api/throttle.py`).
+- `RATE_LIMIT_FEEDBACK_PER_IP` (30) / `RATE_LIMIT_FEEDBACK_WINDOW_SECONDS` (3600) — bounds `POST /api/feedback` (viewer 👍/👎 per video + site
+  suggestions → `feedback` table). Video votes are labeled ground truth for calibrating the visual-QA judge;
+  `paper_id` is denormalized from the viz row, never trusted from the client.
 - `TEMPORAL_ADDRESS` (`localhost:7233`), `TEMPORAL_NAMESPACE` (`default`), `TEMPORAL_TLS=1` (prod reaches
   Temporal via HTTP/2 ingress behind TLS :443 — raw TCP ingress is unroutable on Container Apps).
 

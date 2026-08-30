@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState, useCallback, useMemo, useRef, use } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CardStack } from "@/components/CardStack";
+import { SiteFeedback } from "@/components/SiteFeedback";
 import type { ScrollySectionModel } from "@/components/ScrollySection";
 import { GlassCard } from "@/components/ui/glass-card";
 import { MosaicBackground } from "@/components/ui/mosaic-background";
@@ -521,6 +522,7 @@ function ReadyState({
       level: clampLevel(s.level),
       equations: s.equations,
       videoUrl: s.video_url,
+      vizId: s.viz_id,
     }));
 
   const heroContent = (
@@ -604,6 +606,11 @@ function ReadyState({
           heroContent={heroContent}
           onProgressChange={onProgressChange}
         />
+
+        {/* Feature suggestions */}
+        <div className="mt-12 flex justify-center">
+          <SiteFeedback />
+        </div>
 
         {/* Footer links */}
         <div className="mt-8 mb-16 flex items-center justify-center gap-4 text-sm">

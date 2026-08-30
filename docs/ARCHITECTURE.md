@@ -22,6 +22,8 @@ You give the system an arXiv paper ID. It gives you back narrated, animated expl
 
 **Visual QA + self-repair** (`agents/visual_qa.py`, `temporal_app/activities.py`): after each render, a vision model samples 3 frames and judges layout defects (overlap / cutoff / collisions), scoring every verdict into Langfuse (`visual_qa_defect`). On the Temporal path, a `major` verdict triggers one **vision-grounded repair**: the video is read back through the storage backend (never the CDN — stable keys cache for a year), the defect frames plus the judge's issues go to a multimodal model, and the repaired code is re-rendered and re-judged. Every vision-failure mode falls back to a text-only repair; an unusable repair keeps the original video. Measured in production: text-only repair fixed 0/6 flagged videos; vision-grounded fixed 2/4 in its first run — the pixels carry information the text descriptions provably don't.
 
+**Human feedback loop** (`POST /api/feedback`): viewers vote 👍/👎 per video (optional reason chip) or leave site suggestions; rows land in the `feedback` table with `paper_id` denormalized from the visualization row. Video votes are human-labeled defect data — the ground truth the vision judge can be calibrated against, and seed material for the eval golden set.
+
 **Terminal status is honest** (`resolve_terminal_job_status` in `jobs/worker.py`): a job is `completed` only if at least one visualization actually rendered. Zero generated or all-failed renders mark the job `failed` with an explanatory error, while the parsed paper text remains readable. Individual render failures are recorded per visualization and don't sink the job.
 
 ## Ingestion (`backend/ingestion/`)
@@ -119,6 +121,7 @@ self.set_speech_service(OpenAIService(voice="nova", model="gpt-4o-mini-tts", tra
 | GET | `/api/papers` | Explore gallery: all processed papers |
 | GET | `/api/video/{video_id}` | Serve or redirect to a rendered video |
 | POST | `/api/render` | Dev-only raw Manim render — in production, 404 unless `RENDER_API_SECRET` is configured and presented via `X-Render-Secret` (timing-safe compare) |
+| POST | `/api/feedback` | Store viewer feedback: per-video 👍/👎 (labeled QA ground truth) or site suggestion |
 | GET | `/api/health` | Database / Manim / storage health |
 
 CORS allows `arxivisual.org`, this project's Vercel preview deployments, and localhost dev.

@@ -1,17 +1,28 @@
 """
 Render Tester Agent for validating Manim code by attempting to execute it.
 
-This agent catches runtime errors that static analysis cannot detect:
-1. Import errors (missing dependencies)
-2. Runtime exceptions in construct()
-3. Invalid Manim API usage
-4. LaTeX compilation errors
+Two validation modes (RENDER_TEST_EXECUTE env, default on):
+
+- Execution mode: runs construct() in a subprocess under manim's dry_run
+  config via ``dry_run_driver.py`` — animations are processed but nothing is
+  rendered to disk and TTS is stubbed (~0.2s for a typical scene). This
+  catches the runtime-error class that import testing structurally cannot:
+  a production render died on ``if a.get_center() == b.get_center():`` (numpy
+  truth-value ValueError) that only fires when construct() executes.
+- Import mode (legacy fallback): compile + import the module in-process.
+
+Execution mode fails OPEN on harness trouble (driver crash without a verdict
+sentinel — e.g. a broken environment): the real render still guards, and a
+gate must never block all videos because of its own infrastructure.
 """
 
 import asyncio
 import contextlib
 import importlib.util
+import logging
 import os
+import re
+import subprocess
 import sys
 import tempfile
 import traceback
@@ -19,6 +30,17 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+from agents.dry_run_driver import SENTINEL_FAIL, SENTINEL_OK
+
+logger = logging.getLogger(__name__)
+
+_DRIVER_PATH = Path(__file__).with_name("dry_run_driver.py")
+_TMPDIR_PREFIX = "dry-run-gate-"
+# The dry run needs no real credentials (TTS is stubbed, nothing uploads) and
+# it executes LLM-generated code — scrub secrets from the child environment.
+_SECRET_ENV_PREFIXES = ("AZURE_", "S3_", "LANGFUSE_", "DEDALUS_")
+_SECRET_ENV_KEYS = ("DATABASE_URL", "RENDER_API_SECRET", "OPENAI_API_KEY")
 
 
 class RenderTestOutput(BaseModel):
@@ -68,6 +90,7 @@ class RenderTester:
         "LaTeX": "Check LaTeX syntax - each MathTex part must be valid LaTeX on its own",
         "ModuleNotFoundError": "Check imports - use 'from manim import *' for all Manim classes",
         "SyntaxError": "Fix the Python syntax error at the indicated line",
+        "MissingSceneError": "Ensure code has a class that inherits from Scene with a construct(self) method",
         "IndentationError": "Fix the indentation - Python requires consistent indentation",
     }
     
@@ -82,23 +105,29 @@ class RenderTester:
         if timeout_seconds is None:
             timeout_seconds = float(os.getenv("RENDER_TEST_TIMEOUT_SECONDS", "60"))
         self.timeout_seconds = timeout_seconds
-    
+        self.execute_mode = os.getenv("RENDER_TEST_EXECUTE", "1") == "1"
+
     async def test_render(self, code: str, scene_class: str | None = None) -> RenderTestOutput:
         """
-        Test Manim code by attempting to import it.
-        
+        Test Manim code by executing construct() in a dry-run subprocess
+        (or, with RENDER_TEST_EXECUTE=0, by importing it in-process).
+
         Args:
             code: The Manim Python code to test
             scene_class: Optional scene class name (extracted if not provided)
-            
+
         Returns:
             RenderTestOutput with success status and error details
         """
+        validate = self._validate_by_execution if self.execute_mode else self._validate_by_import
+        # Execution mode: the subprocess enforces the real timeout, so the
+        # outer wait only guards the wrapper and gets a margin. Import mode has
+        # no inner timeout — the outer wait IS its documented 60s bound.
+        outer_timeout = self.timeout_seconds + 15 if self.execute_mode else self.timeout_seconds
         try:
-            # Run the validation in a thread to avoid blocking
             result = await asyncio.wait_for(
-                asyncio.to_thread(self._validate_by_import, code),
-                timeout=self.timeout_seconds
+                asyncio.to_thread(validate, code, scene_class),
+                timeout=outer_timeout,
             )
             return result
         except TimeoutError:
@@ -115,13 +144,117 @@ class RenderTester:
                 error_message=str(e),
                 fix_suggestion=self.ERROR_FIXES.get(type(e).__name__, "Review the error and fix accordingly")
             )
+
+    def _validate_by_execution(self, code: str, scene_class: str | None = None) -> RenderTestOutput:
+        """Execute construct() in a dry-run subprocess (see dry_run_driver.py).
+
+        Verdicts come from the driver's sentinels; a missing sentinel means
+        the harness itself broke, which fails OPEN — the real render is still
+        downstream, and a gate must not block videos on its own infra.
+        """
+        syntax_error = self._check_syntax(code)
+        if syntax_error is not None:
+            return syntax_error
+
+        with tempfile.TemporaryDirectory(prefix=_TMPDIR_PREFIX) as tmpdir:
+            scene_path = Path(tmpdir) / "scene.py"
+            scene_path.write_text(code, encoding="utf-8")
+            env = {
+                k: v for k, v in os.environ.items()
+                if not k.startswith(_SECRET_ENV_PREFIXES) and k not in _SECRET_ENV_KEYS
+            }
+            # The generated code instantiates OpenAIService before the driver
+            # swaps it out; its __init__ only needs a key to exist.
+            env["OPENAI_API_KEY"] = "dry-run-placeholder"
+            cmd = [sys.executable, str(_DRIVER_PATH), str(scene_path)]
+            if scene_class:
+                cmd.append(scene_class)
+            try:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout_seconds,
+                    cwd=tmpdir,
+                    env=env,
+                    stdin=subprocess.DEVNULL,
+                )
+            except subprocess.TimeoutExpired:
+                return RenderTestOutput(
+                    success=False,
+                    error_type="TimeoutError",
+                    error_message=f"construct() did not finish within {self.timeout_seconds}s",
+                    fix_suggestion="Check for infinite loops or excessive animation counts in construct()",
+                )
+
+        if SENTINEL_OK in result.stdout:
+            return RenderTestOutput(success=True)
+        if SENTINEL_FAIL in result.stdout:
+            return self._parse_subprocess_error(result.stderr)
+        # No sentinel: the driver never reached a verdict — infra, not code.
+        # Fail open, but LOUDLY: a persistently broken driver must not look
+        # like a healthy passing gate in the logs.
+        logger.warning(
+            "Dry-run driver produced no verdict (rc=%s) — failing open. stderr tail: %s",
+            result.returncode, (result.stderr or "")[-500:],
+        )
+        return RenderTestOutput(success=True)
+
+    def _check_syntax(self, code: str) -> RenderTestOutput | None:
+        """In-process syntax check (precise line numbers, no subprocess cost)."""
+        try:
+            compile(code, "scene.py", "exec")
+        except SyntaxError as e:
+            return RenderTestOutput(
+                success=False,
+                error_type="SyntaxError",
+                error_message=str(e.msg),
+                line_number=e.lineno,
+                fix_suggestion=f"Fix syntax at line {e.lineno}: {e.msg}",
+            )
+        return None
+
+    def _parse_subprocess_error(self, stderr: str) -> RenderTestOutput:
+        """Turn the driver's traceback into gate feedback for regeneration."""
+        text = stderr.strip()
+        idx = text.rfind("Traceback (most recent call last)")
+        trace = text[idx:] if idx != -1 else text
+
+        error_type, error_message = "RuntimeError", trace[-500:]
+        for line in reversed(trace.splitlines()):
+            match = re.match(r"([A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception)):\s*(.*)", line)
+            if match:
+                error_type, error_message = match.group(1).split(".")[-1], match.group(2)
+                break
+
+        # Anchor to the gate's own tempdir: a bare scene.py pattern also
+        # matches manim's internal manim/scene/scene.py frames and would
+        # report a library line number into regeneration feedback.
+        line_number = None
+        for match in re.finditer(
+            rf'File "[^"]*{_TMPDIR_PREFIX}[^"]*scene\.py", line (\d+)', trace
+        ):
+            line_number = int(match.group(1))
+
+        info = self._refine_error(error_type, error_message)
+        return RenderTestOutput(
+            success=False,
+            error_type=info["type"],
+            error_message=info["message"],
+            line_number=line_number,
+            fix_suggestion=info["suggestion"],
+        )
     
-    def _validate_by_import(self, code: str) -> RenderTestOutput:
+    def _validate_by_import(self, code: str, scene_class: str | None = None) -> RenderTestOutput:
         """
         Validate code by attempting to import it as a Python module.
         
         This catches most runtime errors without actually rendering video.
         """
+        syntax_error = self._check_syntax(code)
+        if syntax_error is not None:
+            return syntax_error
+
         # Create a temporary file
         with tempfile.NamedTemporaryFile(
             mode='w',
@@ -133,18 +266,6 @@ class RenderTester:
             temp_path = Path(f.name)
         
         try:
-            # Try to compile first (catches syntax errors with line numbers)
-            try:
-                compile(code, temp_path.name, 'exec')
-            except SyntaxError as e:
-                return RenderTestOutput(
-                    success=False,
-                    error_type="SyntaxError",
-                    error_message=str(e.msg),
-                    line_number=e.lineno,
-                    fix_suggestion=f"Fix syntax at line {e.lineno}: {e.msg}"
-                )
-            
             # Try to import the module
             spec = importlib.util.spec_from_file_location(
                 "test_manim_scene",
@@ -205,9 +326,6 @@ class RenderTester:
     
     def _parse_error(self, error: Exception, code: str) -> dict[str, Any]:
         """Parse an exception to extract useful error information."""
-        error_type = type(error).__name__
-        error_msg = str(error)
-        
         # Try to get line number from traceback
         line_number = None
         tb = traceback.extract_tb(error.__traceback__)
@@ -215,10 +333,16 @@ class RenderTester:
             if "test_manim_scene" in frame.filename:
                 line_number = frame.lineno
                 break
-        
+
+        info = self._refine_error(type(error).__name__, str(error))
+        info["line"] = line_number
+        return info
+
+    def _refine_error(self, error_type: str, error_msg: str) -> dict[str, Any]:
+        """Map an error type/message onto a targeted fix suggestion."""
         # Get suggestion based on error type
         suggestion = self.ERROR_FIXES.get(error_type, "Review the error and fix accordingly")
-        
+
         # Special handling for common Manim errors
         if "latex" in error_msg.lower() or "tex" in error_msg.lower():
             suggestion = (
@@ -243,8 +367,7 @@ class RenderTester:
         return {
             "type": error_type,
             "message": error_msg,
-            "line": line_number,
-            "suggestion": suggestion
+            "suggestion": suggestion,
         }
     
     def test_render_sync(self, code: str) -> RenderTestOutput:

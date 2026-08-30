@@ -83,8 +83,12 @@ backend ruff and frontend eslint are both HARD gates). `security.yml` — gitlea
 
 - `USE_TEMPORAL=1` — durable orchestration; any Temporal error falls back (fail-open) to the legacy in-process path.
 - `ENABLE_VISUAL_QA=1` — vision judge on rendered frames (observe-only on legacy path; verdict feeds repair on Temporal path).
-- `VISUAL_QA_REPAIR=1` — one repair round for `major` defects (Temporal path only). Also: `VISUAL_QA_MODEL`
-  (`gpt-5-mini`), `VISUAL_QA_FRAMES` (3).
+- `VISUAL_QA_REPAIR=1` — one **vision-grounded** repair round for `major` defects (Temporal path only): the
+  rendered video is read back through the storage backend (never the CDN URL — stable keys cache for a year),
+  defect frames are sampled, and the repair model sees the pixels. Text-only repair is the fallback for every
+  vision-failure mode. Measured: text-only fixed 0/6; vision-grounded fixed 2/4 in its first production run.
+  Also: `VISUAL_QA_MODEL` (`gpt-5-mini`), `VISUAL_QA_REPAIR_MODEL` (defaults to the judge model),
+  `VISUAL_QA_FRAMES` (3).
 - `VOICEOVER_TTS_SERVICE` `openai|gtts` (default `openai` = Azure-routed), `VOICEOVER_VOICE_NAME` (`nova`),
   `VOICEOVER_TTS_MODEL` (`gpt-4o-mini-tts`), `VOICEOVER_CACHE_DIR` (`/tmp/arxivisual-tts-cache`).
 - `RENDER_CONCURRENCY` (3) — parallel manim renders per host; `PIPELINE_CONCURRENCY` (2) — concurrent

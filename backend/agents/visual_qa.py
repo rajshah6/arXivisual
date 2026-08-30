@@ -28,12 +28,12 @@ from pydantic import BaseModel, Field
 
 # Handle imports for both package and direct execution
 try:
-    from .base import _azure_model, _get_azure_client, get_provider
+    from .base import _azure_model, _get_azure_client, _with_trace_name, get_provider
 except ImportError:  # pragma: no cover - direct execution path
     import sys
 
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from agents.base import _azure_model, _get_azure_client, get_provider
+    from agents.base import _azure_model, _get_azure_client, _with_trace_name, get_provider
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,29 @@ logger = logging.getLogger(__name__)
 VISUAL_QA_ENABLED = os.getenv("ENABLE_VISUAL_QA", "0") == "1"
 VISUAL_QA_MODEL = os.getenv("VISUAL_QA_MODEL", "gpt-5-mini")
 VISUAL_QA_FRAMES = max(1, int(os.getenv("VISUAL_QA_FRAMES", "3")))
+
+def format_issue_list(issues: list[str], limit: int = 8) -> str:
+    """Render judge issues as a bullet list for repair prompts (shared)."""
+    return "\n".join(f"- {i}" for i in issues[:limit]) or "- (see frames)"
+
+
+def _frame_parts(frames: list[bytes]) -> list[dict]:
+    """Encode sampled frames as chat image parts (shared by judge and repair)."""
+    return [
+        {
+            "type": "image_url",
+            "image_url": {"url": f"data:image/png;base64,{base64.b64encode(f).decode()}"},
+        }
+        for f in frames
+    ]
+
+
+# The invariant half of every repair prompt — one place to edit.
+REPAIR_OUTPUT_CONTRACT = """PRESERVE the narration text, voiceover structure, scene class name, beat comments,
+and overall animation flow exactly.
+
+Return ONLY the complete corrected Python code. No markdown, no prose."""
+
 
 JUDGE_PROMPT = """You are a visual QA judge for auto-generated Manim educational videos.
 Inspect these frames (sampled from one video) for LAYOUT DEFECTS only, not content quality:
@@ -155,19 +178,19 @@ async def judge_video(video_bytes: bytes, viz_id: str = "") -> VisualQAResult | 
         logger.warning("[VisualQA] Frame sampling failed for %s: %s", viz_id, exc)
         return None
 
-    content: list[dict] = [{"type": "text", "text": JUDGE_PROMPT}]
-    for frame in frames:
-        b64 = base64.b64encode(frame).decode()
-        content.append(
-            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}}
-        )
+    content: list[dict] = [{"type": "text", "text": JUDGE_PROMPT}, *_frame_parts(frames)]
 
     try:
         client = _get_azure_client()
         resp = await client.chat.completions.create(
-            model=_azure_model(VISUAL_QA_MODEL),
-            messages=[{"role": "user", "content": content}],
-            max_completion_tokens=4096,
+            **_with_trace_name(
+                {
+                    "model": _azure_model(VISUAL_QA_MODEL),
+                    "messages": [{"role": "user", "content": content}],
+                    "max_completion_tokens": 4096,
+                },
+                "visual_qa_judge",
+            )
         )
         verdict = _parse_verdict(resp.choices[0].message.content or "")
         verdict.judge_model = VISUAL_QA_MODEL
@@ -202,15 +225,14 @@ Fix ONLY the layout problems you can SEE in the frames (the list above may be
 incomplete — trust the pixels): reposition or scale the offending elements, add
 FadeOut between beats so diagrams never stack, move labels off arrows with
 next_to(..., buff=0.3), and keep everything inside x in [-6, 6], y in [-3.5, 3.5]
-(scale_to_fit_width(12) for wide groups). PRESERVE the narration text, voiceover
-structure, scene class name, beat comments, and overall animation flow exactly.
+(scale_to_fit_width(12) for wide groups).
 
 Current code:
 ```python
 {code}
 ```
 
-Return ONLY the complete corrected Python code. No markdown, no prose."""
+{contract}"""
 
 
 async def repair_code_with_frames(
@@ -234,24 +256,26 @@ async def repair_code_with_frames(
         {
             "type": "text",
             "text": REPAIR_VISION_PROMPT.format(
-                issues="\n".join(f"- {i}" for i in issues[:8]) or "- (see frames)",
+                issues=format_issue_list(issues),
                 code=code,
+                contract=REPAIR_OUTPUT_CONTRACT,
             ),
-        }
+        },
+        *_frame_parts(frames),
     ]
-    for frame in frames:
-        b64 = base64.b64encode(frame).decode()
-        content.append(
-            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}}
-        )
 
     try:
         client = _get_azure_client()
         resp = await client.chat.completions.create(
-            model=_azure_model(VISUAL_QA_REPAIR_MODEL),
-            messages=[{"role": "user", "content": content}],
-            # Full corrected scene (~3-4k tokens) + reasoning headroom.
-            max_completion_tokens=16000,
+            **_with_trace_name(
+                {
+                    "model": _azure_model(VISUAL_QA_REPAIR_MODEL),
+                    "messages": [{"role": "user", "content": content}],
+                    # Full corrected scene (~3-4k tokens) + reasoning headroom.
+                    "max_completion_tokens": 16000,
+                },
+                "visual_qa_repair_vision",
+            )
         )
         out = resp.choices[0].message.content or ""
         return out if out.strip() else None

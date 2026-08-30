@@ -113,11 +113,16 @@ class TestVisionGroundedRepair:
         )
         assert out is None
 
-    def test_prompt_includes_issues_and_code(self):
+    def test_prompt_includes_issues_code_and_contract(self):
         text = visual_qa.REPAIR_VISION_PROMPT.format(
-            issues="- labels overlap arrows", code="from manim import *"
+            issues="- labels overlap arrows",
+            code="from manim import *",
+            contract=visual_qa.REPAIR_OUTPUT_CONTRACT,
         )
         assert "labels overlap arrows" in text
         assert "from manim import *" in text
         # The prompt must tell the model to trust the pixels over the list.
         assert "trust the pixels" in text
+        # The shared output contract (one place to edit) must arrive intact.
+        assert "PRESERVE the narration text" in text
+        assert text.rstrip().endswith("No markdown, no prose.")

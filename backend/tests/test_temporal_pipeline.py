@@ -263,21 +263,27 @@ class TestRepairLoop:
         assert len([r for r in calls["renders"] if r[1]]) == 2  # exactly 2 re-renders
 
 
-def test_fetch_rendered_video_skips_relative_and_missing_urls():
-    """Local-mode relative URLs (and missing rows) must fall back to text-only
-    repair rather than attempting a download."""
+def test_fetch_rendered_video_reads_storage_and_fails_open():
+    """The repair video read goes through the storage backend (authoritative —
+    the public CDN URL can serve a previous run's video for the same key), and
+    ANY failure returns None so the caller falls back to text-only repair."""
     import asyncio
-    from unittest.mock import AsyncMock, patch
+    from unittest.mock import AsyncMock, MagicMock, patch
 
     from temporal_app import activities
 
-    class _Viz:
-        video_url = "/api/video/viz_x"  # relative — local mode
-
-    with patch("db.queries.get_visualization", new=AsyncMock(return_value=_Viz())):
+    backend = MagicMock()
+    backend.load_video = AsyncMock(return_value=b"mp4-bytes")
+    with patch("rendering.get_backend", return_value=backend):
         out = asyncio.run(activities._fetch_rendered_video("viz_x"))
-    assert out is None
+    assert out == b"mp4-bytes"
+    backend.load_video.assert_awaited_once_with("viz_x")
 
-    with patch("db.queries.get_visualization", new=AsyncMock(return_value=None)):
-        out = asyncio.run(activities._fetch_rendered_video("viz_missing"))
-    assert out is None
+    # Missing object -> None
+    backend.load_video = AsyncMock(return_value=None)
+    with patch("rendering.get_backend", return_value=backend):
+        assert asyncio.run(activities._fetch_rendered_video("viz_gone")) is None
+
+    # Backend construction blowing up (e.g. missing R2 env) -> None, not raise
+    with patch("rendering.get_backend", side_effect=RuntimeError("no creds")):
+        assert asyncio.run(activities._fetch_rendered_video("viz_x")) is None

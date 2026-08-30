@@ -254,33 +254,23 @@ Here is the current code (it renders successfully — do NOT restructure it):
 
 Fix ONLY the layout problems listed above: reposition or scale elements, add
 FadeOut between beats, move labels off arrows, keep everything inside x in
-[-6, 6], y in [-3.5, 3.5]. PRESERVE the narration text, voiceover structure,
-scene class name, beat comments, and overall animation flow exactly.
+[-6, 6], y in [-3.5, 3.5].
 
-Return ONLY the complete corrected Python code. No markdown, no prose."""
+{contract}"""
 
 
 async def _fetch_rendered_video(viz_id: str) -> bytes | None:
-    """Download the just-rendered video for vision-grounded repair.
+    """Authoritative read of the just-rendered video for vision-grounded repair.
 
-    Only absolute URLs (R2 mode — what production runs) are fetched; local-mode
-    relative URLs return None and the caller falls back to text-only repair.
+    Reads through the storage backend (S3 GetObject / local file), NEVER the
+    public URL: the CDN caches the stable per-viz key for up to a year, so a
+    re-run could otherwise repair against the previous run's frames. Any
+    failure returns None — the caller falls back to text-only repair.
     """
-    import httpx
-
-    from db import queries
-    from db.connection import async_session_maker
-
-    async with async_session_maker() as db:
-        viz = await queries.get_visualization(db, viz_id)
-        url = viz.video_url if viz else None
-    if not url or not url.startswith("http"):
-        return None
     try:
-        async with httpx.AsyncClient(timeout=60) as http:
-            resp = await http.get(url)
-            resp.raise_for_status()
-            return resp.content
+        from rendering import get_backend
+
+        return await get_backend().load_video(viz_id)
     except Exception as exc:
         logger.warning("Could not fetch video for repair of %s: %s", viz_id, exc)
         return None
@@ -299,39 +289,52 @@ async def repair_visualization_code(params: RepairInput) -> str:
     """
     from agents.base import call_llm
     from agents.code_validator import CodeValidator
-    from agents.visual_qa import repair_code_with_frames
+    from agents.visual_qa import format_issue_list, repair_code_with_frames
 
-    raw = None
+    def _extract_and_validate(raw: str):
+        """Fence-strip + gate. Returns validated code or None."""
+        import re
+
+        fence = re.search(r"```(?:python)?\s*\n(.*?)```", raw, re.DOTALL)
+        candidate = (fence.group(1) if fence else raw).strip()
+        validation = CodeValidator().validate(candidate)
+        return validation.code if validation.is_valid else None
+
+    # Attempt 1: vision-grounded. EVERY vision failure mode — video fetch, frame
+    # sampling, model call, empty output, or invalid code — falls through to the
+    # text-only attempt (consistent contract: garbage is treated like absence).
+    code = None
     video_bytes = await _fetch_rendered_video(params.viz_id)
     if video_bytes:
         raw = await repair_code_with_frames(
             params.manim_code, params.issues, video_bytes, viz_id=params.viz_id
         )
         if raw:
-            logger.info("Vision-grounded repair produced code for %s", params.viz_id)
+            code = _extract_and_validate(raw)
+            if code:
+                logger.info("Vision-grounded repair produced code for %s", params.viz_id)
+            else:
+                logger.warning(
+                    "Vision repair output failed validation for %s; trying text-only",
+                    params.viz_id,
+                )
 
-    if raw is None:
-        logger.info("Falling back to text-only repair for %s", params.viz_id)
+    if code is None:
+        logger.info("Text-only repair for %s", params.viz_id)
+        from agents.visual_qa import REPAIR_OUTPUT_CONTRACT
+
         prompt = REPAIR_PROMPT.format(
-            issues="\n".join(f"- {i}" for i in params.issues[:8]),
+            issues=format_issue_list(params.issues),
             code=params.manim_code,
+            contract=REPAIR_OUTPUT_CONTRACT,
         )
         raw = await call_llm(prompt, max_tokens=10000, name="visual_qa_repair")
+        code = _extract_and_validate(raw)
 
-    # Strip a markdown fence if the model added one despite instructions.
-    import re
-
-    fence = re.search(r"```(?:python)?\s*\n(.*?)```", raw, re.DOTALL)
-    code = (fence.group(1) if fence else raw).strip()
-
-    validation = CodeValidator().validate(code)
-    if not validation.is_valid:
-        raise RuntimeError(
-            f"Repair produced invalid code for {params.viz_id}: "
-            + "; ".join(validation.issues_found[:3])
-        )
-    logger.info("Repair code ready for %s (%d chars)", params.viz_id, len(validation.code))
-    return validation.code
+    if code is None:
+        raise RuntimeError(f"Repair produced invalid code for {params.viz_id}")
+    logger.info("Repair code ready for %s (%d chars)", params.viz_id, len(code))
+    return code
 
 
 @activity.defn

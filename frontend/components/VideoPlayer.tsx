@@ -29,6 +29,9 @@ export function VideoPlayer({
   const [isPlaying, setIsPlaying] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const [hadError, setHadError] = useState(false);
+  // One automatic retry: the video host occasionally answers 429 under load
+  // and the <video> element surfaces that as a permanent error otherwise.
+  const retriedRef = useRef(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [progress, setProgress] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
@@ -154,9 +157,20 @@ export function VideoPlayer({
           const v = videoRef.current;
           if (!v) return;
           setDuration(v.duration || 0);
+          // preload="metadata" never fires loadeddata until playback, so the
+          // badge read "Loading..." forever; metadata is enough to call it ready.
+          setIsReady(true);
         }}
         onTimeUpdate={onTimeUpdate}
-        onError={() => setHadError(true)}
+        onError={() => {
+          const v = videoRef.current;
+          if (v && !retriedRef.current) {
+            retriedRef.current = true;
+            setTimeout(() => v.load(), 2000);
+            return;
+          }
+          setHadError(true);
+        }}
       />
 
       {/* Overlay button */}

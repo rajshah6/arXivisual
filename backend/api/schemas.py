@@ -112,6 +112,13 @@ class StatusResponse(BaseModel):
     estimated_completion: datetime | None = None
 
 
+class SectionVideo(BaseModel):
+    """One playable visualization attached to a section."""
+    viz_id: str
+    video_url: str
+    concept: str
+
+
 class SectionResponse(BaseModel):
     """Section data within a paper."""
     id: str
@@ -121,7 +128,12 @@ class SectionResponse(BaseModel):
     level: int = Field(..., description="Heading level (1=H1, 2=H2, etc.)")
     order_index: int = Field(..., description="Order in which sections appear")
     equations: list[str] = Field(default_factory=list, description="LaTeX equations in this section")
-    video_url: str | None = Field(None, description="URL to visualization video for this section, if available")
+    video_url: str | None = Field(None, description="First playable video (kept for older clients)")
+    videos: list[SectionVideo] = Field(
+        default_factory=list,
+        description="ALL complete videos for this section, newest first — the pipeline routinely "
+                    "assigns several concepts to one section and 22% of rendered videos were never shown",
+    )
 
 
 class VisualizationResponse(BaseModel):

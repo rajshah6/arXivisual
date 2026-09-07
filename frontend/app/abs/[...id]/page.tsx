@@ -525,6 +525,11 @@ function ReadyState({
       equations: s.equations,
       videoUrl: s.video_url,
       vizId: s.viz_id,
+      videos: (s.videos ?? []).map((v) => ({
+        vizId: v.viz_id,
+        videoUrl: v.video_url,
+        concept: v.concept,
+      })),
     }));
 
   const heroContent = (

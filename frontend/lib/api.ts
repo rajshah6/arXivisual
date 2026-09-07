@@ -51,6 +51,8 @@ export interface SectionResponse {
   level: number;
   order_index: number;
   equations: string[];
+  video_url?: string;
+  videos?: SectionVideoResponse[];
 }
 
 export interface VisualizationResponse {
@@ -61,8 +63,14 @@ export interface VisualizationResponse {
   status: VisualizationStatus;
 }
 
+export interface SectionVideoResponse {
+  viz_id: string;
+  video_url: string;
+  concept: string;
+}
+
 export interface PaperResponse {
-  id: string;
+  paper_id: string;
   title: string;
   authors: string[];
   abstract: string;
@@ -228,11 +236,18 @@ export async function getPaper(arxivId: string): Promise<Paper | null> {
       equations: s.equations,
       video_url: resolveVideoUrl(viz?.video_url),
       viz_id: viz?.id,
+      // Backend now lists every complete video per section (newest first);
+      // fall back to the single legacy mapping for older responses.
+      videos: (s.videos ?? []).map((v) => ({
+        viz_id: v.viz_id,
+        video_url: resolveVideoUrl(v.video_url) ?? v.video_url,
+        concept: v.concept,
+      })),
     };
   });
 
   return {
-    paper_id: data.id,
+    paper_id: data.paper_id,
     title: data.title,
     authors: data.authors,
     abstract: data.abstract,

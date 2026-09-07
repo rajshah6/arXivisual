@@ -58,6 +58,7 @@ interface StackCardProps {
     equations?: string[];
     videoUrl?: string;
     vizId?: string;
+    videos?: { vizId: string; videoUrl: string; concept: string }[];
   };
   index: number;
   totalSections: number;
@@ -193,15 +194,21 @@ export function StackCard({
             <MarkdownContent content={unifiedContent} />
           </div>
 
-          {/* Video player */}
-          {section.videoUrl && (
-            <div className="mt-8">
+          {/* Videos — every complete visualization for this section (newest
+              first); the single-video model hid 22% of rendered videos. */}
+          {(section.videos && section.videos.length > 0
+            ? section.videos
+            : section.videoUrl
+              ? [{ vizId: section.vizId ?? "", videoUrl: section.videoUrl, concept: "Visualization" }]
+              : []
+          ).map((video, i) => (
+            <div className={i === 0 ? "mt-8" : "mt-6"} key={video.vizId || video.videoUrl}>
               <div className="rounded-xl overflow-hidden border border-white/[0.06] bg-black/30">
-                <VideoPlayer src={section.videoUrl} title="Visualization" />
+                <VideoPlayer src={video.videoUrl} title={video.concept || "Visualization"} />
               </div>
-              {section.vizId && <VideoFeedback vizId={section.vizId} />}
+              {video.vizId && <VideoFeedback vizId={video.vizId} />}
             </div>
-          )}
+          ))}
         </motion.div>
       </div>
 

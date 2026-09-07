@@ -15,6 +15,13 @@ export type ScrollySectionModel = {
   equations?: string[];
   videoUrl?: string;
   vizId?: string;
+  videos?: SectionVideoModel[];
+};
+
+export type SectionVideoModel = {
+  vizId: string;
+  videoUrl: string;
+  concept: string;
 };
 
 function mergeContentWithEquations(content: string, equations?: string[]): string {

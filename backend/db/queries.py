@@ -343,6 +343,43 @@ async def create_visualization(
     return viz
 
 
+async def get_visualizations_for_paper(db: AsyncSession, paper_id: str) -> list[Visualization]:
+    """All visualization rows for a paper, oldest first."""
+    result = await db.execute(
+        select(Visualization)
+        .where(Visualization.paper_id == paper_id)
+        .order_by(Visualization.created_at.asc(), Visualization.id.asc())
+    )
+    return list(result.scalars().all())
+
+
+async def delete_visualizations_for_paper(db: AsyncSession, paper_id: str) -> int:
+    """Remove a paper's visualization rows so a new run's rows are the only
+    rows. Upsert-by-id left stale/orphan rows behind (old truncated-id rows
+    from before the viz-id fix, rows pointing at another paper's sections,
+    previous runs' videos shadowing new ones)."""
+    rows = await get_visualizations_for_paper(db, paper_id)
+    for row in rows:
+        await db.delete(row)
+    if rows:
+        await db.commit()
+    return len(rows)
+
+
+async def fail_pending_visualizations(db: AsyncSession, paper_id: str, error: str) -> int:
+    """Mark a paper's still-pending rows failed (a job that died mid-render
+    used to strand them at 'pending' forever, where the gallery counted them
+    as visuals)."""
+    rows = await get_visualizations_for_paper(db, paper_id)
+    stranded = [r for r in rows if r.status in ("pending", "rendering")]
+    for r in stranded:
+        r.status = "failed"
+        r.error = error
+    if stranded:
+        await db.commit()
+    return len(stranded)
+
+
 async def get_visualization(db: AsyncSession, viz_id: str) -> Visualization | None:
     """Get a single visualization by id."""
     result = await db.execute(

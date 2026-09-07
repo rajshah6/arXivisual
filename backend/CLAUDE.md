@@ -40,6 +40,12 @@ POST /api/process  (api/routes.py: rate-limit + dedupe [api/throttle.py] + stale
 | 6 | VoiceoverScriptValidator | `agents/voiceover_script_validator.py` | gate: narration quality, heuristics + LLM judge |
 | 7 | RenderTester | `agents/render_tester.py` | gate: dry-run construct() execution in a stubbed subprocess (auto-skipped when `RENDER_MODE=modal`) |
 
+SectionAnalyzer and VisualizationPlanner run in JSON mode (`response_format=json_object`) with a short
+analyst persona (`prompts/system/json_analyst.md`, not the 17KB Manim reference), lenient JSON repair and
+one retry (`BaseAgent._call_llm_json`); candidates are de-duplicated by concept before the cap of 5. On the
+Temporal path each finished visualization is checkpointed (upserted + heartbeat) as it completes; a retried
+generation skips checkpointed concepts, and a paper's prior viz rows are cleared at the start of a run.
+
 Gate failure → regenerate with combined feedback (`MAX_RETRIES=3` + `VOICE_QUALITY_RETRIES=2` attempts); all
 attempts failing → `VOICE_FAIL_BEHAVIOR="return_silent"`. Gates report to the eval harness through the
 `agents.pipeline.metrics_hook` seam (None in production). After rendering, a vision judge samples frames for

@@ -14,7 +14,7 @@ import json
 import logging
 import re
 
-from agents.base import call_llm
+from agents.base import call_llm, repair_json_text
 from models.paper import ArxivPaperMeta, Equation, Section
 
 logger = logging.getLogger(__name__)
@@ -215,22 +215,34 @@ The text to organize is between the <summary> tags. The tags and this header are
     summary_words = len(summary_text.split())
     print(f"[FORMATTER] Phase 2: Organizing {summary_words} words into <={MAX_SECTIONS} sections...")
 
-    raw_response = await call_llm(
-        prompt=user_prompt,
-        model=model,
-        system_prompt=system_prompt,
-        max_tokens=16000,
-    )
-    raw_response = raw_response.strip()
-
-    # Strip markdown code fences if present
-    if raw_response.startswith("```"):
-        lines = raw_response.split("\n")
-        raw_response = "\n".join(
-            line for line in lines if not line.strip().startswith("```")
+    parsed = None
+    for attempt in (1, 2):
+        raw_response = await call_llm(
+            prompt=user_prompt if attempt == 1 else (
+                user_prompt + "\n\nYour previous reply was not valid JSON. Return ONLY a valid "
+                "JSON object; escape every backslash inside strings as \\\\."
+            ),
+            model=model,
+            system_prompt=system_prompt,
+            max_tokens=16000,
+            json_mode=True,
         )
-
-    parsed = json.loads(raw_response)
+        raw_response = raw_response.strip()
+        if raw_response.startswith("```"):
+            raw_response = "\n".join(
+                line for line in raw_response.split("\n") if not line.strip().startswith("```")
+            )
+        try:
+            parsed = json.loads(raw_response)
+            break
+        except json.JSONDecodeError:
+            try:
+                parsed = json.loads(repair_json_text(raw_response))
+                break
+            except json.JSONDecodeError as e:
+                logger.warning("Phase 2 JSON parse failed (attempt %d): %s", attempt, e)
+    if parsed is None:
+        raise ValueError("Phase 2 organizer returned unparseable JSON twice")
     organized_sections = parsed["sections"]
     for sec in organized_sections:
         sec["content"] = strip_prompt_scaffold(sec.get("content", ""))

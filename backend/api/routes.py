@@ -39,7 +39,19 @@ from .schemas import (
     VisualizationResponse,
     VisualizationStatus,
 )
-from .throttle import client_ip, feedback_limiter, global_limiter, per_ip_limiter, recent_jobs
+from .throttle import (
+    client_ip,
+    daily_cap_verdict,
+    enforce,
+    enforce_all,
+    feedback_limiter,
+    global_limiter,
+    ip_fingerprint,
+    per_ip_daily_limiter,
+    per_ip_limiter,
+    recent_jobs,
+)
+from .turnstile import verify_turnstile
 
 logger = logging.getLogger(__name__)
 
@@ -111,27 +123,57 @@ async def start_processing(
             )
         recent_jobs.clear(arxiv_id)
 
-    # Cost fuse: each accepted job spends real LLM + render money.
+    # Admission control — every accepted job spends real LLM + render money,
+    # and this endpoint is public on an open-source codebase, so each layer
+    # below assumes the previous one is being gamed:
+    #   1. durable daily cap (Postgres-backed: the hard spend ceiling) — checked
+    #      first so a capped day doesn't burn a human's single-use Turnstile token
+    #   2. proof-of-humanity (server-verified; direct API scripts never pass)
+    #   3. per-IP hourly + daily, then global sliding windows (in-memory),
+    #      peeked together and recorded only once every layer passes
     ip = client_ip(http_request)
-    allowed, retry_after = per_ip_limiter.allow(ip)
-    if not allowed:
+    client_tag = ip_fingerprint(ip)
+
+    now = _utcnow_naive()
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    started_today = await queries.count_jobs_created_since(db, day_start)
+    exhausted, retry_after = daily_cap_verdict(started_today, now)
+    if exhausted:
+        logger.warning(
+            "Daily new-paper cap reached (%d) — rejecting %s from client %s",
+            started_today, arxiv_id, client_tag,
+        )
         raise HTTPException(
             status_code=429,
-            detail="Rate limit reached for starting new papers. Try again later.",
+            detail=(
+                "Daily capacity for new papers is used up. Already-visualized "
+                "papers are still available in Explore; new ones resume tomorrow."
+            ),
             headers={"Retry-After": str(retry_after)},
         )
-    allowed, retry_after = global_limiter.allow("global")
-    if not allowed:
-        logger.warning("Global processing rate limit hit (client %s)", ip)
+
+    if not await verify_turnstile(request.turnstile_token, ip):
+        logger.info("Turnstile check failed (client %s)", client_tag)
         raise HTTPException(
-            status_code=429,
-            detail="The service is at capacity for new papers right now. Try again later.",
-            headers={"Retry-After": str(retry_after)},
+            status_code=403,
+            detail="Human verification failed. Reload the page and try again.",
         )
+
+    enforce_all(
+        [
+            (per_ip_limiter, ip, "Rate limit reached for starting new papers. Try again later."),
+            (per_ip_daily_limiter, ip,
+             "You've started today's share of new papers from this address. Try again tomorrow."),
+            (global_limiter, "global",
+             "The service is at capacity for new papers right now. Try again later."),
+        ],
+        client_tag=client_tag,
+    )
 
     # Create job in database
     job_id = await queries.create_job(db, arxiv_id)
     recent_jobs.put(arxiv_id, job_id)
+    logger.info("Accepted new paper %s (job %s) from client %s", arxiv_id, job_id, client_tag)
 
     # Durable path (USE_TEMPORAL=1): start a Temporal workflow. Execution
     # happens on the worker app and survives restarts/redeploys; the workflow
@@ -432,13 +474,8 @@ async def submit_feedback(
     must exist and carry a vote. kind=site: a free-text suggestion.
     """
     ip = client_ip(http_request)
-    allowed, retry_after = feedback_limiter.allow(ip)
-    if not allowed:
-        raise HTTPException(
-            status_code=429,
-            detail="Too much feedback from this address. Try again later.",
-            headers={"Retry-After": str(retry_after)},
-        )
+    enforce(feedback_limiter, ip, "Too much feedback from this address. Try again later.",
+            client_tag=ip_fingerprint(ip))
 
     paper_id = None
     if request.kind == "video":

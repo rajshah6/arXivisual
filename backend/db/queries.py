@@ -13,7 +13,7 @@ def _utcnow_naive() -> datetime:
     must stay naive; this just replaces the deprecated _utcnow_naive()."""
     return datetime.now(UTC).replace(tzinfo=None)
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -71,6 +71,16 @@ async def get_active_job_for_paper(
         .limit(1)
     )
     return result.scalars().first()
+
+
+async def count_jobs_created_since(db: AsyncSession, since: datetime) -> int:
+    """Jobs created at/after ``since`` (naive UTC) — the durable input to the
+    daily new-paper cap. Counts every created row, including ones later marked
+    duplicate/failed: conservative on purpose, the cap is a spend ceiling."""
+    result = await db.execute(
+        select(func.count()).select_from(ProcessingJob).where(ProcessingJob.created_at >= since)
+    )
+    return int(result.scalar_one())
 
 
 async def reap_stale_jobs(db: AsyncSession, max_age_hours: float = 2.0) -> int:

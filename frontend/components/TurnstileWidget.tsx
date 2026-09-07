@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 declare global {
   interface Window {
@@ -24,6 +24,13 @@ declare global {
 const SCRIPT_SRC = "https://challenges.cloudflare.com/turnstile/v0/api.js";
 export const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? "";
 
+/** Single source of truth for "is human verification on in this build". */
+export function isTurnstileConfigured(): boolean {
+  return Boolean(TURNSTILE_SITE_KEY);
+}
+
+const LOAD_HINT_MS = 10_000;
+
 /**
  * Cloudflare Turnstile widget. Produces a token the backend verifies before
  * accepting a new-paper request — the verification is server-side, so this
@@ -39,9 +46,17 @@ export function TurnstileWidget({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const onTokenRef = useRef(onToken);
+  // If the Turnstile script is blocked (content blockers, strict networks)
+  // the button would sit on "Verifying…" forever; after a while say why.
+  const [slow, setSlow] = useState(false);
   useEffect(() => {
     onTokenRef.current = onToken;
   }, [onToken]);
+  useEffect(() => {
+    if (!TURNSTILE_SITE_KEY) return;
+    const t = setTimeout(() => setSlow(true), LOAD_HINT_MS);
+    return () => clearTimeout(t);
+  }, []);
 
   useEffect(() => {
     if (!TURNSTILE_SITE_KEY || !containerRef.current) return;
@@ -57,7 +72,10 @@ export function TurnstileWidget({
         // interaction-only: invisible for humans, a checkbox only when
         // Cloudflare is unsure — keeps the Start button one tap for readers.
         appearance: "interaction-only",
-        callback: (token) => onTokenRef.current(token),
+        callback: (token) => {
+          setSlow(false);
+          onTokenRef.current(token);
+        },
         "expired-callback": () => onTokenRef.current(null),
         "error-callback": () => onTokenRef.current(null),
       });
@@ -83,5 +101,15 @@ export function TurnstileWidget({
   }, []);
 
   if (!TURNSTILE_SITE_KEY) return null;
-  return <div ref={containerRef} className="min-h-[1px]" />;
+  return (
+    <div>
+      <div ref={containerRef} className="min-h-[1px]" />
+      {slow && (
+        <p className="mt-2 text-xs text-white/40">
+          Human verification is taking a while to load. If you use a content
+          blocker, allow challenges.cloudflare.com and reload.
+        </p>
+      )}
+    </div>
+  );
 }

@@ -147,6 +147,8 @@ backend/
   main.py                    FastAPI app: CORS, lifespan DB init
   api/
     routes.py                All endpoints; /api/render auth gate
+    throttle.py              Sliding-window limiters, daily-cap verdict, client fingerprint
+    turnstile.py             Server-side Cloudflare Turnstile verification (fails closed when configured)
     schemas.py               Request/response models
   jobs/
     worker.py                Background job: ingest -> generate -> render;

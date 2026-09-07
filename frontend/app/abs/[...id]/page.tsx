@@ -5,7 +5,7 @@ import { useEffect, useState, useCallback, useMemo, useRef, use } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CardStack } from "@/components/CardStack";
 import { SiteFeedback } from "@/components/SiteFeedback";
-import { TURNSTILE_SITE_KEY, TurnstileWidget } from "@/components/TurnstileWidget";
+import { TurnstileWidget, isTurnstileConfigured } from "@/components/TurnstileWidget";
 import type { ScrollySectionModel } from "@/components/ScrollySection";
 import { GlassCard } from "@/components/ui/glass-card";
 import { MosaicBackground } from "@/components/ui/mosaic-background";
@@ -700,12 +700,12 @@ function NotFoundState({
               whileHover={{ scale: starting ? 1 : 1.02 }}
               whileTap={{ scale: starting ? 1 : 0.98 }}
               onClick={() => onProcess(turnstileToken)}
-              disabled={starting || (Boolean(TURNSTILE_SITE_KEY) && !turnstileToken)}
+              disabled={starting || (isTurnstileConfigured() && !turnstileToken)}
               className="w-full sm:w-auto rounded-2xl bg-white/[0.08] hover:bg-white/[0.12] px-8 py-4 text-sm font-medium text-white border border-white/[0.15] hover:border-white/[0.25] shadow-xl shadow-white/[0.03] transition-all duration-300 disabled:opacity-50 disabled:cursor-wait"
             >
               {starting
                 ? "Starting…"
-                : TURNSTILE_SITE_KEY && !turnstileToken
+                : isTurnstileConfigured() && !turnstileToken
                   ? "Verifying you're human…"
                   : "Start Processing"}
             </motion.button>

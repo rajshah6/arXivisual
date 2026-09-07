@@ -78,9 +78,16 @@ class TestClientIp:
     def test_falls_back_to_peer_without_header(self):
         assert throttle.client_ip(_request_with_xff(None, peer="10.1.2.3")) == "10.1.2.3"
 
-    def test_fingerprint_is_short_and_non_reversible(self):
-        tag = throttle.ip_fingerprint("203.0.113.9")
-        assert len(tag) == 12 and "203" not in tag
+    def test_fingerprint_is_keyed(self, monkeypatch):
+        # HMAC under a server secret: same input, different key -> different tag,
+        # so logs can't be reversed offline by hashing the IPv4 space.
+        monkeypatch.setenv("IP_HASH_SECRET", "key-a")
+        a = throttle.ip_fingerprint("203.0.113.9")
+        monkeypatch.setenv("IP_HASH_SECRET", "key-b")
+        b = throttle.ip_fingerprint("203.0.113.9")
+        assert len(a) == 12 and a != b
+        monkeypatch.setenv("IP_HASH_SECRET", "key-a")
+        assert throttle.ip_fingerprint("203.0.113.9") == a
 
 
 # --- per-IP limits survive header games -------------------------------------
@@ -92,6 +99,22 @@ async def test_spoofed_forwarded_header_cannot_mint_new_buckets(client, monkeypa
     r2 = await _submit(client, "1810.04805", **{"X-Forwarded-For": "8.8.8.8, 203.0.113.9"})
     assert r1.status_code == 200
     assert r2.status_code == 429
+
+
+async def test_global_denial_does_not_consume_per_ip_budget(client, monkeypatch):
+    # Reviewer-reproduced lockout: chained record-and-check let three "at
+    # capacity" answers exhaust a real user's 3/day quota with zero papers started.
+    monkeypatch.setattr(throttle.global_limiter, "max_events", 1)
+    monkeypatch.setattr(throttle.per_ip_daily_limiter, "max_events", 3)
+    xff = {"X-Forwarded-For": "203.0.113.77"}
+    assert (await _submit(client, "1706.03762", **xff)).status_code == 200
+    for paper in ("1810.04805", "1512.03385", "2010.11929"):
+        hit = await _submit(client, paper, **xff)
+        assert hit.status_code == 429 and "capacity" in hit.json()["detail"]
+    # Three global denials must not have touched this client's daily budget.
+    assert len(throttle.per_ip_daily_limiter._events["203.0.113.77"]) == 1
+    throttle.global_limiter.reset()
+    assert (await _submit(client, "1810.04805", **xff)).status_code == 200
 
 
 async def test_per_ip_daily_quota(client, monkeypatch):
@@ -121,6 +144,20 @@ async def test_daily_cap_does_not_block_dedupe_of_in_flight_paper(client, monkey
     again = await _submit(client, "1706.03762")
     assert again.status_code == 200
     assert again.json()["job_id"] == first.json()["job_id"]
+
+
+async def test_daily_cap_counts_only_today_utc(client, db, monkeypatch):
+    # A job created one second before UTC midnight belongs to yesterday.
+    from datetime import datetime, timedelta
+
+    from db.models import ProcessingJob
+
+    monkeypatch.setenv("DAILY_NEW_PAPER_CAP", "1")
+    day_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    db.add(ProcessingJob(id="job_yesterday", status="completed", progress=1.0,
+                         created_at=day_start - timedelta(seconds=1)))
+    await db.commit()
+    assert (await _submit(client, "1706.03762")).status_code == 200
 
 
 async def test_daily_cap_zero_disables(client, monkeypatch):
@@ -165,6 +202,24 @@ async def test_turnstile_verification_outage_fails_closed(monkeypatch):
 
     monkeypatch.setattr(turnstile.httpx, "AsyncClient", BoomClient)
     assert await turnstile.verify_turnstile("some-token", "203.0.113.9") is False
+
+
+async def test_turnstile_rejects_token_for_foreign_hostname(monkeypatch):
+    monkeypatch.setenv("TURNSTILE_SECRET_KEY", "test-secret")
+
+    class Resp:
+        def json(self): return {"success": True, "hostname": "evil.example"}
+
+    class OkClient:
+        def __init__(self, *a, **k): ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, *a, **k): return Resp()
+
+    monkeypatch.setattr(turnstile.httpx, "AsyncClient", OkClient)
+    assert await turnstile.verify_turnstile("tok", "203.0.113.9") is False
+    monkeypatch.setenv("TURNSTILE_ALLOWED_HOSTNAMES", "evil.example")
+    assert await turnstile.verify_turnstile("tok", "203.0.113.9") is True
 
 
 @pytest.mark.parametrize("token", [None, ""])

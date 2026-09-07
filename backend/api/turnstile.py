@@ -6,8 +6,8 @@ without server verification proof-of-humanity would be decorative.
 
 Unconfigured (no TURNSTILE_SECRET_KEY) = verification is skipped, so the code
 ships inert and activates when the secret is wired in. Once configured it
-fails CLOSED: a Cloudflare outage or a malformed token rejects the request
-rather than becoming a free pass for whatever is being blocked.
+fails CLOSED: a Cloudflare outage (after one retry) or a bad token rejects the
+request rather than becoming a free pass for whatever is being blocked.
 """
 
 from __future__ import annotations
@@ -20,10 +20,12 @@ import httpx
 logger = logging.getLogger(__name__)
 
 SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+_DEFAULT_HOSTNAMES = "arxivisual.org,www.arxivisual.org,localhost"
 
 
-def turnstile_enabled() -> bool:
-    return bool(os.getenv("TURNSTILE_SECRET_KEY"))
+def _allowed_hostnames() -> set[str]:
+    raw = os.getenv("TURNSTILE_ALLOWED_HOSTNAMES", _DEFAULT_HOSTNAMES)
+    return {h.strip() for h in raw.split(",") if h.strip()}
 
 
 async def verify_turnstile(token: str | None, remote_ip: str | None = None) -> bool:
@@ -36,14 +38,24 @@ async def verify_turnstile(token: str | None, remote_ip: str | None = None) -> b
     payload = {"secret": secret, "response": token}
     if remote_ip and remote_ip != "unknown":
         payload["remoteip"] = remote_ip
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.post(SITEVERIFY_URL, data=payload)
-        body = resp.json()
-    except Exception as exc:
-        logger.warning("Turnstile siteverify unavailable: %s", exc)
+
+    body = None
+    for attempt in (1, 2):
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(SITEVERIFY_URL, data=payload)
+            body = resp.json()
+            break
+        except Exception as exc:
+            logger.warning("Turnstile siteverify unavailable (attempt %d): %s", attempt, exc)
+    if body is None:
         return False
     if not body.get("success"):
         logger.info("Turnstile rejected token: %s", body.get("error-codes"))
+        return False
+    # A token minted on another site is valid to Cloudflare but not to us.
+    hostname = body.get("hostname")
+    if hostname and hostname not in _allowed_hostnames():
+        logger.warning("Turnstile token for unexpected hostname %r", hostname)
         return False
     return True

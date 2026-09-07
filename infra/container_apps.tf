@@ -89,9 +89,15 @@ resource "azurerm_container_app" "api" {
     name  = "langfuse-secret-key"
     value = var.langfuse_secret_key
   }
-  secret {
-    name  = "turnstile-secret-key"
-    value = var.turnstile_secret_key
+  # Only materialize the Turnstile secret when one is configured: the
+  # Container Apps API rejects empty secret values, and an absent env means
+  # the backend skips verification (inert until activated).
+  dynamic "secret" {
+    for_each = var.turnstile_secret_key != "" ? [1] : []
+    content {
+      name  = "turnstile-secret-key"
+      value = var.turnstile_secret_key
+    }
   }
 
   template {
@@ -199,9 +205,12 @@ resource "azurerm_container_app" "api" {
         name  = "DAILY_NEW_PAPER_CAP"
         value = "80"
       }
-      env {
-        name        = "TURNSTILE_SECRET_KEY"
-        secret_name = "turnstile-secret-key"
+      dynamic "env" {
+        for_each = var.turnstile_secret_key != "" ? [1] : []
+        content {
+          name        = "TURNSTILE_SECRET_KEY"
+          secret_name = "turnstile-secret-key"
+        }
       }
 
       env {
@@ -503,6 +512,10 @@ resource "azurerm_container_app" "worker" {
       env {
         name  = "VISUAL_QA_MODEL"
         value = "gpt-5-mini"
+      }
+      env {
+        name  = "VISUAL_QA_REPAIR"
+        value = "1"
       }
       env {
         name  = "VISUAL_QA_REPAIR_MODEL"

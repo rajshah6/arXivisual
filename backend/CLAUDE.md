@@ -100,7 +100,8 @@ backend ruff and frontend eslint are both HARD gates). `security.yml` — gitlea
 - `RENDER_TEST_EXECUTE=1` (default) — RenderTester executes `construct()` in a dry-run subprocess with TTS
   stubbed (`agents/dry_run_driver.py`, ~0.2s/scene, no network): catches the runtime-error class import
   testing can't (e.g. numpy truth-value `if` on `get_center()`). `0` = legacy import-only validation.
-  `RENDER_TEST_TIMEOUT_SECONDS` (60) bounds it; harness breakage fails open.
+  `RENDER_TEST_TIMEOUT_SECONDS` (120) bounds it; harness breakage AND timeouts fail open — under load the
+  dry run starves for CPU, and treating that as bad code burned 1,405 paid regenerations in one week.
 
 ## Conventions — do not violate
 

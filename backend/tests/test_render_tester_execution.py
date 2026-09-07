@@ -79,6 +79,19 @@ class TestDryRunExecution:
         result = asyncio.run(tester.test_render(VALID_SCENE))
         assert result.success
 
+    def test_timeout_fails_open(self, tester, monkeypatch):
+        # Production data: 1,405 rejections in a week were dry-run timeouts
+        # caused by CPU starvation, not bad code. A timeout must not be
+        # treated as a verdict.
+        import subprocess as sp
+
+        def slow(*args, **kwargs):
+            raise sp.TimeoutExpired(cmd="driver", timeout=kwargs.get("timeout", 0))
+
+        monkeypatch.setattr(rt_module.subprocess, "run", slow)
+        result = asyncio.run(tester.test_render(VALID_SCENE))
+        assert result.success
+
     def test_sys_exit_in_scene_fails_closed(self, tester):
         # SystemExit is not an Exception — without the driver's BaseException
         # handler it would exit sentinel-less and be misread as infra (pass).

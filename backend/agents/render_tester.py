@@ -12,8 +12,9 @@ Two validation modes (RENDER_TEST_EXECUTE env, default on):
 - Import mode (legacy fallback): compile + import the module in-process.
 
 Execution mode fails OPEN on harness trouble (driver crash without a verdict
-sentinel — e.g. a broken environment): the real render still guards, and a
-gate must never block all videos because of its own infrastructure.
+sentinel, or a TIMEOUT — under load the dry run starves for CPU, which says
+nothing about the code): the real render still guards, and a gate must never
+block all videos because of its own infrastructure.
 """
 
 import asyncio
@@ -100,10 +101,10 @@ class RenderTester:
         
         Args:
             timeout_seconds: Maximum time to wait for import/validation
-                            Defaults to env RENDER_TEST_TIMEOUT_SECONDS or 60s.
+                            Defaults to env RENDER_TEST_TIMEOUT_SECONDS or 120s.
         """
         if timeout_seconds is None:
-            timeout_seconds = float(os.getenv("RENDER_TEST_TIMEOUT_SECONDS", "60"))
+            timeout_seconds = float(os.getenv("RENDER_TEST_TIMEOUT_SECONDS", "120"))
         self.timeout_seconds = timeout_seconds
         self.execute_mode = os.getenv("RENDER_TEST_EXECUTE", "1") == "1"
 
@@ -131,6 +132,9 @@ class RenderTester:
             )
             return result
         except TimeoutError:
+            if self.execute_mode:
+                logger.warning("Dry-run gate wrapper timed out — failing open")
+                return RenderTestOutput(success=True)
             return RenderTestOutput(
                 success=False,
                 error_type="TimeoutError",
@@ -180,12 +184,17 @@ class RenderTester:
                     stdin=subprocess.DEVNULL,
                 )
             except subprocess.TimeoutExpired:
-                return RenderTestOutput(
-                    success=False,
-                    error_type="TimeoutError",
-                    error_message=f"construct() did not finish within {self.timeout_seconds}s",
-                    fix_suggestion="Check for infinite loops or excessive animation counts in construct()",
+                # A dry-run timeout is NOT evidence of bad code. Under load the
+                # worker runs generation + renders + this gate on the same CPUs
+                # and the dry run starves: 1,405 valid scenes were rejected in
+                # one week, each burning up to five paid regenerations before
+                # the last attempt shipped anyway. Fail open — the real render
+                # (300s, its own timeout) still guards against a true hang.
+                logger.warning(
+                    "Dry-run gate timed out after %.0fs — failing open (CPU starvation, not a verdict)",
+                    self.timeout_seconds,
                 )
+                return RenderTestOutput(success=True)
 
         if SENTINEL_OK in result.stdout:
             return RenderTestOutput(success=True)

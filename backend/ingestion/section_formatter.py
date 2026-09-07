@@ -15,6 +15,7 @@ import logging
 import re
 
 from agents.base import call_llm, repair_json_text
+from ingestion.text_normalize import normalize_display_text, strip_prompt_scaffold
 from models.paper import ArxivPaperMeta, Equation, Section
 
 logger = logging.getLogger(__name__)
@@ -302,23 +303,6 @@ def _fallback_split(text: str, max_sections: int = MAX_SECTIONS) -> list[dict]:
     return sections
 
 
-_SCAFFOLD_LEAD_RE = re.compile(
-    r"^\s*(?:Paper:\s*\".*?\"\s*\n+)?"
-    r"(?:(?:Summarized text to organize into sections:|"
-    r"The text to organize is between the <summary> tags\.[^\n]*)\s*\n+)?"
-    r"(?:<summary>\s*)?",
-    re.IGNORECASE,
-)
-_SCAFFOLD_TAIL_RE = re.compile(r"\s*</summary>\s*$", re.IGNORECASE)
-
-
-def strip_prompt_scaffold(text: str) -> str:
-    """Remove the organizer prompt's own header/delimiters if the model echoed
-    them — anchored to the edges only, so a '<summary>' in body prose survives."""
-    t = _SCAFFOLD_LEAD_RE.sub("", text or "", count=1)
-    return _SCAFFOLD_TAIL_RE.sub("", t).strip()
-
-
 _DISPLAY_MATH_RE = re.compile(r"\$\$(.+?)\$\$", re.S)
 _INLINE_MATH_RE = re.compile(r"(?<!\$)\$(?!\$)([^$\n]{2,200}?)\$(?!\$)")
 
@@ -396,7 +380,8 @@ def _clean_display_text(text: str) -> str:
 
     # Normalize excessive blank lines
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
-    return cleaned
+    # Shared display-text rules (also applied at read time for stored papers).
+    return normalize_display_text(cleaned)
 
 
 # ---------------------------------------------------------------------------

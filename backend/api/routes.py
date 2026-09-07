@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db import queries
 from db.connection import get_db
 from db.queries import _utcnow_naive
+from ingestion.text_normalize import normalize_display_text, tex_to_text
 from jobs import process_paper_job
 from rendering import extract_scene_name, get_video_path, get_video_url, process_visualization
 
@@ -327,17 +328,19 @@ async def get_paper(arxiv_id: str, db: AsyncSession = Depends(get_db)):
 
         return PaperResponse(
             paper_id=paper.id,
-            title=paper.title,
+            title=tex_to_text(paper.title),
             authors=paper.authors or [],
-            abstract=paper.abstract or "",
+            abstract=normalize_display_text(paper.abstract),
             pdf_url=paper.pdf_url or f"https://arxiv.org/pdf/{paper.id}",
             html_url=paper.html_url,
             sections=[
                 SectionResponse(
                     id=s.id,
-                    title=s.title,
-                    content=s.content or "",
-                    summary=s.summary or None,
+                    title=tex_to_text(s.title),
+                    # Normalized on the way out so the ~940 papers stored
+                    # before the ingest-time rules render cleanly too.
+                    content=normalize_display_text(s.content),
+                    summary=normalize_display_text(s.summary) if s.summary else None,
                     level=s.level,
                     order_index=s.order_index,
                     equations=s.equations or [],
@@ -385,7 +388,7 @@ async def list_papers(db: AsyncSession = Depends(get_db)):
         papers=[
             PaperSummary(
                 paper_id=row["paper_id"],
-                title=row["title"],
+                title=tex_to_text(row["title"]),
                 authors=row["authors"],
                 visualization_count=row["playable_sections"],
                 status=_status(row),

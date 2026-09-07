@@ -90,12 +90,12 @@ export function MarkdownContent({ content, className = "" }: MarkdownContentProp
 }
 
 function preprocessLatex(content: string): string {
+  // Bare-TeX wrapping, fence repair and currency escaping now happen in the
+  // backend (ingestion/text_normalize.py) at ingest AND read time; the old
+  // client-side wrapLatexPatterns swallowed whole sentences into formulas.
   let processed = normalizeBrokenSmallCaps(content);
   processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (_, math) => `$${math}$`);
   processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (_, math) => `$$${math}$$`);
-  if (!processed.includes('$')) {
-    processed = wrapLatexPatterns(processed);
-  }
   return processed;
 }
 
@@ -148,23 +148,4 @@ function normalizeBrokenSmallCaps(content: string): string {
 
   // Collapse excessive blank lines introduced by cleanup.
   return out.join("\n").replace(/\n{3,}/g, "\n\n");
-}
-
-function wrapLatexPatterns(content: string): string {
-  let result = content;
-  const latexCommandPattern = /\\(?:text|frac|sqrt|sum|prod|int|lim|log|ln|sin|cos|tan|exp|max|min|sup|inf|mathbb|mathcal|mathbf|mathrm|left|right|cdot|times|div|pm|mp|leq|geq|neq|approx|equiv|subset|supset|in|notin|forall|exists|partial|nabla|infty|alpha|beta|gamma|delta|epsilon|theta|lambda|mu|sigma|omega|phi|psi|pi|rho|tau|chi|eta|zeta|xi|kappa|nu|vec|hat|bar|tilde|dot|ddot|overline|underline)(?:\{[^}]*\}|\b)/g;
-  const hasLatexCommands = latexCommandPattern.test(result);
-  if (hasLatexCommands) {
-    result = result.replace(
-      /([A-Za-z0-9\s]*\\[a-z]+(?:\{[^}]*\}|\[[^\]]*\])*[A-Za-z0-9_^{}\s\\]*)+/g,
-      (match) => {
-        if (match.startsWith('$') || match.startsWith('\\(')) {
-          return match;
-        }
-        const isDisplayMath = /[=<>]/.test(match) && match.length > 20;
-        return isDisplayMath ? `\n\n$$${match.trim()}$$\n\n` : `$${match.trim()}$`;
-      }
-    );
-  }
-  return result;
 }

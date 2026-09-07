@@ -360,17 +360,16 @@ class BaseAgent:
         content containing curly braces (like LaTeX's \\begin{pmatrix}).
         Also handles {{ and }} escape sequences like str.format() does.
         """
-        result = self.prompt_template
+        # Mark the TEMPLATE's escaped braces before substitution: doing the
+        # unescape afterwards rewrote substituted content too (LaTeX like
+        # \\frac{{a}} inside a section became \\frac{a}).
+        result = self.prompt_template.replace("{{", "\x00LB\x00").replace("}}", "\x00RB\x00")
 
-        # Replace all placeholders first
         for key, value in kwargs.items():
             placeholder = "{" + key + "}"
             result = result.replace(placeholder, str(value))
 
-        # Convert escaped braces ({{ -> {, }} -> }) like str.format() does
-        result = result.replace("{{", "{").replace("}}", "}")
-
-        return result
+        return result.replace("\x00LB\x00", "{").replace("\x00RB\x00", "}")
 
     def _parse_json_response(self, content: str) -> dict:
         """

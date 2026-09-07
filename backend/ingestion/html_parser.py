@@ -29,8 +29,20 @@ async def fetch_and_parse_html(html_url: str) -> ParsedContent:
         response = await client.get(html_url)
         response.raise_for_status()
         html_content = response.text
-    
+        final_url = str(response.url)
+
+    if not looks_like_latexml_paper(html_content):
+        raise ValueError(
+            f"{final_url} is not a LaTeXML paper page (an abstract or landing page?) — "
+            "refusing to parse it as the paper"
+        )
     return parse_html(html_content)
+
+
+def looks_like_latexml_paper(html_content: str) -> bool:
+    """LaTeXML output (arxiv.org/html, ar5iv) always carries these markers;
+    the arXiv abstract page — where ar5iv redirects unconverted ids — never does."""
+    return "ltx_document" in html_content or "ltx_page_main" in html_content
 
 
 def parse_html(html_content: str) -> ParsedContent:
@@ -46,7 +58,12 @@ def parse_html(html_content: str) -> ParsedContent:
     soup = BeautifulSoup(html_content, 'lxml')
     
     # Find the main article content
-    article = soup.find('article') or soup.find('main') or soup.find('body')
+    article = (
+        soup.find('article', class_='ltx_document')
+        or soup.find('article')
+        or soup.find('main')
+        or soup.find('body')
+    )
     
     if not article:
         raise ValueError("Could not find article content in HTML")

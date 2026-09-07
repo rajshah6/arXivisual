@@ -28,7 +28,7 @@ You give the system an arXiv paper ID. It gives you back narrated, animated expl
 
 ## Ingestion (`backend/ingestion/`)
 
-`ingest_paper(arxiv_id)` fetches metadata from the arXiv API, then parses content — ar5iv HTML when available (clean headings, equations, figure captions), PDF via pymupdf4llm otherwise. Sections are extracted with heading levels and per-section equations/figures/tables, noise sections (references, acknowledgments, etc.) are dropped, and an LLM summarization pass produces per-section summaries. Output is a `StructuredPaper` (Pydantic), persisted to the `papers` and `sections` tables.
+`ingest_paper(arxiv_id)` fetches metadata from the arXiv API, then parses content — LaTeXML HTML when available (probed at `arxiv.org/html`, then `ar5iv.labs.arxiv.org/html`, redirects not followed and bodies must carry `ltx_document`, so an abstract page is never mistaken for the paper) (clean headings, equations, figure captions), PDF via pymupdf4llm otherwise. Sections are extracted with heading levels and per-section equations/figures/tables, noise sections (references, acknowledgments, etc.) are dropped, and an LLM summarization pass produces per-section summaries. Output is a `StructuredPaper` (Pydantic), persisted to the `papers` and `sections` tables.
 
 ## The Agent Pipeline (`backend/agents/pipeline.py`)
 

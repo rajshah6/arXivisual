@@ -126,5 +126,12 @@ backend ruff and frontend eslint are both HARD gates). `security.yml` — gitlea
    and reaper queries compare naive values.
 7. **All LLM calls route through `agents/base.py`** (`call_llm` / `BaseAgent._call_llm`) — provider switching
    and Langfuse tracing live there.
-8. **Keep `pytest` hermetic.** `testpaths=["tests"]` exists because scripts under `tools/` fire real API calls
+8. **Ingestion never stores an abstract page or raw parser output.** `find_latexml_html_url` probes the
+   LaTeXML pages themselves (`arxiv.org/html/{id}`, then `ar5iv.labs.arxiv.org/html/{id}`) with redirects
+   NOT followed; a 3xx counts only if it resolves to another `/html/` URL on those hosts that itself answers
+   200 — ar5iv sends unconverted ids to the arXiv abstract page, and ~31% of the library was once ingested
+   that way. Fetched bodies must contain `ltx_document`. Sources under 400 words raise
+   `SourceTooShortError` (never retried); other formatting failures are retried once in-function and the
+   Temporal ingest activity then fails the job with the real message (`ApplicationError`, non-retryable).
+9. **Keep `pytest` hermetic.** `testpaths=["tests"]` exists because scripts under `tools/` fire real API calls
    on collection; new tests must not need network or real keys.

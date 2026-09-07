@@ -65,6 +65,11 @@ export default function ExplorePage() {
     load();
   }, [load]);
 
+  // Papers with nothing playable and no job in flight are dead entries
+  // (failed or stranded runs); listing them sends readers to empty pages.
+  const visiblePapers =
+    state.type === "ready" ? state.papers.filter((p) => p.status !== "empty") : [];
+
   return (
     <main className="min-h-dvh relative overflow-hidden bg-black">
       {/* Mosaic background + floating shards — same ambient treatment as home */}
@@ -157,11 +162,11 @@ export default function ExplorePage() {
               transition={{ duration: 0.4 }}
               className="mb-6 text-sm text-white/30"
             >
-              {state.papers.length}{" "}
-              {state.papers.length === 1 ? "paper" : "papers"} visualized
+              {visiblePapers.length}{" "}
+              {visiblePapers.length === 1 ? "paper" : "papers"} visualized
             </motion.p>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-              {state.papers.map((paper, i) => (
+              {visiblePapers.map((paper, i) => (
                 <PaperCard key={paper.paper_id} paper={paper} index={i} />
               ))}
             </div>
@@ -189,9 +194,18 @@ function PaperCard({ paper, index }: { paper: PaperSummary; index: number }) {
           {/* Top row: viz badge + arxiv id */}
           <div className="flex items-center justify-between gap-3">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.06] border border-white/[0.08] px-3 py-1 text-xs text-white/50">
-              <span className="text-white/40">&#9671;</span>
-              {paper.visualization_count}{" "}
-              {paper.visualization_count === 1 ? "visual" : "visuals"}
+              {paper.status === "processing" ? (
+                <>
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white/50" />
+                  Processing…
+                </>
+              ) : (
+                <>
+                  <span className="text-white/40">&#9671;</span>
+                  {paper.visualization_count}{" "}
+                  {paper.visualization_count === 1 ? "visual" : "visuals"}
+                </>
+              )}
             </span>
             <span className="font-mono text-xs text-white/25">{paper.paper_id}</span>
           </div>

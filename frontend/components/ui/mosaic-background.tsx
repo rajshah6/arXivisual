@@ -25,6 +25,8 @@ function createRng(seed: number) {
 // Constants
 // ---------------------------------------------------------------------------
 const CELL_SIZE = 18;
+// Chromium's per-dimension canvas ceiling; larger canvases render nothing.
+const MAX_CANVAS_PX = 16384;
 const JITTER = 6;
 const SEED = 42;
 
@@ -46,16 +48,17 @@ export function MosaicBackground({
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const parent = canvas.parentElement;
-    if (!parent) return;
-
+    // Size to the VIEWPORT, never to the content. The wrapper used to be
+    // `absolute inset-0` inside a scrolling <main>, so on Explore the canvas
+    // grew with the library (86,431px tall at 942 papers) — past browser
+    // canvas limits, which blanked the page, and ~690k triangles per draw.
     const dpr = window.devicePixelRatio || 1;
-    const w = parent.clientWidth;
-    const h = parent.clientHeight;
-    // A zero-sized parent (layout not settled yet, hidden tab) would make
-    // getImageData below throw IndexSizeError and crash the whole React tree
-    // to a black page. Skip drawing — this is decoration, not content.
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    // Zero-size (hidden tab, unsettled layout) would make getImageData throw
+    // and unmount the tree; oversize would silently produce a dead canvas.
     if (w < 1 || h < 1) return;
+    if (w * dpr > MAX_CANVAS_PX || h * dpr > MAX_CANVAS_PX) return;
 
     canvas.width = w * dpr;
     canvas.height = h * dpr;
@@ -252,22 +255,17 @@ export function MosaicBackground({
     };
 
     window.addEventListener("resize", handleResize);
-    // A parent that was zero-sized at mount (hidden tab, unsettled layout)
-    // fires no window resize when it gains size — observe the parent itself
-    // so the guard's skipped draw happens once layout exists.
-    const parent = canvasRef.current?.parentElement;
-    const observer = parent ? new ResizeObserver(handleResize) : null;
-    if (parent && observer) observer.observe(parent);
+    // Viewport-sized now, so window resize is the only size signal we need
+    // (the old parent ResizeObserver re-drew on every content change).
     return () => {
       clearTimeout(timeout);
       window.removeEventListener("resize", handleResize);
-      observer?.disconnect();
     };
   }, [render]);
 
   return (
     <div
-      className={`absolute inset-0 overflow-hidden pointer-events-none ${className}`}
+      className={`fixed inset-0 overflow-hidden pointer-events-none ${className}`}
     >
       <canvas ref={canvasRef} className="absolute inset-0" />
 

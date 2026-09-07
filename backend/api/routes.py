@@ -7,6 +7,7 @@ Now using SQLite database and local Manim rendering.
 import hmac
 import logging
 import os
+import re
 import uuid
 from datetime import timedelta
 
@@ -287,15 +288,18 @@ async def get_status(job_id: str, db: AsyncSession = Depends(get_db)):
     )
 
 
-@router.get("/paper/{arxiv_id}", response_model=PaperResponse)
+@router.get("/paper/{arxiv_id:path}", response_model=PaperResponse)
 async def get_paper(arxiv_id: str, db: AsyncSession = Depends(get_db)):
     """
     Get a processed paper with all sections and visualizations.
 
-    Returns 404 if the paper hasn't been processed yet.
+    Returns 404 if the paper hasn't been processed yet. ``:path`` so old-style
+    ids with a category prefix (``math/0612817``, ``hep-th/9711200``) route —
+    a plain segment param 404'd ten library papers.
     """
-    # Handle version suffix (e.g., "1706.03762v1" -> "1706.03762")
-    base_id = arxiv_id.split("v")[0] if "v" in arxiv_id else arxiv_id
+    # Version suffix only ("1706.03762v1" -> "1706.03762"); splitting on any
+    # 'v' mangled category prefixes like adap-org/… and quant-ph/….
+    base_id = re.sub(r"v\d+$", "", arxiv_id)
 
     paper = await queries.get_paper(db, base_id)
 
@@ -363,24 +367,33 @@ async def get_paper(arxiv_id: str, db: AsyncSession = Depends(get_db)):
 @router.get("/papers", response_model=PaperListResponse)
 async def list_papers(db: AsyncSession = Depends(get_db)):
     """
-    List all processed papers.
+    List all processed papers for the Explore gallery.
 
-    Returns a summary of each paper with visualization counts.
+    ``visualization_count`` is the number of sections with a playable video
+    (rows of any status used to be counted, so 84% of cards disagreed with
+    what the page could show); ``status`` lets the gallery label in-flight
+    papers and hide empty ones.
     """
-    papers = await queries.list_papers(db)
+    rows = await queries.list_paper_summaries(db)
+
+    def _status(row: dict) -> str:
+        if row["playable_sections"] > 0:
+            return "ready"
+        return "processing" if row["processing"] else "empty"
 
     return PaperListResponse(
         papers=[
             PaperSummary(
-                paper_id=p.id,
-                title=p.title,
-                authors=p.authors or [],
-                visualization_count=len(p.visualizations) if p.visualizations else 0,
-                processed_at=p.updated_at or p.created_at or _utcnow_naive(),
+                paper_id=row["paper_id"],
+                title=row["title"],
+                authors=row["authors"],
+                visualization_count=row["playable_sections"],
+                status=_status(row),
+                processed_at=row["updated_at"] or row["created_at"] or _utcnow_naive(),
             )
-            for p in papers
+            for row in rows
         ],
-        total=len(papers),
+        total=len(rows),
     )
 
 

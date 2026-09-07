@@ -4,11 +4,11 @@ Pydantic schemas defining the API contract between Team 3 (Backend) and Team 4 (
 These schemas are THE CONTRACT - Team 4 builds their frontend against these response formats.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 
 # === Enums ===
 
@@ -145,6 +145,10 @@ class PaperResponse(BaseModel):
     visualizations: list[VisualizationResponse]
     processed_at: datetime
 
+    @field_serializer("processed_at")
+    def _ser_paper_processed_at(self, dt: datetime) -> str:
+        return _as_utc_iso(dt)
+
 
 class VideoResponse(BaseModel):
     """Response for GET /api/video/{video_id}."""
@@ -153,13 +157,32 @@ class VideoResponse(BaseModel):
     content_type: str = Field(default="video/mp4")
 
 
+def _as_utc_iso(dt: datetime) -> str:
+    """DB datetimes are naive UTC (backend convention); say so on the wire.
+    JavaScript parses an offset-less ISO string as LOCAL time, which shifted
+    Explore's dates by the viewer's UTC offset."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.isoformat()
+
+
 class PaperSummary(BaseModel):
     """Summary of a paper for list endpoints."""
     paper_id: str
     title: str
     authors: list[str]
-    visualization_count: int = Field(0, description="Number of visualizations for this paper")
+    visualization_count: int = Field(
+        0, description="Sections that have a playable (complete) video — what the paper page can show"
+    )
+    status: Literal["ready", "processing", "empty"] = Field(
+        "ready",
+        description="ready = has playable videos; processing = a job is in flight; empty = nothing to show",
+    )
     processed_at: datetime
+
+    @field_serializer("processed_at")
+    def _ser_processed_at(self, dt: datetime) -> str:
+        return _as_utc_iso(dt)
 
 
 class PaperListResponse(BaseModel):

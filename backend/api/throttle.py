@@ -17,12 +17,18 @@ upgrade path if replicas grow.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import logging
 import os
 import threading
 import time
 from collections import deque
+from datetime import datetime, timedelta
 
-from fastapi import Request
+from fastapi import HTTPException, Request
+
+logger = logging.getLogger(__name__)
 
 
 def _int_env(name: str, default: int) -> int:
@@ -46,26 +52,48 @@ class SlidingWindowLimiter:
         with self._lock:
             self._events.clear()
 
-    def allow(self, key: str, now: float | None = None) -> tuple[bool, int]:
-        """Record-and-check. Returns (allowed, retry_after_seconds)."""
+    def check(self, key: str, now: float | None = None) -> tuple[bool, int]:
+        """Peek: would a request be allowed right now? Records nothing."""
         if self.max_events == 0:
             return True, 0
         now = time.monotonic() if now is None else now
         cutoff = now - self.window_seconds
         with self._lock:
-            q = self._events.setdefault(key, deque())
+            q = self._events.get(key)
+            if not q:
+                return True, 0
             while q and q[0] <= cutoff:
                 q.popleft()
             if len(q) >= self.max_events:
                 retry_after = int(q[0] + self.window_seconds - now) + 1
                 return False, max(1, retry_after)
-            q.append(now)
+            return True, 0
+
+    def record(self, key: str, now: float | None = None) -> None:
+        """Count one event against ``key``."""
+        if self.max_events == 0:
+            return
+        now = time.monotonic() if now is None else now
+        cutoff = now - self.window_seconds
+        with self._lock:
+            self._events.setdefault(key, deque()).append(now)
             # Opportunistic cleanup so the map doesn't grow unboundedly.
             if len(self._events) > 10_000:
                 dead = [k for k, v in self._events.items() if not v or v[-1] <= cutoff]
                 for k in dead:
                     del self._events[k]
-            return True, 0
+
+    def allow(self, key: str, now: float | None = None) -> tuple[bool, int]:
+        """Record-and-check in one step. Returns (allowed, retry_after_seconds).
+
+        For several limiters guarding ONE decision use ``enforce_all`` instead:
+        it peeks every limiter before recording on any, so a denial by one
+        never consumes the caller's budget on the others.
+        """
+        allowed, retry_after = self.check(key, now)
+        if allowed:
+            self.record(key, now)
+        return allowed, retry_after
 
 
 class RecentJobs:
@@ -103,13 +131,60 @@ class RecentJobs:
 
 
 def client_ip(request: Request) -> str:
-    """Client IP, honoring the ingress proxy's X-Forwarded-For (first hop)."""
+    """Client IP as seen by the ingress proxy.
+
+    Container Apps ingress APPENDS the true peer address to X-Forwarded-For, so
+    the RIGHTMOST value is the only one we set; everything left of it is
+    client-supplied. Taking the first value (the old behaviour) let anyone mint
+    a fresh per-IP rate-limit bucket per request with a spoofed header — the
+    crawler that ran 250 papers/day through the "5 per hour" limit did exactly
+    that or equivalent. Single trusted hop assumed (one ingress in front).
+    """
     forwarded = request.headers.get("x-forwarded-for", "")
     if forwarded:
-        first = forwarded.split(",")[0].strip()
-        if first:
-            return first
+        last = forwarded.split(",")[-1].strip()
+        if last:
+            return last
     return request.client.host if request.client else "unknown"
+
+
+def ip_fingerprint(ip: str) -> str:
+    """Pseudonymous 12-char tag for logs: HMAC-SHA256 of the address under
+    IP_HASH_SECRET. Lets us correlate a burst of submissions to one client
+    without writing raw addresses; a plain hash of an IPv4 would be a 2^32
+    lookup, so set IP_HASH_SECRET in production."""
+    key = os.getenv("IP_HASH_SECRET", "") or "arxivisual-unkeyed"
+    return hmac.new(key.encode(), ip.encode(), hashlib.sha256).hexdigest()[:12]
+
+
+def enforce(limiter: SlidingWindowLimiter, key: str, detail: str, client_tag: str = "") -> None:
+    """Record-and-check ONE limiter; raise the standard 429 on denial."""
+    allowed, retry_after = limiter.allow(key)
+    if not allowed:
+        logger.info("Rate limit denied: %s (client %s)", detail[:60], client_tag or key)
+        raise HTTPException(
+            status_code=429, detail=detail, headers={"Retry-After": str(retry_after)}
+        )
+
+
+def enforce_all(
+    checks: list[tuple[SlidingWindowLimiter, str, str]], client_tag: str = ""
+) -> None:
+    """Two-phase admission across several limiters: peek all, then record all.
+
+    Chained record-and-check let a denial by the global limiter still consume
+    the caller's per-IP daily slot — three "at capacity" answers in a busy
+    hour locked a real user out for 24h without starting a paper.
+    """
+    for limiter, key, detail in checks:
+        allowed, retry_after = limiter.check(key)
+        if not allowed:
+            logger.info("Rate limit denied: %s (client %s)", detail[:60], client_tag)
+            raise HTTPException(
+                status_code=429, detail=detail, headers={"Retry-After": str(retry_after)}
+            )
+    for limiter, key, _ in checks:
+        limiter.record(key)
 
 
 # Defaults: a person exploring the site can start 5 papers an hour; the whole
@@ -123,6 +198,33 @@ global_limiter = SlidingWindowLimiter(
     max_events=_int_env("RATE_LIMIT_PROCESS_GLOBAL", 30),
     window_seconds=_int_env("RATE_LIMIT_PROCESS_WINDOW_SECONDS", 3600),
 )
+# A slower second per-IP window: 5/hour still allows 120/day from one patient
+# client. Daily quotas belong to a person, not a script.
+per_ip_daily_limiter = SlidingWindowLimiter(
+    max_events=_int_env("RATE_LIMIT_PROCESS_PER_IP_DAILY", 3),
+    window_seconds=86400,
+)
+
+
+def daily_cap_verdict(started_today: int, now: datetime) -> tuple[bool, int]:
+    """(exhausted, retry_after_seconds) for the durable daily cap, given the
+    number of jobs already created since UTC midnight. ``now`` is naive UTC
+    (DB convention). Not atomic with the insert — a fuse, not a ledger: it can
+    overshoot by in-flight concurrency, never by a crawler's persistence."""
+    cap = daily_new_paper_cap()
+    if cap <= 0 or started_today < cap:
+        return False, 0
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    seconds_left = int((day_start + timedelta(days=1) - now).total_seconds())
+    return True, max(60, seconds_left)
+
+
+def daily_new_paper_cap() -> int:
+    """Hard ceiling on NEW-paper generations per UTC day, enforced against the
+    jobs table (durable across replicas and restarts, unlike the in-memory
+    limiters). This is the spend guarantee: cached papers stay free, and a
+    crawler can at most burn one day's cap. 0 disables."""
+    return _int_env("DAILY_NEW_PAPER_CAP", 80)
 recent_jobs = RecentJobs(ttl_seconds=_int_env("PROCESS_DEDUPE_TTL_SECONDS", 600))
 
 # Feedback is cheap to store but still abusable; own bucket AND own window —

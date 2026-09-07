@@ -59,6 +59,8 @@ Set these on the Container App (secrets referenced via `secretref:`; the rest as
 | `ENVIRONMENT` | `production` — disables the raw-code `POST /api/render` endpoint unless `RENDER_API_SECRET` is also set |
 | `RENDER_API_SECRET` | **secret**, optional — when set, `POST /api/render` accepts requests carrying it in the `X-Render-Secret` header; when unset in production, the endpoint is fully disabled (404) |
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | **secrets** — enable LLM tracing when both are present |
+| `TURNSTILE_SECRET_KEY` | **secret** — server-side human verification on `POST /api/process`; fails closed when set |
+| `DAILY_NEW_PAPER_CAP`, `RATE_LIMIT_PROCESS_GLOBAL`, `RATE_LIMIT_PROCESS_PER_IP_DAILY`, `IP_HASH_SECRET` | admission control knobs (see `backend/CLAUDE.md`) |
 | `LANGFUSE_HOST` | Langfuse region host (e.g. `https://us.cloud.langfuse.com`) |
 | `LANGFUSE_TRACING_ENVIRONMENT` | `production` — keeps prod traces separate from dev |
 | `VOICEOVER_TTS_SERVICE`, `VOICEOVER_VOICE_NAME`, `VOICEOVER_TTS_MODEL` | Optional TTS overrides. Defaults (`openai` / `nova` / `gpt-4o-mini-tts`) reuse the `AZURE_OPENAI_*` credentials at render time — no extra key needed. The TTS model must match an Azure deployment name |
@@ -98,6 +100,7 @@ One environment variable matters:
 | Variable | Value |
 |----------|-------|
 | `NEXT_PUBLIC_API_URL` | The backend URL (the Azure Container Apps URL above) |
+| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Cloudflare Turnstile site key (public). Unset = no widget, backend must have no secret either |
 
 `NEXT_PUBLIC_*` variables are baked in at build time — redeploy the frontend after changing it. As a safety net, production builds fall back to the Azure backend URL when the variable is unset (see [frontend/lib/api.ts](../frontend/lib/api.ts)); dev builds fall back to `http://localhost:8000`.
 
@@ -106,3 +109,11 @@ One environment variable matters:
 ## CI
 
 [.github/workflows/ci.yml](../.github/workflows/ci.yml) runs on every push and PR: backend pytest on Python 3.11 and 3.13 (offline, dummy provider credentials), frontend typecheck + build (lint is advisory), and a Docker image build gated on changes to the Dockerfile, `pyproject.toml`, or `uv.lock`. Deploys are manual via the `az` commands above — CI validates that the image still builds but does not push it.
+
+## Turnstile rollout order (matters)
+
+1. Set `NEXT_PUBLIC_TURNSTILE_SITE_KEY` on Vercel and redeploy the frontend — the widget appears and sends
+   tokens; the backend ignores them while it has no secret (harmless).
+2. Confirm the deployed bundle contains the widget (search for "Verifying you're human").
+3. Only then set `turnstile_secret_key` (Terraform) / the `turnstile-secret-key` Container App secret.
+   Doing this first turns every Start click into a 403 for humans.

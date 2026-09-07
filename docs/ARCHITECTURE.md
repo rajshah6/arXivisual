@@ -14,7 +14,7 @@ You give the system an arXiv paper ID. It gives you back narrated, animated expl
 
 ## Job Lifecycle
 
-`POST /api/process` creates a `ProcessingJob` row (status `queued`) and schedules `jobs/worker.py:process_paper_job` as a FastAPI background task, returning the job ID immediately. The frontend polls `GET /api/status/{job_id}`; the worker writes progress milestones as it moves through three phases:
+`POST /api/process` first passes admission control (server-verified Turnstile → durable daily cap from the jobs table → per-IP hourly/daily and global sliding windows; see `SECURITY.md`), then creates a `ProcessingJob` row (status `queued`) and schedules `jobs/worker.py:process_paper_job` as a FastAPI background task, returning the job ID immediately. The frontend polls `GET /api/status/{job_id}`; the worker writes progress milestones as it moves through three phases:
 
 1. **Ingest** (progress 0.10 → 0.30) — fetch and parse the paper, store paper + sections in the database. Skipped if the paper was processed before.
 2. **Generate** (0.50) — run the agent pipeline to produce validated Manim code for up to 5 concepts.
@@ -147,6 +147,8 @@ backend/
   main.py                    FastAPI app: CORS, lifespan DB init
   api/
     routes.py                All endpoints; /api/render auth gate
+    throttle.py              Sliding-window limiters, daily-cap verdict, client fingerprint
+    turnstile.py             Server-side Cloudflare Turnstile verification (fails closed when configured)
     schemas.py               Request/response models
   jobs/
     worker.py                Background job: ingest -> generate -> render;

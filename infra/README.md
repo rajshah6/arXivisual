@@ -78,7 +78,7 @@ attribute reads a `sensitive = true` variable (see `variables.tf`):
 
 `postgres_admin_password`, `database_url`, `azure_openai_api_key`,
 `s3_access_key`, `s3_secret_key`, `langfuse_public_key`,
-`langfuse_secret_key`, `acr_admin_password`.
+`langfuse_secret_key`, `acr_admin_password`, and optionally `turnstile_secret_key` (empty = Turnstile off).
 
 Supply them either as environment variables:
 

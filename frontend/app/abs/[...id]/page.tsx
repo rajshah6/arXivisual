@@ -5,6 +5,7 @@ import { useEffect, useState, useCallback, useMemo, useRef, use } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CardStack } from "@/components/CardStack";
 import { SiteFeedback } from "@/components/SiteFeedback";
+import { TurnstileWidget, isTurnstileConfigured } from "@/components/TurnstileWidget";
 import type { ScrollySectionModel } from "@/components/ScrollySection";
 import { GlassCard } from "@/components/ui/glass-card";
 import { MosaicBackground } from "@/components/ui/mosaic-background";
@@ -204,12 +205,12 @@ export default function PaperPage({
     }
   }, [arxivId]);
 
-  const startProcessing = useCallback(async () => {
+  const startProcessing = useCallback(async (turnstileToken?: string | null) => {
     if (!arxivId || startingJob) return;
     setStartingJob(true);
 
     try {
-      const response = await processArxivPaper(arxivId);
+      const response = await processArxivPaper(arxivId, turnstileToken);
       setJobId(response.job_id);
       setState({
         type: "processing",
@@ -663,9 +664,10 @@ function NotFoundState({
   starting,
 }: {
   arxivId: string;
-  onProcess: () => void;
+  onProcess: (turnstileToken?: string | null) => void;
   starting: boolean;
 }) {
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   return (
     <div className="flex items-center justify-center py-20 px-6">
       <motion.div
@@ -693,14 +695,19 @@ function NotFoundState({
           </p>
 
           <div className="mt-8 space-y-4">
+            <TurnstileWidget onToken={setTurnstileToken} />
             <motion.button
               whileHover={{ scale: starting ? 1 : 1.02 }}
               whileTap={{ scale: starting ? 1 : 0.98 }}
-              onClick={onProcess}
-              disabled={starting}
+              onClick={() => onProcess(turnstileToken)}
+              disabled={starting || (isTurnstileConfigured() && !turnstileToken)}
               className="w-full sm:w-auto rounded-2xl bg-white/[0.08] hover:bg-white/[0.12] px-8 py-4 text-sm font-medium text-white border border-white/[0.15] hover:border-white/[0.25] shadow-xl shadow-white/[0.03] transition-all duration-300 disabled:opacity-50 disabled:cursor-wait"
             >
-              {starting ? "Starting…" : "Start Processing"}
+              {starting
+                ? "Starting…"
+                : isTurnstileConfigured() && !turnstileToken
+                  ? "Verifying you're human…"
+                  : "Start Processing"}
             </motion.button>
 
             <p className="text-xs text-white/40">

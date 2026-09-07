@@ -113,7 +113,10 @@ function resolveVideoUrl(url: string | undefined | null): string | undefined {
  * Start processing an arXiv paper.
  * Returns a job_id that can be polled for status.
  */
-export async function processArxivPaper(arxivId: string): Promise<ProcessResponse> {
+export async function processArxivPaper(
+  arxivId: string,
+  turnstileToken?: string | null
+): Promise<ProcessResponse> {
   if (USE_MOCK) {
     // Simulate API delay
     await new Promise((r) => setTimeout(r, 500));
@@ -128,7 +131,7 @@ export async function processArxivPaper(arxivId: string): Promise<ProcessRespons
   const res = await fetch(`${API_BASE}/api/process`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ arxiv_id: arxivId }),
+    body: JSON.stringify({ arxiv_id: arxivId, turnstile_token: turnstileToken ?? null }),
   });
 
   if (!res.ok) {

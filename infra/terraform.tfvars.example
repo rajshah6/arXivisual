@@ -22,3 +22,4 @@ langfuse_secret_key = "sk-lf-REPLACE_ME"
 
 # az acr credential show -n ca82c08e2eadacr --query "passwords[0].value"
 acr_admin_password = "REPLACE_ME"
+turnstile_secret_key = "" # optional: Cloudflare Turnstile secret; empty = human verification off

@@ -24,3 +24,18 @@ Out of scope: denial of service via volume alone (processing papers is intention
 ## Bounty
 
 This is a small open-source project — we do not offer a bug bounty. We will gladly credit reporters in the fix's release notes if desired.
+
+## Abuse Controls (cost-bounded admission)
+
+`POST /api/process` spends real money per accepted paper, and this repository is public, so the
+limits are designed to hold even when the attacker has read them:
+
+1. **Proof-of-humanity** — Cloudflare Turnstile, verified server-side (browser → API → siteverify).
+   Direct API scripts never pass; verification fails closed if Cloudflare is unreachable.
+2. **Durable daily cap** — `DAILY_NEW_PAPER_CAP` new-paper jobs per UTC day, counted from Postgres so
+   it survives restarts and replicas. Already-visualized papers are always served for free.
+3. **Sliding windows** — per-IP hourly, per-IP daily, and global. Client identity is the rightmost
+   `X-Forwarded-For` hop (appended by the ingress); client-supplied prefixes are ignored.
+
+Submissions are logged with a hashed client fingerprint (never raw IPs) for abuse forensics.
+Need bulk or programmatic access? Open an issue — that is a conversation, not a rate-limit race.

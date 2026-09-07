@@ -89,6 +89,16 @@ resource "azurerm_container_app" "api" {
     name  = "langfuse-secret-key"
     value = var.langfuse_secret_key
   }
+  # Only materialize the Turnstile secret when one is configured: the
+  # Container Apps API rejects empty secret values, and an absent env means
+  # the backend skips verification (inert until activated).
+  dynamic "secret" {
+    for_each = var.turnstile_secret_key != "" ? [1] : []
+    content {
+      name  = "turnstile-secret-key"
+      value = var.turnstile_secret_key
+    }
+  }
 
   template {
     min_replicas = 1
@@ -178,7 +188,29 @@ resource "azurerm_container_app" "api" {
       }
       env {
         name  = "VISUAL_QA_MODEL"
-        value = "gpt-5.6-sol"
+        value = "gpt-5-mini"
+      }
+      env {
+        name  = "VISUAL_QA_REPAIR_MODEL"
+        value = "gpt-5-mini"
+      }
+      # Admission control (see backend/api/throttle.py). A crawler ran ~250
+      # new papers/day through the defaults in Sept 2026 by spoofing the
+      # per-IP header; these bound the blast radius regardless of who shows up.
+      env {
+        name  = "RATE_LIMIT_PROCESS_GLOBAL"
+        value = "6"
+      }
+      env {
+        name  = "DAILY_NEW_PAPER_CAP"
+        value = "80"
+      }
+      dynamic "env" {
+        for_each = var.turnstile_secret_key != "" ? [1] : []
+        content {
+          name        = "TURNSTILE_SECRET_KEY"
+          secret_name = "turnstile-secret-key"
+        }
       }
 
       env {
@@ -479,7 +511,15 @@ resource "azurerm_container_app" "worker" {
       }
       env {
         name  = "VISUAL_QA_MODEL"
-        value = "gpt-5.6-sol"
+        value = "gpt-5-mini"
+      }
+      env {
+        name  = "VISUAL_QA_REPAIR"
+        value = "1"
+      }
+      env {
+        name  = "VISUAL_QA_REPAIR_MODEL"
+        value = "gpt-5-mini"
       }
       env {
         name        = "AZURE_OPENAI_API_KEY"

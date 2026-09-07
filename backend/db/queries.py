@@ -13,7 +13,7 @@ def _utcnow_naive() -> datetime:
     must stay naive; this just replaces the deprecated _utcnow_naive()."""
     return datetime.now(UTC).replace(tzinfo=None)
 
-from sqlalchemy import select
+from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -198,6 +198,58 @@ async def create_paper(
     await db.commit()
     await db.refresh(paper)
     return paper
+
+
+async def list_paper_summaries(db: AsyncSession, active_job_max_age_hours: float = 2.0) -> list[dict]:
+    """Explore-gallery rows without loading section text for every paper.
+
+    ``playable_sections`` = distinct sections that have a complete video (what
+    the paper page can actually show); ``processing`` = a job for the paper is
+    genuinely in flight. The old implementation selectinloaded every section's
+    content and every viz row for all papers (2.4s / 297KB at 942 papers) and
+    counted rows of any status.
+    """
+    playable = (
+        select(
+            Visualization.paper_id.label("paper_id"),
+            func.count(distinct(Visualization.section_id)).label("n"),
+        )
+        .where(Visualization.status == "complete", Visualization.video_url.isnot(None))
+        .group_by(Visualization.paper_id)
+        .subquery()
+    )
+    cutoff = _utcnow_naive() - timedelta(hours=active_job_max_age_hours)
+    active = (
+        select(ProcessingJob.paper_id.label("paper_id"))
+        .where(
+            ProcessingJob.status.in_(("queued", "processing")),
+            ProcessingJob.created_at >= cutoff,
+        )
+        .distinct()
+        .subquery()
+    )
+    result = await db.execute(
+        select(
+            Paper.id,
+            Paper.title,
+            Paper.authors,
+            Paper.created_at,
+            Paper.updated_at,
+            func.coalesce(playable.c.n, 0),
+            active.c.paper_id.isnot(None),
+        )
+        .outerjoin(playable, playable.c.paper_id == Paper.id)
+        .outerjoin(active, active.c.paper_id == Paper.id)
+        .order_by(Paper.created_at.desc())
+    )
+    return [
+        {
+            "paper_id": pid, "title": title, "authors": authors or [],
+            "created_at": created, "updated_at": updated,
+            "playable_sections": int(n), "processing": bool(is_active),
+        }
+        for pid, title, authors, created, updated, n, is_active in result.all()
+    ]
 
 
 async def list_papers(db: AsyncSession) -> list[Paper]:

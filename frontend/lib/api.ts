@@ -78,6 +78,7 @@ export interface PaperSummaryResponse {
   title: string;
   authors: string[];
   visualization_count: number;
+  status?: "ready" | "processing" | "empty";
   processed_at: string;
 }
 
@@ -254,6 +255,7 @@ export async function listPapers(): Promise<PaperSummary[]> {
         authors: p.authors,
         visualization_count:
           p.sections.filter((s) => s.video_url).length || p.sections.length,
+        status: "ready" as const,
         processed_at: new Date().toISOString(),
       }));
   }
@@ -273,6 +275,7 @@ export async function listPapers(): Promise<PaperSummary[]> {
     title: p.title,
     authors: p.authors,
     visualization_count: p.visualization_count,
+    status: p.status ?? "ready",
     processed_at: p.processed_at,
   }));
 }

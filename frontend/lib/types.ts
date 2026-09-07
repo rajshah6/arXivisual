@@ -18,12 +18,15 @@ export type Paper = {
   sections: Section[];
 };
 
+export type PaperStatus = "ready" | "processing" | "empty";
+
 export type PaperSummary = {
   paper_id: string; // e.g. "1706.03762"
   title: string;
   authors: string[];
-  visualization_count: number;
-  processed_at: string; // ISO 8601 datetime string
+  visualization_count: number; // sections with a playable video
+  status: PaperStatus;
+  processed_at: string; // ISO 8601 datetime string (UTC)
 };
 
 export type Section = {

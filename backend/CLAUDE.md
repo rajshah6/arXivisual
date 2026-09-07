@@ -74,8 +74,14 @@ backend ruff and frontend eslint are both HARD gates). `security.yml` — gitlea
 - `LANGFUSE_PUBLIC_KEY`\*, `LANGFUSE_SECRET_KEY`\*, `LANGFUSE_HOST`, `LANGFUSE_TRACING_ENVIRONMENT`.
 - `ENVIRONMENT=production` — disables `POST /api/render` (404) unless `RENDER_API_SECRET`\* matches the
   `X-Render-Secret` header. The endpoint executes caller-supplied Python; keep it locked.
-- `RATE_LIMIT_PROCESS_PER_IP` (5/h), `RATE_LIMIT_PROCESS_GLOBAL` (30/h), `RATE_LIMIT_PROCESS_WINDOW_SECONDS`
-  (3600), `PROCESS_DEDUPE_TTL_SECONDS` (600) — cost fuse on `/api/process` (`api/throttle.py`).
+- **Admission control on `POST /api/process`** (`api/throttle.py`, `api/turnstile.py`) — layered, each layer
+  assumes the previous is gamed (the code is public; a crawler ran ~250 papers/day through the old limits by
+  spoofing `X-Forwarded-For`): (1) `TURNSTILE_SECRET_KEY`\* — server-verified Cloudflare Turnstile, skipped
+  when unset, fails CLOSED when set; (2) `DAILY_NEW_PAPER_CAP` (80) — durable per-UTC-day ceiling counted from
+  the jobs table (the spend guarantee; cached papers stay free; 0 disables); (3) in-memory sliding windows:
+  `RATE_LIMIT_PROCESS_PER_IP` (5/h), `RATE_LIMIT_PROCESS_PER_IP_DAILY` (3/day), `RATE_LIMIT_PROCESS_GLOBAL`
+  (30/h; prod sets 6), `RATE_LIMIT_PROCESS_WINDOW_SECONDS` (3600), `PROCESS_DEDUPE_TTL_SECONDS` (600).
+  `client_ip()` takes the RIGHTMOST `X-Forwarded-For` hop (the one the ingress appends) — never the first.
 - `RATE_LIMIT_FEEDBACK_PER_IP` (30) / `RATE_LIMIT_FEEDBACK_WINDOW_SECONDS` (3600) — bounds `POST /api/feedback` (viewer 👍/👎 per video + site
   suggestions → `feedback` table). Video votes are labeled ground truth for calibrating the visual-QA judge;
   `paper_id` is denormalized from the viz row, never trusted from the client.

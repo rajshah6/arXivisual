@@ -56,3 +56,10 @@ variable "acr_admin_password" {
   type        = string
   sensitive   = true
 }
+
+variable "turnstile_secret_key" {
+  description = "Cloudflare Turnstile secret for POST /api/process human verification. Empty = verification disabled."
+  type        = string
+  sensitive   = true
+  default     = ""
+}

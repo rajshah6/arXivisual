@@ -51,6 +51,10 @@ class ProcessRequest(BaseModel):
         description="arXiv paper ID (e.g., '1706.03762' or '1706.03762v1')",
         examples=["1706.03762", "2301.07041v2"]
     )
+    turnstile_token: str | None = Field(
+        None, max_length=4096,
+        description="Cloudflare Turnstile response token; required when the server has verification enabled",
+    )
 
 
 class RenderRequest(BaseModel):

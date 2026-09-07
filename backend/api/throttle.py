@@ -17,12 +17,13 @@ upgrade path if replicas grow.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import threading
 import time
 from collections import deque
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 
 
 def _int_env(name: str, default: int) -> int:
@@ -103,13 +104,36 @@ class RecentJobs:
 
 
 def client_ip(request: Request) -> str:
-    """Client IP, honoring the ingress proxy's X-Forwarded-For (first hop)."""
+    """Client IP as seen by the ingress proxy.
+
+    Container Apps ingress APPENDS the true peer address to X-Forwarded-For, so
+    the RIGHTMOST value is the only one we set; everything left of it is
+    client-supplied. Taking the first value (the old behaviour) let anyone mint
+    a fresh per-IP rate-limit bucket per request with a spoofed header — the
+    crawler that ran 250 papers/day through the "5 per hour" limit did exactly
+    that or equivalent. Single trusted hop assumed (one ingress in front).
+    """
     forwarded = request.headers.get("x-forwarded-for", "")
     if forwarded:
-        first = forwarded.split(",")[0].strip()
-        if first:
-            return first
+        last = forwarded.split(",")[-1].strip()
+        if last:
+            return last
     return request.client.host if request.client else "unknown"
+
+
+def ip_fingerprint(ip: str) -> str:
+    """Short non-reversible tag for logs — lets us correlate a burst of
+    submissions to one client without storing raw addresses."""
+    return hashlib.sha256(ip.encode()).hexdigest()[:12]
+
+
+def enforce(limiter: SlidingWindowLimiter, key: str, detail: str) -> None:
+    """Record-and-check; raise the standard 429 (with Retry-After) on denial."""
+    allowed, retry_after = limiter.allow(key)
+    if not allowed:
+        raise HTTPException(
+            status_code=429, detail=detail, headers={"Retry-After": str(retry_after)}
+        )
 
 
 # Defaults: a person exploring the site can start 5 papers an hour; the whole
@@ -123,6 +147,20 @@ global_limiter = SlidingWindowLimiter(
     max_events=_int_env("RATE_LIMIT_PROCESS_GLOBAL", 30),
     window_seconds=_int_env("RATE_LIMIT_PROCESS_WINDOW_SECONDS", 3600),
 )
+# A slower second per-IP window: 5/hour still allows 120/day from one patient
+# client. Daily quotas belong to a person, not a script.
+per_ip_daily_limiter = SlidingWindowLimiter(
+    max_events=_int_env("RATE_LIMIT_PROCESS_PER_IP_DAILY", 3),
+    window_seconds=86400,
+)
+
+
+def daily_new_paper_cap() -> int:
+    """Hard ceiling on NEW-paper generations per UTC day, enforced against the
+    jobs table (durable across replicas and restarts, unlike the in-memory
+    limiters). This is the spend guarantee: cached papers stay free, and a
+    crawler can at most burn one day's cap. 0 disables."""
+    return _int_env("DAILY_NEW_PAPER_CAP", 80)
 recent_jobs = RecentJobs(ttl_seconds=_int_env("PROCESS_DEDUPE_TTL_SECONDS", 600))
 
 # Feedback is cheap to store but still abusable; own bucket AND own window —

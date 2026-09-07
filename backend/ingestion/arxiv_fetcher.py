@@ -155,27 +155,33 @@ async def fetch_paper_meta(arxiv_id: str) -> ArxivPaperMeta:
 
 async def check_ar5iv_available(arxiv_id: str) -> str | None:
     """
-    Check if ar5iv HTML version is available for this paper.
-    
-    Args:
-        arxiv_id: Normalized arXiv ID (without version)
-        
-    Returns:
-        ar5iv URL if available, None otherwise
+    Find a LaTeXML HTML rendering of the paper, or None.
+
+    Tries arxiv.org's own HTML first, then ar5iv. Redirects are NOT followed:
+    ar5iv answers ids it hasn't converted with a redirect to the arxiv.org
+    ABSTRACT page, and following it made ~31% of the library ingest a
+    300-word inflation of the abstract as "the paper". A redirect is accepted
+    only when it points at another /html/ rendering.
     """
-    url = f"https://ar5iv.org/abs/{arxiv_id}"
-    
+    candidates = [
+        f"https://arxiv.org/html/{arxiv_id}",
+        f"https://ar5iv.org/abs/{arxiv_id}",
+    ]
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=10.0) as client:
-            response = await client.head(url)
-            
-            if response.status_code == 200:
-                return url
-            
+        async with httpx.AsyncClient(follow_redirects=False, timeout=10.0) as client:
+            for url in candidates:
+                try:
+                    response = await client.head(url)
+                except httpx.RequestError:
+                    continue
+                if response.status_code == 200:
+                    return url
+                if 300 <= response.status_code < 400:
+                    location = response.headers.get("location", "")
+                    if "/html/" in location:
+                        return location
     except httpx.RequestError:
-        # Network error, ar5iv might be down
         pass
-    
     return None
 
 

@@ -103,18 +103,26 @@ async def ingest_paper(
     total_chars = sum(len(s.content) for s in sections)
     logger.info(f"Extracted {raw_count} raw sections ({total_chars:,} chars total)")
 
-    # Step 4: Summarize + organize into <=5 sections (two-phase LLM pipeline)
-    try:
-        sections = await format_sections(sections, meta)
-        logger.info(
-            f"Section formatting succeeded: {raw_count} raw → {len(sections)} summarized sections"
-        )
-    except Exception as e:
-        logger.error(
-            f"Section formatting FAILED ({type(e).__name__}: {e}). "
-            f"Falling back to {raw_count} raw sections. "
-            f"This usually means the LLM call timed out or the API key is invalid."
-        )
+    # Step 4: Summarize + organize into <=5 sections (two-phase LLM pipeline).
+    # No raw-text fallback: raw parser sections carry header/footnote/table
+    # debris and shipped to the site with videos attached (2507.15866). A
+    # paper we cannot format is a failed job with a truthful error, not a
+    # degraded page.
+    last_exc: Exception | None = None
+    for attempt in (1, 2):
+        try:
+            sections = await format_sections(sections, meta)
+            logger.info(
+                f"Section formatting succeeded: {raw_count} raw → {len(sections)} summarized sections"
+            )
+            break
+        except Exception as e:
+            last_exc = e
+            logger.warning(f"Section formatting attempt {attempt} failed ({type(e).__name__}: {e})")
+    else:
+        raise RuntimeError(
+            f"Section formatting failed twice for {arxiv_id}: {last_exc}"
+        ) from last_exc
 
     # Step 5: Build final structure
     paper = StructuredPaper(

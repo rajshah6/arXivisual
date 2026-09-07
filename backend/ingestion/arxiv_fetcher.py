@@ -2,7 +2,7 @@
 ArXiv paper fetcher for the ingestion pipeline.
 
 Fetches paper metadata from the arXiv API and downloads PDFs.
-Also checks for ar5iv HTML availability.
+Also locates a LaTeXML HTML rendering (arxiv.org/html, then ar5iv).
 """
 
 import asyncio
@@ -138,7 +138,7 @@ async def fetch_paper_meta(arxiv_id: str) -> ArxivPaperMeta:
     pdf_url = f"https://arxiv.org/pdf/{base_id}.pdf"
     
     # Check for ar5iv HTML availability
-    html_url = await check_ar5iv_available(base_id)
+    html_url = await find_latexml_html_url(base_id)
     
     return ArxivPaperMeta(
         arxiv_id=base_id,
@@ -153,36 +153,52 @@ async def fetch_paper_meta(arxiv_id: str) -> ArxivPaperMeta:
     )
 
 
-async def check_ar5iv_available(arxiv_id: str) -> str | None:
+_LATEXML_HOSTS = {"arxiv.org", "ar5iv.labs.arxiv.org"}
+
+
+def _is_latexml_html_url(url: str) -> bool:
+    parsed = httpx.URL(url)
+    return parsed.host in _LATEXML_HOSTS and parsed.path.startswith("/html/")
+
+
+async def find_latexml_html_url(arxiv_id: str) -> str | None:
     """
     Find a LaTeXML HTML rendering of the paper, or None.
 
-    Tries arxiv.org's own HTML first, then ar5iv. Redirects are NOT followed:
-    ar5iv answers ids it hasn't converted with a redirect to the arxiv.org
-    ABSTRACT page, and following it made ~31% of the library ingest a
-    300-word inflation of the abstract as "the paper". A redirect is accepted
-    only when it points at another /html/ rendering.
+    Probes the LaTeXML pages themselves — arxiv.org/html first, then
+    ar5iv.labs.arxiv.org/html — with redirects NOT followed. The old check
+    HEAD'd ar5iv.org/abs with redirects on; for ids ar5iv hasn't converted
+    that chain ends at the arxiv.org ABSTRACT page with a 200, and ~31% of
+    the library was ingested as a 300-word inflation of the abstract. A 3xx
+    is honoured only when it resolves to another /html/ URL on a LaTeXML host
+    AND that target itself answers 200 (unconverted ids redirect to /abs/).
     """
     candidates = [
         f"https://arxiv.org/html/{arxiv_id}",
-        f"https://ar5iv.org/abs/{arxiv_id}",
+        f"https://ar5iv.labs.arxiv.org/html/{arxiv_id}",
     ]
-    try:
-        async with httpx.AsyncClient(follow_redirects=False, timeout=10.0) as client:
-            for url in candidates:
-                try:
-                    response = await client.head(url)
-                except httpx.RequestError:
-                    continue
+    async with httpx.AsyncClient(follow_redirects=False, timeout=10.0) as client:
+        for url in candidates:
+            try:
+                response = await client.head(url)
                 if response.status_code == 200:
                     return url
                 if 300 <= response.status_code < 400:
                     location = response.headers.get("location", "")
-                    if "/html/" in location:
-                        return location
-    except httpx.RequestError:
-        pass
+                    if not location:
+                        continue
+                    target = str(httpx.URL(url).join(location))
+                    if _is_latexml_html_url(target):
+                        resolved = await client.head(target)
+                        if resolved.status_code == 200:
+                            return target
+            except httpx.RequestError:
+                continue
     return None
+
+
+# Backwards-compatible name (callers/tests written against the old check).
+check_ar5iv_available = find_latexml_html_url
 
 
 async def download_pdf(pdf_url: str) -> bytes:

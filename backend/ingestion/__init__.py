@@ -5,7 +5,7 @@ Main entry point: ingest_paper(arxiv_id) -> StructuredPaper
 
 Pipeline:
 1. Fetch metadata from arXiv API
-2. Check for ar5iv HTML availability
+2. Locate a LaTeXML HTML rendering (arxiv.org/html, then ar5iv)
 3. Parse HTML (preferred) or PDF (fallback)
 4. Extract sections with hierarchy
 5. Cache and return StructuredPaper
@@ -32,7 +32,7 @@ from .arxiv_fetcher import (
 from .html_parser import fetch_and_parse_html, parse_html
 from .pdf_parser import parse_pdf
 from .section_extractor import extract_sections
-from .section_formatter import format_sections
+from .section_formatter import SourceTooShortError, format_sections
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -85,7 +85,7 @@ async def ingest_paper(
 
     if meta.html_url and not prefer_pdf:
         # Try HTML first (cleaner structure)
-        logger.info(f"Parsing ar5iv HTML: {meta.html_url}")
+        logger.info(f"Parsing LaTeXML HTML: {meta.html_url}")
         try:
             content = await fetch_and_parse_html(meta.html_url)
             logger.info("Successfully parsed HTML content")
@@ -116,12 +116,14 @@ async def ingest_paper(
                 f"Section formatting succeeded: {raw_count} raw → {len(sections)} summarized sections"
             )
             break
+        except SourceTooShortError:
+            raise  # deterministic — retrying an LLM call cannot grow the source
         except Exception as e:
             last_exc = e
             logger.warning(f"Section formatting attempt {attempt} failed ({type(e).__name__}: {e})")
     else:
         raise RuntimeError(
-            f"Section formatting failed twice for {arxiv_id}: {last_exc}"
+            f"Section formatting failed after 2 attempts for {arxiv_id}: {last_exc}"
         ) from last_exc
 
     # Step 5: Build final structure

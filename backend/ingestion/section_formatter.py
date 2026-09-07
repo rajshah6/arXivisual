@@ -20,6 +20,12 @@ from models.paper import ArxivPaperMeta, Equation, Section
 logger = logging.getLogger(__name__)
 
 MIN_SOURCE_WORDS = 400  # below this the 'paper' is an abstract, not a paper
+
+
+class SourceTooShortError(ValueError):
+    """The fetched text is an abstract/landing page, not a paper. Deterministic:
+    retrying the LLM call cannot fix it, so callers must not retry."""
+
 MAX_SECTIONS = 5
 
 
@@ -56,8 +62,7 @@ def _prepare_paper_content(
 # Phase 1: Holistic summarization
 # ---------------------------------------------------------------------------
 
-SUMMARIZE_SYSTEM_PROMPT = r"""\
-You are an expert science communicator who makes academic papers accessible to newcomers.
+SUMMARIZE_SYSTEM_PROMPT = r"""You are an expert science communicator who makes academic papers accessible to newcomers.
 
 Your task: Read the entire paper below and write a clear, approachable summary.
 
@@ -110,13 +115,13 @@ async def _summarize_paper(
     Returns plain markdown text at 30-40% of original length.
     """
     if total_words < MIN_SOURCE_WORDS:
-        raise ValueError(
+        raise SourceTooShortError(
             f"Paper text is only {total_words} words — that is an abstract or landing "
             "page, not the paper; refusing to summarize it into a fake full text"
         )
     target_pct = 35  # aim for middle of 30-40% range
-    # The old max(300, ...) floor forced INFLATION of short sources.
-    target_words = max(150, int(total_words * target_pct / 100))
+    # No floor: the old max(300, ...) forced INFLATION of short sources.
+    target_words = int(total_words * target_pct / 100)
 
     system_prompt = (
         SUMMARIZE_SYSTEM_PROMPT
@@ -285,39 +290,59 @@ def _fallback_split(text: str, max_sections: int = MAX_SECTIONS) -> list[dict]:
     return sections
 
 
-_SCAFFOLD_RE = re.compile(
-    r"^\s*(?:Paper:\s*\".*?\"\s*\n+)?(?:Summarized text to organize into sections:\s*\n+)"
-    r"|</?summary>\s*",
+_SCAFFOLD_LEAD_RE = re.compile(
+    r"^\s*(?:Paper:\s*\".*?\"\s*\n+)?"
+    r"(?:(?:Summarized text to organize into sections:|"
+    r"The text to organize is between the <summary> tags\.[^\n]*)\s*\n+)?"
+    r"(?:<summary>\s*)?",
     re.IGNORECASE,
 )
+_SCAFFOLD_TAIL_RE = re.compile(r"\s*</summary>\s*$", re.IGNORECASE)
 
 
 def strip_prompt_scaffold(text: str) -> str:
-    """Remove the organizer prompt's own header/delimiters if the model echoed them."""
-    return _SCAFFOLD_RE.sub("", text or "").strip()
+    """Remove the organizer prompt's own header/delimiters if the model echoed
+    them — anchored to the edges only, so a '<summary>' in body prose survives."""
+    t = _SCAFFOLD_LEAD_RE.sub("", text or "", count=1)
+    return _SCAFFOLD_TAIL_RE.sub("", t).strip()
 
 
 _DISPLAY_MATH_RE = re.compile(r"\$\$(.+?)\$\$", re.S)
 _INLINE_MATH_RE = re.compile(r"(?<!\$)\$(?!\$)([^$\n]{2,200}?)\$(?!\$)")
 
 
-def extract_equations(text: str) -> list[Equation]:
-    """Carry the summary's equations through as structured data.
+_MONEY_LEAD_RE = re.compile(r"^\d[\d,.]*\s*[KMBkmb]?\b\s+[a-z]")
+_PROSE_RUN_RE = re.compile(r"(?:\b[a-z]{2,}\s+){3,}")
+
+
+def _equations_from_summary(text: str) -> list[Equation]:
+    """Carry the summary's equations through as structured data (distinct from
+    pdf_parser.extract_equations, which works on raw PDF text with context).
 
     Sections used to ship equations=[] unconditionally, so the analyzer
-    always saw 'No equations in this section.' and the planner storyboarded
-    from prose alone. Inline spans must contain a TeX command, sub/superscript
-    or operator so currency ('$5 and $10') is not mistaken for math.
+    always saw 'No equations in this section.' Inline spans must contain a
+    TeX command, sub/superscript or operator, and must not read as money or
+    prose ('$5 < $10 today' is not an equation).
     """
     equations: list[Equation] = []
+    seen: set[str] = set()
+
+    def add(latex: str, inline: bool) -> None:
+        if latex and latex not in seen:
+            seen.add(latex)
+            equations.append(Equation(latex=latex, is_inline=inline))
+
     for m in _DISPLAY_MATH_RE.finditer(text or ""):
-        latex = m.group(1).strip()
-        if latex:
-            equations.append(Equation(latex=latex, is_inline=False))
+        add(m.group(1).strip(), False)
     for m in _INLINE_MATH_RE.finditer(text or ""):
         latex = m.group(1).strip()
-        if re.search(r"\\[A-Za-z]+|[_^=<>]", latex):
-            equations.append(Equation(latex=latex, is_inline=True))
+        if not re.search(r"\\[A-Za-z]+|[_^=<>]", latex):
+            continue
+        if _MONEY_LEAD_RE.match(latex) or _PROSE_RUN_RE.search(latex):
+            continue
+        if latex[0].isdigit() and not re.search(r"[A-Za-z\\]", latex):
+            continue  # "$5 < $10" — numbers and an operator, no variables
+        add(latex, True)
     return equations
 
 
@@ -401,12 +426,12 @@ async def format_sections(
     # --- Phase 1: Holistic summarization ---
     try:
         summary_text = await _summarize_paper(full_content, meta.title, total_words, model)
+    except SourceTooShortError:
+        raise
     except Exception as e:
         logger.error(f"Phase 1 (summarization) failed: {e}")
         print(f"[FORMATTER] Phase 1 FAILED ({type(e).__name__}: {e}), aborting pipeline")
-        raise RuntimeError(
-            "Section summarization failed. No paper content was stored to avoid raw-text fallback."
-        ) from e
+        raise RuntimeError(f"Section summarization failed: {type(e).__name__}: {e}") from e
 
     # --- Phase 2: Section organization ---
     try:
@@ -426,7 +451,7 @@ async def format_sections(
             level=1,
             content=cleaned_content,
             summary=cleaned_content,
-            equations=extract_equations(cleaned_content),
+            equations=_equations_from_summary(cleaned_content),
             figures=[],
             tables=[],
             parent_id=None,

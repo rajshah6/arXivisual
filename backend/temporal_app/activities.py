@@ -96,7 +96,21 @@ async def ingest_paper(params: PipelineInput) -> None:
                 progress=0.30,
             )
             return
-        await _ingest_and_store_paper(db, params.job_id, params.arxiv_id)
+        try:
+            await _ingest_and_store_paper(db, params.job_id, params.arxiv_id)
+        except Exception as exc:
+            # Deterministic ingestion failures (abstract-only source, formatting
+            # failed after its own attempts) must reach the job row verbatim and
+            # must NOT be multiplied by the activity retry policy.
+            from temporalio.exceptions import ApplicationError
+
+            from ingestion.section_formatter import SourceTooShortError
+
+            deterministic = isinstance(exc, SourceTooShortError) or "Section formatting failed" in str(exc)
+            if deterministic:
+                await queries.update_job_status(db, params.job_id, status="failed", error=str(exc))
+                raise ApplicationError(str(exc), non_retryable=True) from exc
+            raise
 
 
 @activity.defn

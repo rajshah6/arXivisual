@@ -10,7 +10,6 @@ on substituted LaTeX.
 
 import asyncio
 
-import httpx
 import pytest
 
 from agents.base import BaseAgent
@@ -18,49 +17,54 @@ from ingestion import arxiv_fetcher, section_formatter
 from ingestion.html_parser import looks_like_latexml_paper
 from ingestion.section_formatter import (
     SUMMARIZE_SYSTEM_PROMPT,
-    extract_equations,
+    SourceTooShortError,
+    _equations_from_summary,
     strip_prompt_scaffold,
 )
+from tests.conftest import make_fake_http_client
 
 ABSTRACT_PAGE = "<html><body><main><h1>Title</h1><blockquote class='abstract'>..</blockquote></main></body></html>"
 LATEXML_PAGE = "<html><body><article class='ltx_document'><section class='ltx_section'>..</section></article></body></html>"
 
 
 class TestHtmlAvailability:
-    def _client(self, responses):
-        """Fake httpx client: url -> (status, headers)."""
-        class Resp:
-            def __init__(self, status, headers):
-                self.status_code, self.headers = status, headers
+    """Redirect shapes pinned to what the real hosts emit: arxiv.org/html
+    answers 200 or 404; ar5iv.labs.arxiv.org/html answers 200 when converted
+    and 307 -> arxiv.org/abs/{id} when not."""
 
-        class Client:
-            def __init__(self, *a, **k): ...
-            async def __aenter__(self): return self
-            async def __aexit__(self, *a): return False
-            async def head(self, url):
-                if url not in responses:
-                    raise httpx.RequestError("boom")
-                return Resp(*responses[url])
-        return Client
-
-    def test_ar5iv_redirect_to_abstract_is_not_html(self, monkeypatch):
-        monkeypatch.setattr(arxiv_fetcher.httpx, "AsyncClient", self._client({
+    def test_unconverted_id_yields_none_not_the_abstract_page(self, monkeypatch):
+        monkeypatch.setattr(arxiv_fetcher.httpx, "AsyncClient", make_fake_http_client({
             "https://arxiv.org/html/2608.13717": (404, {}),
-            "https://ar5iv.org/abs/2608.13717": (302, {"location": "https://arxiv.org/abs/2608.13717"}),
+            "https://ar5iv.labs.arxiv.org/html/2608.13717": (307, {"location": "https://arxiv.org/abs/2608.13717"}),
         }))
-        assert asyncio.run(arxiv_fetcher.check_ar5iv_available("2608.13717")) is None
+        assert asyncio.run(arxiv_fetcher.find_latexml_html_url("2608.13717")) is None
 
     def test_arxiv_html_preferred_when_present(self, monkeypatch):
-        monkeypatch.setattr(arxiv_fetcher.httpx, "AsyncClient", self._client({
+        monkeypatch.setattr(arxiv_fetcher.httpx, "AsyncClient", make_fake_http_client({
             "https://arxiv.org/html/2608.13717": (200, {}),
         }))
-        assert asyncio.run(arxiv_fetcher.check_ar5iv_available("2608.13717")) == "https://arxiv.org/html/2608.13717"
+        assert asyncio.run(arxiv_fetcher.find_latexml_html_url("2608.13717")) == "https://arxiv.org/html/2608.13717"
 
-    def test_redirect_to_versioned_html_is_accepted(self, monkeypatch):
-        monkeypatch.setattr(arxiv_fetcher.httpx, "AsyncClient", self._client({
-            "https://arxiv.org/html/1706.03762": (301, {"location": "https://arxiv.org/html/1706.03762v7"}),
+    def test_ar5iv_labs_fallback_when_converted(self, monkeypatch):
+        monkeypatch.setattr(arxiv_fetcher.httpx, "AsyncClient", make_fake_http_client({
+            "https://arxiv.org/html/1706.03762": (404, {}),
+            "https://ar5iv.labs.arxiv.org/html/1706.03762": (200, {}),
         }))
-        assert asyncio.run(arxiv_fetcher.check_ar5iv_available("1706.03762")) == "https://arxiv.org/html/1706.03762v7"
+        assert asyncio.run(arxiv_fetcher.find_latexml_html_url("1706.03762")) == "https://ar5iv.labs.arxiv.org/html/1706.03762"
+
+    def test_relative_redirect_to_versioned_html_is_resolved_and_verified(self, monkeypatch):
+        monkeypatch.setattr(arxiv_fetcher.httpx, "AsyncClient", make_fake_http_client({
+            "https://arxiv.org/html/1706.03762": (301, {"location": "/html/1706.03762v7"}),
+            "https://arxiv.org/html/1706.03762v7": (200, {}),
+        }))
+        assert asyncio.run(arxiv_fetcher.find_latexml_html_url("1706.03762")) == "https://arxiv.org/html/1706.03762v7"
+
+    def test_redirect_off_latexml_hosts_is_rejected(self, monkeypatch):
+        monkeypatch.setattr(arxiv_fetcher.httpx, "AsyncClient", make_fake_http_client({
+            "https://arxiv.org/html/1.2": (302, {"location": "https://evil.example/html/1.2"}),
+            "https://ar5iv.labs.arxiv.org/html/1.2": (404, {}),
+        }))
+        assert asyncio.run(arxiv_fetcher.find_latexml_html_url("1.2")) is None
 
     def test_body_validation(self):
         assert looks_like_latexml_paper(LATEXML_PAGE)
@@ -71,9 +75,11 @@ class TestSummarizer:
     def test_prompt_is_raw_so_tex_commands_survive(self):
         assert "\\textsc" in SUMMARIZE_SYSTEM_PROMPT
         assert "\t" not in SUMMARIZE_SYSTEM_PROMPT
+        # The raw-string change must not turn the old line-continuation into content.
+        assert SUMMARIZE_SYSTEM_PROMPT.startswith("You are")
 
     def test_short_source_is_refused(self):
-        with pytest.raises(ValueError, match="abstract"):
+        with pytest.raises(SourceTooShortError, match="abstract"):
             asyncio.run(section_formatter._summarize_paper("word " * 120, "T", 120, "gpt-5-mini"))
 
     def test_target_does_not_inflate(self, monkeypatch):
@@ -84,9 +90,9 @@ class TestSummarizer:
             return "summary text"
 
         monkeypatch.setattr(section_formatter, "call_llm", fake_llm)
-        asyncio.run(section_formatter._summarize_paper("w " * 500, "T", 500, "m"))
-        # 35% of 500 = 175, well under the old hard floor of 300
-        assert "~175 words" in captured["system"]
+        asyncio.run(section_formatter._summarize_paper("w " * 400, "T", 400, "m"))
+        # 35% of 400 = 140: no floor of any kind (the old max(300, ...) inflated)
+        assert "~140 words" in captured["system"]
 
 
 class TestOrganizerScaffold:
@@ -96,6 +102,12 @@ class TestOrganizerScaffold:
         assert strip_prompt_scaffold("<summary>\nBody\n</summary>") == "Body"
         assert strip_prompt_scaffold("Plain body") == "Plain body"
 
+    def test_new_header_sentence_stripped_but_inline_tag_kept(self):
+        text = 'Paper: "X"\n\nThe text to organize is between the <summary> tags. The tags and this header are NOT content.\n\nBody here.'
+        assert strip_prompt_scaffold(text) == "Body here."
+        # A <summary> element mentioned in prose (HTML papers) is content.
+        assert strip_prompt_scaffold("We use a <summary> token to mark boundaries.") == "We use a <summary> token to mark boundaries."
+
 
 class TestEquationCarryThrough:
     def test_display_and_inline_math_extracted_currency_ignored(self):
@@ -103,12 +115,17 @@ class TestEquationCarryThrough:
             "Attention is\n$$\n\\mathrm{softmax}(QK^T/\\sqrt{d})V\n$$\nwith $d_k = 64$ heads. "
             "Prices were $5 and $10 per unit."
         )
-        eqs = extract_equations(text)
+        eqs = _equations_from_summary(text)
         latex = [e.latex for e in eqs]
         assert "\\mathrm{softmax}(QK^T/\\sqrt{d})V" in latex
         assert "d_k = 64" in latex
         assert not any("5 and" in item for item in latex)
         assert [e.is_inline for e in eqs] == [False, True]
+
+    def test_money_and_prose_spans_rejected_and_deduped(self):
+        text = "It costs $5 < $10 today. Also $x = y$ and again $x = y$ and $the model then uses the same trick$."
+        latex = [e.latex for e in _equations_from_summary(text)]
+        assert latex == ["x = y"]
 
 
 class TestPromptBraces:

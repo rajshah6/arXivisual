@@ -56,7 +56,7 @@ frontend, and builds the backend Docker image. A blocking secret scan and a nigh
 
 ## How a paper becomes videos
 
-1. **Ingest** (`ingestion/`) — fetch metadata + ar5iv HTML (PDF fallback), parse into sections, store in the DB.
+1. **Ingest** (`ingestion/`) — fetch metadata + LaTeXML HTML from arxiv.org/html or ar5iv (PDF fallback); sources under 400 words are refused, and a formatting failure fails the job instead of storing raw text, parse into sections, store in the DB.
 2. **Analyze & plan** (`agents/section_analyzer.py`, `agents/visualization_planner.py`) — find up to 5
    visualization-worthy concepts and storyboard each one.
 3. **Generate** (`agents/manim_generator.py`) — write complete Manim `VoiceoverScene` code, narration included,

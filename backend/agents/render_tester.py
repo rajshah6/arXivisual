@@ -94,6 +94,46 @@ class RenderTester:
         "IndentationError": "Fix the indentation - Python requires consistent indentation",
     }
     
+    # Message-specific guidance for the errors production actually produces
+    # (7-day worker logs, most frequent first). Generic type-level advice
+    # ("check the function signature") let the same 'buff' mistake repeat
+    # across four regeneration attempts; naming the correct API fixes it in one.
+    TARGETED_FIXES: tuple[tuple[str, str], ...] = (
+        ("unexpected keyword argument 'buff'",
+         "`buff` is NOT a constructor argument. Build the object first, then space it with "
+         ".arrange(DIRECTION, buff=...) or .next_to(target, DIRECTION, buff=...)."),
+        ("unexpected keyword argument 'width'",
+         "`width`/`height` are constructor arguments only for Rectangle/RoundedRectangle/"
+         "ImageMobject. Axes uses x_length/y_length. VGroup/Text/MathTex/Circle don't take "
+         "them — construct first, then .scale(), .set_width(), or .stretch_to_fit_width()."),
+        ("unexpected keyword argument 'height'",
+         "`height` is a constructor argument only for Rectangle/RoundedRectangle. Axes uses "
+         "y_length; other mobjects: construct first, then .set_height() or .scale()."),
+        ("Create only works for VMobjects",
+         "Create/Uncreate accept only vector mobjects. Use FadeIn for Group/ImageMobject/"
+         "Table, Write for Text/MathTex, and VGroup (not Group) to hold shapes."),
+        ("Must specify file for SVGMobject",
+         "No SVG or image files exist in this environment. Never use SVGMobject/ImageMobject; "
+         "compose icons from primitives (Circle, Rectangle, Arrow, Text)."),
+        ("CurvedArrow.__init__() missing",
+         "CurvedArrow requires two points: CurvedArrow(start, end, angle=-TAU/4). Use "
+         "obj.get_right()/get_left()/get_top()/get_bottom() for the endpoints."),
+        ("name 'math' is not defined",
+         "Add `import math` at the top of the file, or use numpy (np.pi, np.sqrt, np.sin), "
+         "which `from manim import *` already provides as `np`."),
+        ("has no attribute 'add_coordinate_labels'",
+         "Use axes.add_coordinates() — add_coordinate_labels does not exist in Manim CE."),
+        ("'Camera' object has no attribute 'frame'",
+         "self.camera.frame only exists in MovingCameraScene; this is a VoiceoverScene. "
+         "Zoom/pan by animating the content instead: self.play(group.animate.scale(1.5).shift(...))."),
+        ("'function' object has no attribute",
+         "A method was referenced without being called — e.g. obj.copy.scale(...) must be "
+         "obj.copy().scale(...); axes.plot needs to be called with a function argument."),
+        ("list index out of range",
+         "Indexed past the end of a VGroup/MathTex. MathTex only splits into the separate "
+         "string arguments you pass; check len(group) before indexing, and build groups explicitly."),
+    )
+
     def __init__(self, timeout_seconds: float | None = None):
         """
         Initialize the render tester.
@@ -343,8 +383,15 @@ class RenderTester:
         # Get suggestion based on error type
         suggestion = self.ERROR_FIXES.get(error_type, "Review the error and fix accordingly")
 
-        # Special handling for common Manim errors
-        if "latex" in error_msg.lower() or "tex" in error_msg.lower():
+        # Most specific first: an exact production error gets an exact fix.
+        for needle, targeted in self.TARGETED_FIXES:
+            if needle in error_msg:
+                return {"type": error_type, "message": error_msg, "suggestion": targeted}
+
+        # Special handling for common Manim errors. Match LaTeX as a token —
+        # a bare "tex" substring also matched "Text", "context", "vertex" and
+        # mislabeled unrelated errors as LaTeX problems.
+        if re.search(r"latex|\btex\b|MathTex|dvi", error_msg, re.IGNORECASE):
             suggestion = (
                 "LaTeX error detected. Common fixes:\n"
                 "1. Each MathTex part must be valid LaTeX on its own\n"

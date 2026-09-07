@@ -140,3 +140,34 @@ class TestSubprocessErrorParsing:
         out = RenderTester()._parse_subprocess_error("something exploded, no traceback")
         assert not out.success
         assert out.error_message
+
+
+class TestTargetedFixSuggestions:
+    """The exact errors production produces must get exact guidance, not
+    generic type-level advice — that generic advice let the same mistake
+    repeat across four regeneration attempts."""
+
+    @pytest.mark.parametrize("message, expect", [
+        ("Mobject.__init__() got an unexpected keyword argument 'buff'", ".next_to("),
+        ("Mobject.__init__() got an unexpected keyword argument 'width'", "x_length"),
+        ("Create only works for VMobjects.", "FadeIn"),
+        ("Must specify file for SVGMobject", "Never use SVGMobject"),
+        ("CurvedArrow.__init__() missing 2 required positional arguments: 'start_point' and 'end_point'", "CurvedArrow(start, end"),
+        ("name 'math' is not defined. Did you forget to import 'math'?", "import math"),
+        ("Axes object has no attribute 'add_coordinate_labels'. Did you mean: 'add_coordinates'?", "add_coordinates()"),
+        ("'Camera' object has no attribute 'frame'", "MovingCameraScene"),
+        ("'function' object has no attribute 'scale'", "without being called"),
+        ("list index out of range", "len(group)"),
+    ])
+    def test_top_production_errors_get_specific_fixes(self, message, expect):
+        info = RenderTester()._refine_error("TypeError", message)
+        assert expect in info["suggestion"], info["suggestion"]
+
+    def test_text_in_message_is_not_mislabeled_as_latex(self):
+        info = RenderTester()._refine_error("AttributeError", "Text object has no attribute 'flash'")
+        assert info["type"] == "AttributeError"
+        assert "LaTeX" not in info["suggestion"]
+
+    def test_real_latex_errors_still_detected(self):
+        info = RenderTester()._refine_error("RuntimeError", "latex error converting to dvi")
+        assert info["type"] == "LaTeXError"

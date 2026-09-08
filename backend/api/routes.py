@@ -312,13 +312,15 @@ async def get_paper(arxiv_id: str, db: AsyncSession = Depends(get_db)):
         # Convert database models to response schemas
         sections = sorted(paper.sections, key=lambda s: s.order_index)
 
+        # Previous runs' rows are kept for feedback integrity but never shown.
+        visible_viz = [v for v in visible_viz if v.status != "superseded"]
         # Every COMPLETE video per section, newest first. The old picker kept
         # one row per section and could prefer a stale previous-run row (the
         # relationship loads in heap order); pending/failed rows with a
         # leftover video_url were also mapped.
         section_videos: dict[str, list[SectionVideo]] = {}
         ordered = sorted(
-            paper.visualizations,
+            visible_viz,
             key=lambda v: (v.created_at or _NAIVE_EPOCH, v.id),
             reverse=True,
         )
@@ -359,7 +361,7 @@ async def get_paper(arxiv_id: str, db: AsyncSession = Depends(get_db)):
                     video_url=v.video_url,
                     status=VisualizationStatus(v.status),
                 )
-                for v in paper.visualizations
+                for v in visible_viz
             ],
             processed_at=paper.updated_at or paper.created_at or _utcnow_naive(),
         )

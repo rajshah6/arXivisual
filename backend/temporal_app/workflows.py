@@ -53,13 +53,14 @@ RENDER_TASK_QUEUE = "paper-render"
 
 # Transient infra faults (network, DB hiccup) get one automatic retry.
 _INFRA_RETRY = RetryPolicy(maximum_attempts=2)
-# Generation is real money (~$0.07/paper of LLM spend) — never auto-retry.
+# A repair (or a repair re-render) is a single paid LLM/render step whose
+# failure keeps the original video — never worth a second attempt.
 _NO_RETRY = RetryPolicy(maximum_attempts=1)
-# Generation retries once, but only a worker death can trigger it: the
-# activity swallows per-candidate errors itself, and heartbeats every
-# checkpointed visualization so a dead worker is noticed within the heartbeat
-# timeout. The retry skips checkpointed concepts, so it costs the unfinished
-# work only.
+# Generation retries once, and only a dead worker can trigger it: the
+# activity swallows per-candidate errors itself and heartbeats on a 30s timer
+# (not just per finished viz), so a heartbeat timeout genuinely means the
+# worker died. The retry skips this run's checkpointed concepts, so it costs
+# the unfinished work only.
 _GENERATION_RETRY = RetryPolicy(maximum_attempts=2)
 
 
@@ -158,12 +159,17 @@ class PaperPipelineWorkflow:
             )
         except Exception as exc:
             workflow.logger.warning("Render activity failed for %s: %s", ri.viz_id, exc)
-            await workflow.execute_activity(
-                record_render_failure,
-                ri,
-                start_to_close_timeout=timedelta(minutes=1),
-                retry_policy=_INFRA_RETRY,
-            )
+            # Best effort: the recorder keeps the row from stranding at
+            # 'pending', but a recorder failure must never abort the job.
+            try:
+                await workflow.execute_activity(
+                    record_render_failure,
+                    ri,
+                    start_to_close_timeout=timedelta(minutes=1),
+                    retry_policy=_INFRA_RETRY,
+                )
+            except Exception as rec_exc:
+                workflow.logger.warning("Could not record render failure for %s: %s", ri.viz_id, rec_exc)
             return RenderResult(viz_id=ri.viz_id, succeeded=False)
 
     async def _repair_one(self, job_id: str, result: RenderResult, code: str) -> bool:

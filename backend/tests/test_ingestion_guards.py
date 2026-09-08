@@ -19,8 +19,8 @@ from ingestion.section_formatter import (
     SUMMARIZE_SYSTEM_PROMPT,
     SourceTooShortError,
     _equations_from_summary,
-    strip_prompt_scaffold,
 )
+from ingestion.text_normalize import strip_prompt_scaffold
 from tests.conftest import make_fake_http_client
 
 ABSTRACT_PAGE = "<html><body><main><h1>Title</h1><blockquote class='abstract'>..</blockquote></main></body></html>"

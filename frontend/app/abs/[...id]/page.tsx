@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState, useCallback, useMemo, useRef, use } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CardStack } from "@/components/CardStack";
+import { MarkdownContent } from "@/components/MarkdownContent";
 import { SiteFeedback } from "@/components/SiteFeedback";
 import { TurnstileWidget, isTurnstileConfigured } from "@/components/TurnstileWidget";
 import type { ScrollySectionModel } from "@/components/ScrollySection";
@@ -563,9 +564,10 @@ function ReadyState({
             </span>
             Abstract
           </h2>
-          <p className="text-white/50 leading-relaxed text-base sm:text-lg">
-            {paper.abstract}
-          </p>
+          <div className="text-white/50 leading-relaxed text-base sm:text-lg">
+            {/* Abstracts carry TeX ($\tilde{O}$, \emph{}); render them like section text. */}
+            <MarkdownContent content={paper.abstract} />
+          </div>
         </div>
       </motion.div>
 

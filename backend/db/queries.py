@@ -377,6 +377,42 @@ def next_viz_index(rows: list[Visualization]) -> int:
     return highest + 1
 
 
+async def insert_visualization_with_next_index(
+    *,
+    paper_suffix: str,
+    paper_id: str,
+    section_id: str | None,
+    concept: str,
+    storyboard: dict | None,
+    manim_code: str | None,
+    session_maker,
+    attempts: int = 5,
+) -> str:
+    """INSERT a checkpoint row under the first unused ``viz_{suffix}_{N}`` id.
+
+    Read-then-insert in its own session, retried on IntegrityError, so two
+    overlapping generation attempts can never write the same id (an upsert
+    would silently overwrite the other attempt's row).
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    last_exc: Exception | None = None
+    for _ in range(attempts):
+        async with session_maker() as db:
+            rows = await get_visualizations_for_paper(db, paper_id, include_superseded=True)
+            viz_id = f"viz_{paper_suffix}_{next_viz_index(rows)}"
+            try:
+                await create_visualization(
+                    db, viz_id=viz_id, paper_id=paper_id, section_id=section_id,
+                    concept=concept, status="pending", storyboard=storyboard, manim_code=manim_code,
+                )
+                return viz_id
+            except IntegrityError as exc:
+                last_exc = exc
+                await db.rollback()
+    raise RuntimeError(f"Could not allocate a visualization id for {paper_id}") from last_exc
+
+
 async def supersede_visualizations_before(
     db: AsyncSession, paper_id: str, before: datetime
 ) -> int:

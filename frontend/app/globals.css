@@ -42,10 +42,9 @@ body {
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
 }
 
-/* Smooth scrolling */
-html {
-  scroll-behavior: smooth;
-}
+/* No global smooth scrolling: the reader is an N×200vh scroll track, and
+   animating every programmatic/keyboard scroll across it read as "sluggish".
+   (There are no in-page anchor links that relied on it.) */
 
 /* Glassmorphism card */
 .glass-card {

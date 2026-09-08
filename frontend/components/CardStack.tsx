@@ -1,13 +1,6 @@
 "use client";
 
-import {
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState, memo, startTransition } from "react";
 import {
   motion,
   useScroll,
@@ -28,7 +21,22 @@ const CONTENT_FRACTION = 1 - EXIT_FRACTION; // first 75% = content scroll phase
  * SlideCard — creates 3 motion values per card (vs old CardSlot's 8 hooks).
  * Handles horizontal slide transitions: exit left, enter from right.
  */
-function SlideCard({
+// Viewport size read once per resize instead of inside every per-frame
+// transform: window.innerWidth/innerHeight inside useTransform forced a
+// layout read between framer's writes on every scroll frame (up to 6/frame).
+const viewport = { current: { w: 1000, h: 696 } };
+function useViewportRef() {
+  useEffect(() => {
+    const read = () => {
+      viewport.current = { w: window.innerWidth, h: window.innerHeight };
+    };
+    read();
+    window.addEventListener("resize", read);
+    return () => window.removeEventListener("resize", read);
+  }, []);
+}
+
+const SlideCard = memo(function SlideCard({
   section,
   index,
   totalSections,
@@ -58,7 +66,7 @@ function SlideCard({
 
   // --- slideX: horizontal position ---
   const slideX = useTransform(scrollYProgress, (v) => {
-    const vw = typeof window !== "undefined" ? window.innerWidth : 1000;
+    const vw = viewport.current.w;
 
     // Before this card's enter phase: offscreen right
     if (index > 0 && v < prevExitStart) return vw;
@@ -119,8 +127,7 @@ function SlideCard({
   // --- contentY: scroll content within the card during content phase ---
   const contentY = useTransform(scrollYProgress, (v) => {
     const contentHeight = contentHeightsRef.current?.[index] || 0;
-    const cardViewportHeight =
-      typeof window !== "undefined" ? window.innerHeight - 96 : 600;
+    const cardViewportHeight = viewport.current.h - 96;
     const maxScroll = Math.max(0, contentHeight - cardViewportHeight);
 
     // Before this card's segment: content at top
@@ -155,7 +162,7 @@ function SlideCard({
       onContentHeight={onContentHeight}
     />
   );
-}
+});
 
 export function CardStack({
   sections,
@@ -187,11 +194,17 @@ export function CardStack({
   // No useSpring — raw scroll progress for responsive feel
 
   const [activeIndex, setActiveIndex] = useState(0);
+  const activeIndexRef = useRef(0);
+  useViewportRef();
 
   useMotionValueEvent(scrollYProgress, "change", (latest) => {
     const newActive = Math.min(Math.floor(latest * N), N - 1);
-    if (newActive >= 0 && newActive !== activeIndex) {
-      setActiveIndex(newActive);
+    // Ref, not state, in the closure: reading activeIndex here made framer
+    // re-subscribe on every render. The boundary switch mounts a new card
+    // (markdown + KaTeX + videos) — keep that off the scroll frame.
+    if (newActive >= 0 && newActive !== activeIndexRef.current) {
+      activeIndexRef.current = newActive;
+      startTransition(() => setActiveIndex(newActive));
     }
   });
 

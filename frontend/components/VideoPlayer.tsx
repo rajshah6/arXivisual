@@ -8,6 +8,9 @@ type Props = {
   className?: string;
   autoPlay?: boolean;
   pauseWhenInactive?: boolean;
+  /** "none" for players in cards that aren't being read — every mounted
+   *  card's videos used to fetch metadata and set up decoders at once. */
+  preload?: "none" | "metadata" | "auto";
 };
 
 function formatTime(seconds: number): string {
@@ -23,6 +26,7 @@ export function VideoPlayer({
   className,
   autoPlay = false,
   pauseWhenInactive = false,
+  preload = "metadata",
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -151,7 +155,7 @@ export function VideoPlayer({
         src={src}
         className="block w-full"
         playsInline
-        preload="metadata"
+        preload={preload}
         autoPlay={autoPlay}
         muted={autoPlay}
         onPlay={() => setIsPlaying(true)}
@@ -226,8 +230,8 @@ export function VideoPlayer({
               className="group h-2 flex-1 cursor-pointer rounded-full bg-white/[0.08] border border-white/[0.06]"
             >
               <div
-                className="h-full rounded-full bg-gradient-to-r from-white/50 to-white/30 transition-[width] duration-100"
-                style={{ width: `${progressPct}%` }}
+                className="h-full w-full origin-left rounded-full bg-gradient-to-r from-white/50 to-white/30 transition-transform duration-100"
+                style={{ transform: `scaleX(${progressPct / 100})` }}
               />
               <div
                 className="mt-1 text-[10px] text-white/30"

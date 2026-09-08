@@ -161,6 +161,9 @@ export function MosaicBackground({
     // ------------------------------------------------------------------
     // Step 3: Draw triangulated mosaic
     // ------------------------------------------------------------------
+    // ~12.8k fill+stroke paths at 1080p landed as one blocking task right
+    // when the reader appears; strokes are barely visible at that density.
+    const drawStrokes = rows * cols * 2 <= 6000;
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const p00 = points[r][c];
@@ -239,7 +242,7 @@ export function MosaicBackground({
 
           ctx.strokeStyle = strokeColor!;
           ctx.lineWidth = 0.5;
-          ctx.stroke();
+          if (drawStrokes) ctx.stroke();
         }
       }
     }

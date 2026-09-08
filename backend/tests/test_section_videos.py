@@ -81,3 +81,23 @@ async def test_failed_status_drops_stale_url(db):
     await queries.update_visualization_status(db, "viz_2608_13717_4", status="failed", error="boom")
     row = await queries.get_visualization(db, "viz_2608_13717_4")
     assert row.status == "failed" and row.video_url is None and row.error == "boom"
+
+
+async def test_superseded_rows_never_reach_the_api(client, db):
+    # Reviewer: this exact filter broke once during the stack merge.
+    db.add(Paper(id="1706.03762", title="A"))
+    db.add(Section(id="s1", paper_id="1706.03762", title="S", content="c", order_index=0))
+    db.add(Visualization(id="viz_1706_03762_1", paper_id="1706.03762", section_id="s1", concept="old",
+                         status="superseded", video_url="https://x/old.mp4", created_at=datetime(2026, 9, 9)))
+    db.add(Visualization(id="viz_1706_03762_2", paper_id="1706.03762", section_id="s1", concept="new",
+                         status="complete", video_url="https://x/new.mp4", created_at=datetime(2026, 9, 8)))
+    db.add(Visualization(id="viz_1706_03762_3", paper_id="1706.03762", section_id=None, concept="orphan",
+                         status="complete", video_url="https://x/orphan.mp4", created_at=datetime(2026, 9, 8)))
+    await db.commit()
+    resp = await client.get("/api/paper/1706.03762")
+    assert resp.status_code == 200  # a NULL section_id row used to 500 the endpoint
+    body = resp.json()
+    sec = body["sections"][0]
+    assert [v["viz_id"] for v in sec["videos"]] == ["viz_1706_03762_2"]
+    assert sec["video_url"] == "https://x/new.mp4"
+    assert "viz_1706_03762_1" not in {v["id"] for v in body["visualizations"]}

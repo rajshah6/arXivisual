@@ -31,7 +31,9 @@ export function VideoPlayer({
   const [hadError, setHadError] = useState(false);
   // One automatic retry: the video host occasionally answers 429 under load
   // and the <video> element surfaces that as a permanent error otherwise.
-  const retriedRef = useRef(false);
+  // Source the one-shot reload was spent on; a new src gets its own retry.
+  const retriedForSrc = useRef<string | null>(null);
+  const retryTimer = useRef<number | undefined>(undefined);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [progress, setProgress] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
@@ -125,6 +127,8 @@ export function VideoPlayer({
     };
   }, []);
 
+  useEffect(() => () => window.clearTimeout(retryTimer.current), []);
+
   useEffect(() => {
     if (!pauseWhenInactive) return;
     const v = videoRef.current;
@@ -164,9 +168,9 @@ export function VideoPlayer({
         onTimeUpdate={onTimeUpdate}
         onError={() => {
           const v = videoRef.current;
-          if (v && !retriedRef.current) {
-            retriedRef.current = true;
-            setTimeout(() => v.load(), 2000);
+          if (v && retriedForSrc.current !== src) {
+            retriedForSrc.current = src;
+            retryTimer.current = window.setTimeout(() => v.load(), 2000);
             return;
           }
           setHadError(true);

@@ -47,7 +47,7 @@ ingestion organizer); candidates are de-duplicated by concept before the cap of 
 finished visualization is checkpointed (upserted + heartbeat, plus a 30s heartbeat timer) as it completes; a
 retried generation resumes from this run's checkpoints (rows created since the job began) and only fills
 the remaining slots. Previous runs' rows are never deleted (feedback references them): `finalize_job`
-marks them `superseded` once the new run produced videos, and superseded rows never reach the API. The
+marks them `superseded` once the new run produced videos, and superseded rows never reach the API. `GET /api/paper` lists EVERY complete video per section (`SectionResponse.videos`, newest first; `video_url` = `videos[0]` for older clients). The
 legacy in-process path (`jobs/worker.py`) still writes rows the old way — no checkpointing or superseding.
 
 Display text has ONE owner: `ingestion/text_normalize.py` (idempotent; applied by `section_formatter` at ingest

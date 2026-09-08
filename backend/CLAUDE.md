@@ -50,6 +50,11 @@ the remaining slots. Previous runs' rows are never deleted (feedback references 
 marks them `superseded` once the new run produced videos, and superseded rows never reach the API. The
 legacy in-process path (`jobs/worker.py`) still writes rows the old way — no checkpointing or superseding.
 
+Display text has ONE owner: `ingestion/text_normalize.py` (idempotent; applied by `section_formatter` at ingest
+and by `api/routes.py` at read time; abstracts use `from_organizer=False`). The frontend does no text repair.
+JSON-escape residue is undone at its origin (`_organize_into_sections`) and again idempotently here; the
+over-escaping it undoes is invited by `agents.base.call_llm_json`'s retry suffix.
+
 Gate failure → regenerate with combined feedback (`MAX_RETRIES=3` + `VOICE_QUALITY_RETRIES=2` attempts); all
 attempts failing → `VOICE_FAIL_BEHAVIOR="return_silent"`. Gates report to the eval harness through the
 `agents.pipeline.metrics_hook` seam (None in production). After rendering, a vision judge samples frames for

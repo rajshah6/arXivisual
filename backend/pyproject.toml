@@ -81,6 +81,8 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+"ingestion/text_normalize.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/test_text_normalize.py" = ["RUF001"]
 "tools/*" = ["E402", "DTZ"]           # CLI scripts: sys.path setup + local timestamps
 "tests/*" = ["E402", "DTZ"]           # fixtures use naive datetimes on purpose
 "test_*.py" = ["E402"]                # root-level CLI scripts

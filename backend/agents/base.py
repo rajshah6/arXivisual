@@ -320,17 +320,19 @@ def call_llm_sync(
 # compliant reply that also had a trailing comma. \u counts as an escape only
 # when four hex digits follow.
 _BACKSLASH_RE = re.compile(r'\\\\|\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})')
-_TRAILING_COMMA_RE = re.compile(r",\s*([}\]])")
+# String literals are matched (and kept) by the first alternative so a comma
+# INSIDE a string value ("a, ]") is never mistaken for a trailing comma.
+_STRING_OR_TRAILING_COMMA_RE = re.compile(r'("(?:[^"\\]|\\.)*")|,\s*([}\]])')
 
 
 def repair_json_text(text: str) -> str:
     """Best-effort repair of LLM JSON: escape LONE backslashes (LaTeX inside
     strings: \\alpha -> \\\\alpha; already-escaped pairs untouched) and drop
-    trailing commas. Idempotent on valid JSON."""
+    trailing commas outside string literals. Idempotent on valid JSON."""
     # Both cases map to an escaped pair: a matched pair stays a pair, a lone
     # backslash becomes one.
     repaired = _BACKSLASH_RE.sub("\\\\\\\\", text)
-    return _TRAILING_COMMA_RE.sub(r"\1", repaired)
+    return _STRING_OR_TRAILING_COMMA_RE.sub(lambda m: m.group(1) if m.group(1) is not None else m.group(2), repaired)
 
 
 _JSON_RETRY_SUFFIX = (
@@ -454,30 +456,8 @@ class BaseAgent:
         return result.replace("\x00LB\x00", "{").replace("\x00RB\x00", "}")
 
     def _parse_json_response(self, content: str) -> dict:
-        """
-        Extract and parse JSON from the response.
-
-        Handles raw JSON, JSON wrapped in markdown code blocks, and the two
-        LaTeX-induced breakages production actually produces (a lone
-        backslash before a non-escape character, a trailing comma).
-        """
-        candidates = []
-        for pattern in (r"```json\s*([\s\S]*?)\s*```", r"```\s*([\s\S]*?)\s*```"):
-            match = re.search(pattern, content)
-            if match:
-                candidates.append(match.group(1).strip())
-        candidates.append(content.strip())
-
-        last_error: Exception | None = None
-        for text in candidates:
-            for attempt in (text, repair_json_text(text)):
-                try:
-                    return json.loads(attempt)
-                except json.JSONDecodeError as e:
-                    last_error = e
-        raise ValueError(
-            f"Failed to parse JSON from response: {last_error}\nContent: {content[:500]}"
-        ) from last_error
+        """See module-level parse_json_response (single implementation)."""
+        return parse_json_response(content)
 
     async def _call_llm_json(self, prompt: str, **kwargs: Any) -> dict:
         """JSON-mode call with one repair retry (see module-level call_llm_json):

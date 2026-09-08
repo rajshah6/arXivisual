@@ -16,6 +16,7 @@ so only the interrupted render re-runs.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from dataclasses import dataclass
 
@@ -164,8 +165,6 @@ async def generate_visualizations_for_paper(params: PipelineInput) -> list[Rende
             r for r in await queries.get_visualizations_for_paper(db, params.arxiv_id, since=run_started)
             if r.manim_code
         ]
-        all_rows = await queries.get_visualizations_for_paper(db, params.arxiv_id, include_superseded=True)
-        counter = queries.next_viz_index(all_rows) - 1
         db_paper = await queries.get_paper(db, params.arxiv_id)
         db_sections = sorted(db_paper.sections, key=lambda s: s.order_index)
         structured_paper = _build_structured_paper_from_db(db_paper, db_sections)
@@ -178,20 +177,19 @@ async def generate_visualizations_for_paper(params: PipelineInput) -> list[Rende
     remaining = max(0, MAX_VISUALIZATIONS - len(existing))
 
     async def checkpoint(viz) -> None:
-        nonlocal counter
-        counter += 1
-        viz_id = f"viz_{paper_suffix}_{counter}"
-        async with async_session_maker() as db:
-            await queries.upsert_visualization(
-                db,
-                viz_id=viz_id,
-                paper_id=params.arxiv_id,
-                section_id=viz.section_id,
-                concept=viz.concept,
-                storyboard={"raw": viz.storyboard},
-                manim_code=viz.manim_code,
-                status="pending",
-            )
+        # The id is minted from the table at write time and INSERTed (never
+        # upserted): if a second attempt ever overlaps the first — the 40-min
+        # start-to-close timeout can fire while attempt 1 is still running —
+        # neither can overwrite the other's row.
+        viz_id = await queries.insert_visualization_with_next_index(
+            paper_suffix=paper_suffix,
+            paper_id=params.arxiv_id,
+            section_id=viz.section_id,
+            concept=viz.concept,
+            storyboard={"raw": viz.storyboard},
+            manim_code=viz.manim_code,
+            session_maker=async_session_maker,
+        )
         render_inputs.append(RenderInput(job_id=params.job_id, viz_id=viz_id, manim_code=viz.manim_code))
         activity.heartbeat(f"{len(render_inputs)} visualization(s) checkpointed")
 
@@ -222,6 +220,8 @@ async def generate_visualizations_for_paper(params: PipelineInput) -> list[Rende
                 )
         finally:
             beat.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await beat
 
     if render_inputs:
         async with async_session_maker() as db:
@@ -436,10 +436,20 @@ async def finalize_job(params: ProgressUpdate) -> None:
         # Only a run that actually produced videos retires the previous run's
         # rows; a failed re-run leaves the old videos serving.
         job = await queries.get_job(db, params.job_id)
-        if params.completed > 0 and job and job.paper_id and job.created_at:
-            retired = await queries.supersede_visualizations_before(db, job.paper_id, job.created_at)
-            if retired:
-                logger.info("Superseded %d previous-run visualization(s) for %s", retired, job.paper_id)
+        if job and job.paper_id and job.created_at:
+            # Every render input has written a terminal status by now; a row
+            # still pending is one whose failure recorder itself failed.
+            leftover = await queries.fail_pending_visualizations(
+                db, job.paper_id,
+                error="Render did not complete before the job finished.",
+                since=job.created_at,
+            )
+            if leftover:
+                logger.warning("Failed %d leftover pending visualization(s) for %s", leftover, job.paper_id)
+            if params.completed > 0:
+                retired = await queries.supersede_visualizations_before(db, job.paper_id, job.created_at)
+                if retired:
+                    logger.info("Superseded %d previous-run visualization(s) for %s", retired, job.paper_id)
 
 
 @activity.defn

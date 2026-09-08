@@ -44,6 +44,14 @@ class TestJsonRepair:
         assert repair_json_text(valid) == valid
         assert json.loads(repair_json_text(valid)) == json.loads(valid)
 
+    def test_commas_inside_strings_survive_repair(self):
+        # Reviewer repro: the trailing-comma strip was not string-aware and
+        # deleted the comma in "a, ]" — corrupting concept text.
+        raw = '{"c": "x, ]", "d": "y, }", "items": [1,],}'
+        assert parse_json_response(raw) == {"c": "x, ]", "d": "y, }", "items": [1]}
+        valid = '{"c": "x, ]"}'
+        assert repair_json_text(valid) == valid
+
     def test_bogus_unicode_escape_is_repaired(self):
         # \u not followed by 4 hex digits is a lone backslash, not an escape.
         assert json.loads(repair_json_text('{"c": "\\underline"}')) == {"c": "\\underline"}
@@ -247,3 +255,21 @@ def test_every_workflow_activity_is_registered_on_a_worker():
     assert referenced, "no activities detected in workflows.py — test is broken"
     missing = referenced - registered
     assert not missing, f"activities invoked by the workflow but not registered: {missing}"
+
+
+async def test_checkpoint_ids_are_minted_at_write_time_and_never_collide(db):
+    await _seed(db)  # rows _1 and _2 (new format) + an old-format row
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    maker = async_sessionmaker(db.bind, expire_on_commit=False)
+    a = await queries.insert_visualization_with_next_index(
+        paper_suffix="1706_03762", paper_id="1706.03762", section_id="s", concept="c1",
+        storyboard=None, manim_code="code", session_maker=maker,
+    )
+    b = await queries.insert_visualization_with_next_index(
+        paper_suffix="1706_03762", paper_id="1706.03762", section_id="s", concept="c2",
+        storyboard=None, manim_code="code", session_maker=maker,
+    )
+    assert (a, b) == ("viz_1706_03762_3", "viz_1706_03762_4")
+    rows = await queries.get_visualizations_for_paper(db, "1706.03762", include_superseded=True)
+    assert {r.id for r in rows} >= {"viz_1706_03762_3", "viz_1706_03762_4"}

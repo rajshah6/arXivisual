@@ -1,11 +1,14 @@
 "use client";
 
-import { memo, useMemo } from "react";
+import { memo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 
+// All display normalization (small-caps repair, TeX wrapping, fence repair,
+// currency escaping, \[ \] / \( \) delimiters) happens in the backend at
+// ingest AND read time (ingestion/text_normalize.py) — one owner, no drift.
 type MarkdownContentProps = {
   content: string;
   className?: string;
@@ -84,7 +87,6 @@ export const MarkdownContent = memo(function MarkdownContent({
   content,
   className = "",
 }: MarkdownContentProps) {
-  const processedContent = useMemo(() => preprocessLatex(content), [content]);
 
   return (
     <div className={`markdown-content ${className}`}>
@@ -93,69 +95,8 @@ export const MarkdownContent = memo(function MarkdownContent({
         rehypePlugins={[rehypeKatex]}
         components={MARKDOWN_COMPONENTS}
       >
-        {processedContent}
+        {content}
       </ReactMarkdown>
     </div>
   );
 });
-
-function preprocessLatex(content: string): string {
-  // Bare-TeX wrapping, fence repair and currency escaping now happen in the
-  // backend (ingestion/text_normalize.py) at ingest AND read time; the old
-  // client-side wrapLatexPatterns swallowed whole sentences into formulas.
-  let processed = normalizeBrokenSmallCaps(content);
-  processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (_, math) => `$${math}$`);
-  processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (_, math) => `$$${math}$$`);
-  return processed;
-}
-
-function normalizeBrokenSmallCaps(content: string): string {
-  // Remove zero-width characters often introduced by PDF/LLM formatting.
-  const cleaned = content.replace(/[\u200B-\u200D\uFEFF]/g, "");
-  const lines = cleaned.split("\n");
-  const out: string[] = [];
-
-  let i = 0;
-  while (i < lines.length) {
-    const raw = lines[i] ?? "";
-    const line = raw.trim();
-
-    // Handle "\textsc" markers and inline variants like "\textscBASE".
-    const textscMatch = line.match(/^\\textsc\b\s*([A-Za-z]+)?$/);
-    if (textscMatch) {
-      const inlineWord = textscMatch[1];
-      if (inlineWord) out.push(inlineWord.toUpperCase());
-      i += 1;
-      continue;
-    }
-
-    // Collapse letter-per-line blocks:
-    // L\nA\nR\nG\nE -> LARGE
-    if (/^[A-Z]$/.test(line)) {
-      const letters: string[] = [];
-      let j = i;
-      while (j < lines.length && /^[A-Z]$/.test((lines[j] ?? "").trim())) {
-        letters.push((lines[j] ?? "").trim());
-        j += 1;
-      }
-
-      if (letters.length >= 2) {
-        const word = letters.join("");
-        const next = (lines[j] ?? "").trim().toUpperCase();
-        // If the next line already contains the collapsed word, skip duplicate.
-        if (next === word) {
-          j += 1;
-        }
-        out.push(word);
-        i = j;
-        continue;
-      }
-    }
-
-    out.push(raw);
-    i += 1;
-  }
-
-  // Collapse excessive blank lines introduced by cleanup.
-  return out.join("\n").replace(/\n{3,}/g, "\n\n");
-}

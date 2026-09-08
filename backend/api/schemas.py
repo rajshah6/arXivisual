@@ -139,7 +139,7 @@ class SectionResponse(BaseModel):
 class VisualizationResponse(BaseModel):
     """Visualization data for a paper section."""
     id: str
-    section_id: str = Field(..., description="ID of the section this visualization belongs to")
+    section_id: str | None = Field(None, description="ID of the section this visualization belongs to (null for orphaned rows)")
     concept: str = Field(..., description="Human-readable concept being visualized")
     video_url: str | None = Field(None, description="URL to rendered video, null if not ready")
     status: VisualizationStatus

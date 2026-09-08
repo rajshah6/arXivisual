@@ -14,7 +14,7 @@ import logging
 import re
 
 from agents.base import call_llm, call_llm_json
-from ingestion.text_normalize import normalize_display_text, strip_prompt_scaffold
+from ingestion.text_normalize import normalize_display_text, unescape_json_artifacts
 from models.paper import ArxivPaperMeta, Equation, Section
 
 logger = logging.getLogger(__name__)
@@ -220,7 +220,9 @@ The text to organize is between the <summary> tags. The tags and this header are
     )
     organized_sections = parsed["sections"]
     for sec in organized_sections:
-        sec["content"] = strip_prompt_scaffold(sec.get("content", ""))
+        # JSON residue (\uXXXX, doubled backslashes) is undone where it
+        # originates; normalize_display_text repeats it idempotently later.
+        sec["content"] = unescape_json_artifacts(sec.get("content", ""))
 
     # Validate
     if not organized_sections:
@@ -317,45 +319,9 @@ def _equations_from_summary(text: str) -> list[Equation]:
 
 
 def _clean_display_text(text: str) -> str:
-    """
-    Clean common LLM/PDF formatting artifacts that break markdown rendering.
-
-    Specifically normalizes split small-caps sequences such as:
-      \\textsc
-      L
-      A
-      R
-      G
-      E
-    into:
-      LARGE
-    """
-    if not text:
-        return text
-
-    cleaned = text
-
-    # Remove zero-width characters.
-    cleaned = re.sub(r"[\u200B-\u200D\uFEFF]", "", cleaned)
-
-    # Remove \textsc marker while preserving inline word, e.g. \textscBASE -> BASE
-    cleaned = re.sub(r"\\textsc\s*([A-Za-z]+)", r"\1", cleaned)
-    cleaned = re.sub(r"\\textsc\b", "", cleaned)
-
-    # Collapse letter-per-line runs: L\nA\nR\nG\nE -> LARGE
-    cleaned = re.sub(
-        r"(?m)^(?:[A-Z]\s*\n){2,}[A-Z]\s*$",
-        lambda m: "".join(ch for ch in m.group(0) if ch.isalpha()),
-        cleaned,
-    )
-
-    # Remove immediate duplicate line after collapse, e.g. LARGE\nLARGE
-    cleaned = re.sub(r"(?m)^([A-Z]{2,})\n\1$", r"\1", cleaned)
-
-    # Normalize excessive blank lines
-    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
-    # Shared display-text rules (also applied at read time for stored papers).
-    return normalize_display_text(cleaned)
+    """All display rules live in ingestion.text_normalize (single owner, also
+    applied at read time); this is the ingest-time call."""
+    return normalize_display_text(text) if text else text
 
 
 # ---------------------------------------------------------------------------

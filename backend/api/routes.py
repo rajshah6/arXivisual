@@ -64,6 +64,18 @@ router = APIRouter(prefix="/api")
 _NAIVE_EPOCH = datetime(1970, 1, 1)  # noqa: DTZ001
 
 
+def _first_video_url(videos: list[SectionVideo] | None) -> str | None:
+    """Legacy single-video field: the newest complete video, if any."""
+    return videos[0].video_url if videos else None
+
+
+def _viz_order(v) -> tuple:
+    """Newest first; equal timestamps break on the numeric id suffix (a
+    string tiebreak ordered viz_x_9 before viz_x_10)."""
+    m = re.search(r"_(\d+)$", v.id)
+    return (v.created_at or _NAIVE_EPOCH, int(m.group(1)) if m else 0, v.id)
+
+
 def _authorize_render(secret: str | None) -> None:
     """Guard the raw-code render endpoint.
 
@@ -319,11 +331,7 @@ async def get_paper(arxiv_id: str, db: AsyncSession = Depends(get_db)):
         # relationship loads in heap order); pending/failed rows with a
         # leftover video_url were also mapped.
         section_videos: dict[str, list[SectionVideo]] = {}
-        ordered = sorted(
-            visible_viz,
-            key=lambda v: (v.created_at or _NAIVE_EPOCH, v.id),
-            reverse=True,
-        )
+        ordered = sorted(visible_viz, key=_viz_order, reverse=True)
         for v in ordered:
             if v.status == "complete" and v.video_url and v.section_id:
                 section_videos.setdefault(v.section_id, []).append(
@@ -334,7 +342,7 @@ async def get_paper(arxiv_id: str, db: AsyncSession = Depends(get_db)):
             paper_id=paper.id,
             title=tex_to_text(paper.title),
             authors=paper.authors or [],
-            abstract=normalize_display_text(paper.abstract),
+            abstract=normalize_display_text(paper.abstract, from_organizer=False),
             pdf_url=paper.pdf_url or f"https://arxiv.org/pdf/{paper.id}",
             html_url=paper.html_url,
             sections=[
@@ -348,7 +356,7 @@ async def get_paper(arxiv_id: str, db: AsyncSession = Depends(get_db)):
                     level=s.level,
                     order_index=s.order_index,
                     equations=s.equations or [],
-                    video_url=(section_videos.get(s.id) or [SectionVideo(viz_id="", video_url="", concept="")])[0].video_url or None,
+                    video_url=_first_video_url(section_videos.get(s.id)),
                     videos=section_videos.get(s.id, []),
                 )
                 for s in sections

@@ -332,7 +332,7 @@ async def get_paper(arxiv_id: str, db: AsyncSession = Depends(get_db)):
             paper_id=paper.id,
             title=tex_to_text(paper.title),
             authors=paper.authors or [],
-            abstract=normalize_display_text(paper.abstract),
+            abstract=normalize_display_text(paper.abstract, from_organizer=False),
             pdf_url=paper.pdf_url or f"https://arxiv.org/pdf/{paper.id}",
             html_url=paper.html_url,
             sections=[

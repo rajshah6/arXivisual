@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useRef, useEffect, useCallback } from "react";
-import { motion, type MotionValue, useMotionValue, useMotionTemplate } from "framer-motion";
+import { memo, useMemo, useRef, useEffect, useCallback } from "react";
+import { motion, type MotionValue } from "framer-motion";
 import { VideoFeedback } from "@/components/VideoFeedback";
 import { VideoPlayer } from "@/components/VideoPlayer";
 import { MarkdownContent } from "@/components/MarkdownContent";
@@ -70,7 +70,7 @@ interface StackCardProps {
   onContentHeight?: (index: number, height: number) => void;
 }
 
-export function StackCard({
+export const StackCard = memo(function StackCard({
   section,
   index,
   totalSections,
@@ -82,24 +82,6 @@ export function StackCard({
   onContentHeight,
 }: StackCardProps) {
   const contentRef = useRef<HTMLDivElement>(null);
-
-  // Mouse spotlight
-  const mouseX = useMotionValue(0);
-  const mouseY = useMotionValue(0);
-
-  function handleMouseMove(e: React.MouseEvent<HTMLDivElement>) {
-    const { left, top } = e.currentTarget.getBoundingClientRect();
-    mouseX.set(e.clientX - left);
-    mouseY.set(e.clientY - top);
-  }
-
-  const spotlightBg = useMotionTemplate`
-    radial-gradient(
-      600px circle at ${mouseX}px ${mouseY}px,
-      rgba(255, 255, 255, 0.05),
-      transparent 40%
-    )
-  `;
 
   const headingClass = useMemo(() => {
     const level = section.level ?? 1;
@@ -137,14 +119,16 @@ export function StackCard({
     <motion.section
       data-card-index={index}
       aria-hidden={!isActive}
-      onMouseMove={isActive ? handleMouseMove : undefined}
       className={cn(
         "absolute inset-x-4 top-4 bottom-4 sm:inset-x-6 sm:top-6 sm:bottom-6",
-        "rounded-3xl border backdrop-blur-xl overflow-hidden",
-        "will-change-transform",
+        "rounded-3xl border overflow-hidden",
+        "will-change-transform [contain:paint]",
+        // A moving backdrop-filter surface is re-sampled and re-blurred every
+        // frame; three of them translating over an animated background was the
+        // single heaviest paint. Only the card being read blurs.
         isActive
-          ? "bg-white/[0.06] border-white/[0.18] shadow-2xl shadow-black/50"
-          : "bg-white/[0.04] border-white/[0.10] shadow-xl shadow-black/30"
+          ? "backdrop-blur-xl bg-white/[0.06] border-white/[0.18] shadow-2xl shadow-black/50"
+          : "bg-[#0b0b0c]/90 border-white/[0.10] shadow-xl shadow-black/30"
       )}
       style={{
         x: cardX,
@@ -153,20 +137,12 @@ export function StackCard({
         pointerEvents: isActive ? "auto" : "none",
       }}
     >
-      {/* Spotlight gradient overlay */}
-      {isActive && (
-        <motion.div
-          className="pointer-events-none absolute -inset-px rounded-3xl opacity-0 group-hover:opacity-100 transition-opacity duration-500"
-          style={{ background: spotlightBg }}
-        />
-      )}
-
       {/* Content area */}
       <div className="relative h-full overflow-hidden">
         <motion.div
           ref={contentRef}
           style={{ y: contentY }}
-          className="px-6 pt-6 pb-8 sm:px-10 sm:pt-8 sm:pb-10"
+          className="px-6 pt-6 pb-8 sm:px-10 sm:pt-8 sm:pb-10 will-change-transform [contain:layout_paint]"
         >
           {/* Section number */}
           <div className="mb-4 flex items-center gap-3">
@@ -204,7 +180,12 @@ export function StackCard({
           ).map((video, i) => (
             <div className={i === 0 ? "mt-8" : "mt-6"} key={video.vizId || video.videoUrl}>
               <div className="rounded-xl overflow-hidden border border-white/[0.06] bg-black/30">
-                <VideoPlayer src={video.videoUrl} title={video.concept || "Visualization"} />
+                <VideoPlayer
+                  src={video.videoUrl}
+                  title={video.concept || "Visualization"}
+                  preload={isActive ? "metadata" : "none"}
+                  pauseWhenInactive={!isActive}
+                />
               </div>
               {video.vizId && <VideoFeedback vizId={video.vizId} />}
             </div>
@@ -219,4 +200,4 @@ export function StackCard({
       <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/[0.12] to-transparent" />
     </motion.section>
   );
-}
+});

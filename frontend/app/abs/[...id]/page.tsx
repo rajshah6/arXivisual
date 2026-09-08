@@ -515,7 +515,10 @@ function ReadyState({
   absUrl: string;
   onProgressChange: (progress: number) => void;
 }) {
-  const scrollySections: ScrollySectionModel[] = [...paper.sections]
+  // Memoised on the paper: the 2s status poll and the video re-check used to
+  // hand CardStack a brand-new sections array (new identities) each tick,
+  // re-rendering every mounted card and re-parsing its markdown/KaTeX.
+  const scrollySections: ScrollySectionModel[] = useMemo(() => [...paper.sections]
     .sort((a, b) => a.order_index - b.order_index)
     .map((s) => ({
       id: s.id,
@@ -530,9 +533,9 @@ function ReadyState({
         videoUrl: v.video_url,
         concept: v.concept,
       })),
-    }));
+    })), [paper]);
 
-  const heroContent = (
+  const heroContent = useMemo(() => (
     <div className="mb-12">
       {/* Hero section */}
       <motion.div
@@ -599,7 +602,7 @@ function ReadyState({
       {/* Divider before sections */}
       <div className="mt-10 h-px bg-gradient-to-r from-transparent via-white/[0.08] to-transparent" />
     </div>
-  );
+  ), [paper]);
 
   return (
     <motion.div

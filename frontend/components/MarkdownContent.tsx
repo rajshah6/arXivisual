@@ -1,6 +1,7 @@
 "use client";
 
-import ReactMarkdown from "react-markdown";
+import { memo, useMemo } from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
@@ -10,15 +11,11 @@ type MarkdownContentProps = {
   className?: string;
 };
 
-export function MarkdownContent({ content, className = "" }: MarkdownContentProps) {
-  const processedContent = preprocessLatex(content);
-
-  return (
-    <div className={`markdown-content ${className}`}>
-      <ReactMarkdown
-        remarkPlugins={[remarkMath]}
-        rehypePlugins={[rehypeKatex]}
-        components={{
+// Hoisted: a new object literal per render defeated react-markdown's own
+// memoisation, and this component used to re-run the whole
+// remark → rehype → KaTeX pipeline on every unrelated state change (the 2s
+// status poll re-parsed every mounted card while the reader scrolled).
+const MARKDOWN_COMPONENTS: Components = {
           p: ({ children }) => (
             <p className="mb-6 last:mb-0 leading-[1.9]">{children}</p>
           ),
@@ -81,13 +78,26 @@ export function MarkdownContent({ content, className = "" }: MarkdownContentProp
               {children}
             </a>
           ),
-        }}
+};
+
+export const MarkdownContent = memo(function MarkdownContent({
+  content,
+  className = "",
+}: MarkdownContentProps) {
+  const processedContent = useMemo(() => preprocessLatex(content), [content]);
+
+  return (
+    <div className={`markdown-content ${className}`}>
+      <ReactMarkdown
+        remarkPlugins={[remarkMath]}
+        rehypePlugins={[rehypeKatex]}
+        components={MARKDOWN_COMPONENTS}
       >
         {processedContent}
       </ReactMarkdown>
     </div>
   );
-}
+});
 
 function preprocessLatex(content: string): string {
   // Bare-TeX wrapping, fence repair and currency escaping now happen in the

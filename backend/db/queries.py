@@ -4,6 +4,7 @@ Database queries for ArXiviz.
 CRUD operations for papers, sections, visualizations, and processing jobs.
 """
 
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -343,34 +344,62 @@ async def create_visualization(
     return viz
 
 
-async def get_visualizations_for_paper(db: AsyncSession, paper_id: str) -> list[Visualization]:
-    """All visualization rows for a paper, oldest first."""
-    result = await db.execute(
-        select(Visualization)
-        .where(Visualization.paper_id == paper_id)
-        .order_by(Visualization.created_at.asc(), Visualization.id.asc())
-    )
+async def get_visualizations_for_paper(
+    db: AsyncSession,
+    paper_id: str,
+    since: datetime | None = None,
+    include_superseded: bool = False,
+) -> list[Visualization]:
+    """A paper's visualization rows, oldest first.
+
+    ``since`` scopes to rows created by a particular run (a job's created_at);
+    superseded rows — previous runs' rows, hidden once a newer run succeeded —
+    are excluded unless asked for.
+    """
+    stmt = select(Visualization).where(Visualization.paper_id == paper_id)
+    if since is not None:
+        stmt = stmt.where(Visualization.created_at >= since)
+    if not include_superseded:
+        stmt = stmt.where(Visualization.status != "superseded")
+    result = await db.execute(stmt.order_by(Visualization.created_at.asc(), Visualization.id.asc()))
     return list(result.scalars().all())
 
 
-async def delete_visualizations_for_paper(db: AsyncSession, paper_id: str) -> int:
-    """Remove a paper's visualization rows so a new run's rows are the only
-    rows. Upsert-by-id left stale/orphan rows behind (old truncated-id rows
-    from before the viz-id fix, rows pointing at another paper's sections,
-    previous runs' videos shadowing new ones)."""
-    rows = await get_visualizations_for_paper(db, paper_id)
+def next_viz_index(rows: list[Visualization]) -> int:
+    """First unused ``_N`` suffix across ALL of a paper's rows (superseded
+    included): ids are never reused, so feedback votes keep pointing at the
+    video they were cast on."""
+    highest = 0
     for row in rows:
-        await db.delete(row)
-    if rows:
-        await db.commit()
-    return len(rows)
+        m = re.search(r"_(\d+)$", row.id)
+        if m:
+            highest = max(highest, int(m.group(1)))
+    return highest + 1
 
 
-async def fail_pending_visualizations(db: AsyncSession, paper_id: str, error: str) -> int:
-    """Mark a paper's still-pending rows failed (a job that died mid-render
-    used to strand them at 'pending' forever, where the gallery counted them
-    as visuals)."""
+async def supersede_visualizations_before(
+    db: AsyncSession, paper_id: str, before: datetime
+) -> int:
+    """Hide a paper's rows from previous runs once a newer run has produced
+    videos. Rows are NOT deleted: feedback.viz_id references them (a hard
+    delete violated that foreign key and, worse, would have discarded the
+    labeled ground truth the feedback loop exists to collect)."""
     rows = await get_visualizations_for_paper(db, paper_id)
+    older = [r for r in rows if r.created_at is not None and r.created_at < before]
+    for r in older:
+        r.status = "superseded"
+    if older:
+        await db.commit()
+    return len(older)
+
+
+async def fail_pending_visualizations(
+    db: AsyncSession, paper_id: str, error: str, since: datetime | None = None
+) -> int:
+    """Mark still-pending rows failed (a job that died mid-render used to
+    strand them at 'pending' forever, where the gallery counted them as
+    visuals). ``since`` limits it to the failed run's own rows."""
+    rows = await get_visualizations_for_paper(db, paper_id, since=since)
     stranded = [r for r in rows if r.status in ("pending", "rendering")]
     for r in stranded:
         r.status = "failed"

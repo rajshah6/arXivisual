@@ -145,15 +145,22 @@ def normalize_concept(name: str) -> str:
     return " ".join(kept)
 
 
-def _dedupe_candidates(candidates: list[VisualizationCandidate]) -> list[VisualizationCandidate]:
+def _dedupe_candidates(
+    candidates: list[VisualizationCandidate], already_have: set[str] | None = None
+) -> list[VisualizationCandidate]:
     """Drop near-duplicate concepts, keeping the first (highest priority).
 
     The <=5 organized sections overlap, so the analyzer proposed the same
     concept from several of them and a paper got 'Teacher -> Pseudo-label ->
     Student' animated three times while other concepts never got a slot.
+    ``already_have`` (raw concept names of checkpointed visualizations) seeds
+    the comparison so a retried run doesn't regenerate near-duplicates of
+    what it already has.
     """
     kept: list[VisualizationCandidate] = []
-    seen: list[set[str]] = []
+    seen: list[set[str]] = [
+        set(normalize_concept(n).split()) for n in (already_have or set())
+    ]
     for cand in candidates:
         tokens = set(normalize_concept(cand.concept_name).split())
         duplicate = False
@@ -174,13 +181,21 @@ def _dedupe_candidates(candidates: list[VisualizationCandidate]) -> list[Visuali
 VisualizationCallback = Callable[[Visualization], Awaitable[None]]
 
 
+class CheckpointError(RuntimeError):
+    """The caller's on_visualization callback failed: a finished (paid)
+    visualization could not be persisted. Surfaced, never swallowed."""
+
+
 async def _with_callback(
     coro: Awaitable[Visualization | None], callback: VisualizationCallback | None
 ) -> Visualization | None:
     """Deliver each finished visualization immediately (checkpointing)."""
     result = await coro
     if result is not None and callback is not None:
-        await callback(result)
+        try:
+            await callback(result)
+        except Exception as exc:
+            raise CheckpointError(f"checkpoint failed for {result.concept}: {exc}") from exc
     return result
 
 
@@ -196,8 +211,9 @@ async def generate_visualizations(
     ``on_visualization`` is awaited as soon as each visualization is ready, so
     a caller can persist it (a worker restart used to lose every finished
     visualization because rows were written only after ALL candidates
-    finished). ``skip_concepts`` (normalized names) lets a retried run skip
-    concepts it already checkpointed instead of paying for them again.
+    finished); if it raises, the whole call raises CheckpointError rather than
+    silently dropping paid work. ``skip_concepts`` (raw concept names) lets a
+    retried run skip concepts it already checkpointed instead of paying again.
     """
     logger.info("Starting visualization generation for paper: %s", paper.meta.title)
     logger.info(
@@ -236,11 +252,12 @@ async def generate_visualizations(
         return []
 
     candidates.sort(key=lambda x: x.priority, reverse=True)
-    candidates = _dedupe_candidates(candidates)
+    before = len(candidates)
+    # skip_concepts are RAW names; normalization happens here on both sides,
+    # and the dedupe is seeded with them so near-duplicates are skipped too.
+    candidates = _dedupe_candidates(candidates, already_have=skip_concepts)
     if skip_concepts:
-        before = len(candidates)
-        candidates = [c for c in candidates if normalize_concept(c.concept_name) not in skip_concepts]
-        logger.info("Skipping %d already-checkpointed concept(s)", before - len(candidates))
+        logger.info("Skipped %d checkpointed/duplicate concept(s)", before - len(candidates))
     candidates = candidates[:max_visualizations]
 
     logger.info("Found %s visualization candidates", len(candidates))
@@ -270,6 +287,8 @@ async def generate_visualizations(
         results = await asyncio.gather(*tasks, return_exceptions=True)
         visualizations: list[Visualization] = []
         for result in results:
+            if isinstance(result, CheckpointError):
+                raise result
             if isinstance(result, Exception):
                 logger.error("Visualization generation failed: %s", result)
             elif result is not None:

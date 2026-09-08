@@ -308,11 +308,13 @@ async def get_paper(arxiv_id: str, db: AsyncSession = Depends(get_db)):
         # Convert database models to response schemas
         sections = sorted(paper.sections, key=lambda s: s.order_index)
 
+        # Previous runs' rows are kept for feedback integrity but never shown.
+        visible_viz = [v for v in paper.visualizations if v.status != "superseded"]
         # Build section_id -> video_url lookup from visualizations
         # Prioritize complete videos and take the first complete one for each section
         section_video_map = {}
         section_status_map = {}  # Track status of mapped videos
-        for v in paper.visualizations:
+        for v in visible_viz:
             if v.video_url and v.section_id:
                 existing_status = section_status_map.get(v.section_id)
                 # Only update if:
@@ -356,7 +358,7 @@ async def get_paper(arxiv_id: str, db: AsyncSession = Depends(get_db)):
                     video_url=v.video_url,
                     status=VisualizationStatus(v.status),
                 )
-                for v in paper.visualizations
+                for v in visible_viz
             ],
             processed_at=paper.updated_at or paper.created_at or _utcnow_naive(),
         )

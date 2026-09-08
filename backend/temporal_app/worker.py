@@ -35,11 +35,26 @@ from temporal_app.activities import (
     generate_visualizations_for_paper,
     ingest_paper,
     mark_job_failed,
+    record_render_failure,
     render_visualization,
     repair_visualization_code,
     update_render_progress,
 )
 from temporal_app.workflows import RENDER_TASK_QUEUE, TASK_QUEUE, PaperPipelineWorkflow
+
+# Module-level so a test can assert every activity the workflow references is
+# registered: an activity invoked but not registered fails with NotFoundError
+# at runtime, and once that sank whole jobs in the render-failure fallback.
+PIPELINE_ACTIVITIES = [
+    ingest_paper,
+    generate_visualizations_for_paper,
+    update_render_progress,
+    finalize_job,
+    mark_job_failed,
+    repair_visualization_code,
+    record_render_failure,
+]
+RENDER_ACTIVITIES = [render_visualization]
 
 logging.basicConfig(
     level=logging.INFO,
@@ -72,20 +87,13 @@ async def main() -> None:
         client,
         task_queue=TASK_QUEUE,
         workflows=[PaperPipelineWorkflow],
-        activities=[
-            ingest_paper,
-            generate_visualizations_for_paper,
-            update_render_progress,
-            finalize_job,
-            mark_job_failed,
-            repair_visualization_code,
-        ],
+        activities=PIPELINE_ACTIVITIES,
         max_concurrent_activities=pipeline_concurrency,
     )
     render_worker = Worker(
         client,
         task_queue=RENDER_TASK_QUEUE,
-        activities=[render_visualization],
+        activities=RENDER_ACTIVITIES,
         max_concurrent_activities=render_concurrency,
     )
 

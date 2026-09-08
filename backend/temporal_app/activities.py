@@ -16,6 +16,7 @@ so only the interrupted render re-runs.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from dataclasses import dataclass
 
@@ -115,13 +116,21 @@ async def ingest_paper(params: PipelineInput) -> None:
 
 @activity.defn
 async def generate_visualizations_for_paper(params: PipelineInput) -> list[RenderInput]:
-    """Run the agent pipeline; upsert viz records; return render inputs.
+    """Run the agent pipeline; upsert viz rows; return render inputs.
+
+    Checkpointed per visualization: each finished viz is upserted (and the
+    activity heartbeats) the moment it is ready. Before this, rows were
+    written only after ALL candidates finished, so a worker restart
+    mid-generation lost every finished visualization and left '0 visuals'.
+    On a retry attempt the already-checkpointed concepts are skipped, so a
+    restart costs the unfinished work only — never a second full generation.
 
     The returned list is checkpointed in workflow history (~8KB of Manim code
-    per viz, well under Temporal's payload limits) — this is what makes
-    resume-without-re-paying-generation possible.
+    per viz, well under Temporal's payload limits).
     """
-    from agents.pipeline import generate_visualizations
+    import asyncio
+
+    from agents.pipeline import MAX_VISUALIZATIONS, generate_visualizations
     from db import queries
     from db.connection import async_session_maker
     from jobs.worker import _build_structured_paper_from_db
@@ -134,46 +143,88 @@ async def generate_visualizations_for_paper(params: PipelineInput) -> list[Rende
         def propagate_attributes(**_kw):  # type: ignore
             return nullcontext()
 
+    # Full sanitized arXiv id — a truncated prefix collided across sibling
+    # ids (e.g. 2608.23551 vs 2608.23553 both mapped to "26082355"), making
+    # papers overwrite each other's visualization rows via upsert.
+    paper_suffix = params.arxiv_id.replace(".", "_").replace("/", "_")
+    attempt = activity.info().attempt
+
     async with async_session_maker() as db:
         await queries.update_job_status(
             db, params.job_id,
             current_step="Analyzing concepts for visualization",
             progress=0.50,
         )
+        job = await queries.get_job(db, params.job_id)
+        run_started = job.created_at if job else None
+        # This run's checkpoints only (rows created since the job began): a
+        # retried attempt resumes from them. Previous runs' rows stay visible
+        # to readers until finalize_job supersedes them — a re-run no longer
+        # blanks an already-visualized paper for 10-25 minutes.
+        existing = [
+            r for r in await queries.get_visualizations_for_paper(db, params.arxiv_id, since=run_started)
+            if r.manim_code
+        ]
         db_paper = await queries.get_paper(db, params.arxiv_id)
         db_sections = sorted(db_paper.sections, key=lambda s: s.order_index)
         structured_paper = _build_structured_paper_from_db(db_paper, db_sections)
 
-    with propagate_attributes(
-        session_id=params.job_id,
-        trace_name="process-paper",
-        tags=["pipeline", "temporal"],
-        metadata={"arxiv_id": params.arxiv_id},
-    ):
-        generated = await generate_visualizations(structured_paper)
+    render_inputs: list[RenderInput] = [
+        RenderInput(job_id=params.job_id, viz_id=r.id, manim_code=r.manim_code) for r in existing
+    ]
+    if existing:
+        logger.info("Attempt %d: resuming with %d checkpointed visualization(s)", attempt, len(existing))
+    remaining = max(0, MAX_VISUALIZATIONS - len(existing))
 
-    render_inputs: list[RenderInput] = []
-    # Full sanitized arXiv id — a truncated prefix collided across sibling
-    # ids (e.g. 2608.23551 vs 2608.23553 both mapped to "26082355"), making
-    # papers overwrite each other's visualization rows via upsert.
-    paper_suffix = params.arxiv_id.replace(".", "_").replace("/", "_")
-    async with async_session_maker() as db:
-        for i, viz in enumerate(generated):
-            viz_id = f"viz_{paper_suffix}_{i + 1}"
-            await queries.upsert_visualization(
-                db,
-                viz_id=viz_id,
-                paper_id=params.arxiv_id,
-                section_id=viz.section_id,
-                concept=viz.concept,
-                storyboard={"raw": viz.storyboard},
-                manim_code=viz.manim_code,
-                status="pending",
-            )
-            render_inputs.append(
-                RenderInput(job_id=params.job_id, viz_id=viz_id, manim_code=viz.manim_code)
-            )
-        if render_inputs:
+    async def checkpoint(viz) -> None:
+        # The id is minted from the table at write time and INSERTed (never
+        # upserted): if a second attempt ever overlaps the first — the 40-min
+        # start-to-close timeout can fire while attempt 1 is still running —
+        # neither can overwrite the other's row.
+        viz_id = await queries.insert_visualization_with_next_index(
+            paper_suffix=paper_suffix,
+            paper_id=params.arxiv_id,
+            section_id=viz.section_id,
+            concept=viz.concept,
+            storyboard={"raw": viz.storyboard},
+            manim_code=viz.manim_code,
+            session_maker=async_session_maker,
+        )
+        render_inputs.append(RenderInput(job_id=params.job_id, viz_id=viz_id, manim_code=viz.manim_code))
+        activity.heartbeat(f"{len(render_inputs)} visualization(s) checkpointed")
+
+    async def heartbeat_loop() -> None:
+        # A heartbeat only on checkpoints let a live-but-slow worker exceed the
+        # heartbeat timeout before its first viz finished, spawning a second
+        # attempt that double-spent and collided on ids. Beat on a timer.
+        while True:
+            await asyncio.sleep(30)
+            activity.heartbeat(f"{len(render_inputs)} visualization(s) checkpointed")
+
+    if remaining == 0:
+        logger.info("All %d visualization slots already checkpointed; skipping generation", len(existing))
+    else:
+        beat = asyncio.create_task(heartbeat_loop())
+        try:
+            with propagate_attributes(
+                session_id=params.job_id,
+                trace_name="process-paper",
+                tags=["pipeline", "temporal"],
+                metadata={"arxiv_id": params.arxiv_id},
+            ):
+                await generate_visualizations(
+                    structured_paper,
+                    max_visualizations=remaining,
+                    on_visualization=checkpoint,
+                    skip_concepts={r.concept for r in existing},
+                )
+        finally:
+            beat.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await beat
+
+    if render_inputs:
+        async with async_session_maker() as db:
             await queries.update_job_status(
                 db, params.job_id,
                 current_step="Rendering videos",
@@ -382,6 +433,38 @@ async def finalize_job(params: ProgressUpdate) -> None:
             progress=1.0,
             error=error,
         )
+        # Only a run that actually produced videos retires the previous run's
+        # rows; a failed re-run leaves the old videos serving.
+        job = await queries.get_job(db, params.job_id)
+        if job and job.paper_id and job.created_at:
+            # Every render input has written a terminal status by now; a row
+            # still pending is one whose failure recorder itself failed.
+            leftover = await queries.fail_pending_visualizations(
+                db, job.paper_id,
+                error="Render did not complete before the job finished.",
+                since=job.created_at,
+            )
+            if leftover:
+                logger.warning("Failed %d leftover pending visualization(s) for %s", leftover, job.paper_id)
+            if params.completed > 0:
+                retired = await queries.supersede_visualizations_before(db, job.paper_id, job.created_at)
+                if retired:
+                    logger.info("Superseded %d previous-run visualization(s) for %s", retired, job.paper_id)
+
+
+@activity.defn
+async def record_render_failure(params: RenderInput) -> None:
+    """A render activity that failed at the Temporal level (timeout, worker
+    death after retries) never ran the status write inside
+    render_visualization — record it so the row doesn't strand at pending."""
+    from db import queries
+    from db.connection import async_session_maker
+
+    async with async_session_maker() as db:
+        await queries.update_visualization_status(
+            db, params.viz_id, status="failed",
+            error="Render did not complete (worker interrupted or timed out).",
+        )
 
 
 @activity.defn
@@ -396,3 +479,13 @@ async def mark_job_failed(params: PipelineInput) -> None:
             status="failed",
             error="Pipeline failed after retries. See worker logs for details.",
         )
+        # Rows the dead run never got to render would otherwise sit at
+        # 'pending' forever and count as visuals in the gallery.
+        job = await queries.get_job(db, params.job_id)
+        stranded = await queries.fail_pending_visualizations(
+            db, params.arxiv_id,
+            error="Pipeline failed before this visualization rendered.",
+            since=job.created_at if job else None,
+        )
+        if stranded:
+            logger.info("Marked %d stranded visualization(s) failed for %s", stranded, params.arxiv_id)

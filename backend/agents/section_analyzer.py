@@ -28,7 +28,7 @@ class SectionAnalyzer(BaseAgent):
     """
     
     def __init__(self, model: str | None = None):
-        super().__init__("section_analyzer.md", model=model)
+        super().__init__("section_analyzer.md", model=model, system_prompt_file="system/json_analyst.md")
     
     def _format_equations(self, section: Section) -> str:
         """Format equations for the prompt."""
@@ -70,9 +70,7 @@ class SectionAnalyzer(BaseAgent):
             equations=self._format_equations(section),
         )
         
-        text = await self._call_llm(prompt)
-
-        result = self._parse_json_response(text)
+        result = await self._call_llm_json(prompt)
         return self._parse_result(result, section.id)
 
     def _parse_result(self, result: dict, section_id: str) -> AnalyzerOutput:

@@ -36,7 +36,7 @@ class VisualizationPlanner(BaseAgent):
     """
     
     def __init__(self, model: str | None = None):
-        super().__init__("visualization_planner.md", model=model)
+        super().__init__("visualization_planner.md", model=model, system_prompt_file="system/json_analyst.md")
     
     async def run(
         self,
@@ -64,9 +64,7 @@ class VisualizationPlanner(BaseAgent):
             paper_context=paper_context,
         )
         
-        text = await self._call_llm(prompt)
-
-        result = self._parse_json_response(text)
+        result = await self._call_llm_json(prompt)
         return self._parse_result(result, candidate.visualization_type)
 
     def _parse_result(

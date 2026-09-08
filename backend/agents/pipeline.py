@@ -12,7 +12,7 @@ import os
 import re
 import sys
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 try:
@@ -129,12 +129,92 @@ def _extract_voiceover_metadata(code: str) -> tuple[list[str], list[str]]:
     return [n.strip() for n in narrations if n.strip()], beats
 
 
+_CONCEPT_STOPWORDS = {"the", "and", "for", "with", "via", "from", "into", "over", "vs"}
+
+
+def normalize_concept(name: str) -> str:
+    """Comparable token string for concept names: lowercase, alphanumeric,
+    crude singularization, short/stop words dropped ('Pseudo-labels' and
+    'Pseudo-label', 'Re-alignment' and 'realignment' should agree)."""
+    tokens = re.sub(r"[^a-z0-9]+", " ", (name or "").lower()).split()
+    kept = []
+    for raw in tokens:
+        if len(raw) < 3 or raw in _CONCEPT_STOPWORDS:
+            continue
+        kept.append(raw[:-1] if len(raw) > 3 and raw.endswith("s") else raw)
+    return " ".join(kept)
+
+
+def _dedupe_candidates(
+    candidates: list[VisualizationCandidate], already_have: set[str] | None = None
+) -> list[VisualizationCandidate]:
+    """Drop near-duplicate concepts, keeping the first (highest priority).
+
+    The <=5 organized sections overlap, so the analyzer proposed the same
+    concept from several of them and a paper got 'Teacher -> Pseudo-label ->
+    Student' animated three times while other concepts never got a slot.
+    ``already_have`` (raw concept names of checkpointed visualizations) seeds
+    the comparison so a retried run doesn't regenerate near-duplicates of
+    what it already has.
+    """
+    kept: list[VisualizationCandidate] = []
+    seen: list[set[str]] = [
+        set(normalize_concept(n).split()) for n in (already_have or set())
+    ]
+    for cand in candidates:
+        tokens = set(normalize_concept(cand.concept_name).split())
+        duplicate = False
+        for other in seen:
+            if not tokens or not other:
+                continue
+            if tokens == other or len(tokens & other) / len(tokens | other) >= 0.6:
+                duplicate = True
+                break
+        if duplicate:
+            logger.info("  Skipping near-duplicate concept: %s", cand.concept_name)
+            continue
+        kept.append(cand)
+        seen.append(tokens)
+    return kept
+
+
+VisualizationCallback = Callable[[Visualization], Awaitable[None]]
+
+
+class CheckpointError(RuntimeError):
+    """The caller's on_visualization callback failed: a finished (paid)
+    visualization could not be persisted. Surfaced, never swallowed."""
+
+
+async def _with_callback(
+    coro: Awaitable[Visualization | None], callback: VisualizationCallback | None
+) -> Visualization | None:
+    """Deliver each finished visualization immediately (checkpointing)."""
+    result = await coro
+    if result is not None and callback is not None:
+        try:
+            await callback(result)
+        except Exception as exc:
+            raise CheckpointError(f"checkpoint failed for {result.concept}: {exc}") from exc
+    return result
+
+
 @observe(name="generate-visualizations", capture_input=False)
 async def generate_visualizations(
     paper: StructuredPaper,
     max_visualizations: int = MAX_VISUALIZATIONS,
+    on_visualization: VisualizationCallback | None = None,
+    skip_concepts: set[str] | None = None,
 ) -> list[Visualization]:
-    """Generate validated visualizations from a structured paper."""
+    """Generate validated visualizations from a structured paper.
+
+    ``on_visualization`` is awaited as soon as each visualization is ready, so
+    a caller can persist it (a worker restart used to lose every finished
+    visualization because rows were written only after ALL candidates
+    finished); if it raises, the whole call raises CheckpointError rather than
+    silently dropping paid work. ``skip_concepts`` (raw concept names) lets a
+    retried run skip concepts it already checkpointed instead of paying again.
+    """
     logger.info("Starting visualization generation for paper: %s", paper.meta.title)
     logger.info(
         "Pipeline config: max_viz=%s, spatial=%s, render=%s, voice=%s",
@@ -172,6 +252,12 @@ async def generate_visualizations(
         return []
 
     candidates.sort(key=lambda x: x.priority, reverse=True)
+    before = len(candidates)
+    # skip_concepts are RAW names; normalization happens here on both sides,
+    # and the dedupe is seeded with them so near-duplicates are skipped too.
+    candidates = _dedupe_candidates(candidates, already_have=skip_concepts)
+    if skip_concepts:
+        logger.info("Skipped %d checkpointed/duplicate concept(s)", before - len(candidates))
     candidates = candidates[:max_visualizations]
 
     logger.info("Found %s visualization candidates", len(candidates))
@@ -183,21 +269,26 @@ async def generate_visualizations(
 
     if CONCURRENT_GENERATION:
         tasks = [
-            generate_single_visualization(
-                candidate=candidate,
-                paper=paper,
-                planner=planner,
-                generator=generator,
-                validator=validator,
-                spatial_validator=spatial_validator,
-                voiceover_script_validator=voiceover_script_validator,
-                render_tester=render_tester,
+            _with_callback(
+                generate_single_visualization(
+                    candidate=candidate,
+                    paper=paper,
+                    planner=planner,
+                    generator=generator,
+                    validator=validator,
+                    spatial_validator=spatial_validator,
+                    voiceover_script_validator=voiceover_script_validator,
+                    render_tester=render_tester,
+                ),
+                on_visualization,
             )
             for candidate in candidates
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         visualizations: list[Visualization] = []
         for result in results:
+            if isinstance(result, CheckpointError):
+                raise result
             if isinstance(result, Exception):
                 logger.error("Visualization generation failed: %s", result)
             elif result is not None:
@@ -205,15 +296,18 @@ async def generate_visualizations(
     else:
         visualizations = []
         for candidate in candidates:
-            viz = await generate_single_visualization(
-                candidate=candidate,
-                paper=paper,
-                planner=planner,
-                generator=generator,
-                validator=validator,
-                spatial_validator=spatial_validator,
-                voiceover_script_validator=voiceover_script_validator,
-                render_tester=render_tester,
+            viz = await _with_callback(
+                generate_single_visualization(
+                    candidate=candidate,
+                    paper=paper,
+                    planner=planner,
+                    generator=generator,
+                    validator=validator,
+                    spatial_validator=spatial_validator,
+                    voiceover_script_validator=voiceover_script_validator,
+                    render_tester=render_tester,
+                ),
+                on_visualization,
             )
             if viz is not None:
                 visualizations.append(viz)

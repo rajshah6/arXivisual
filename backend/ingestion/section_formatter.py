@@ -10,11 +10,10 @@ Two-phase LLM pipeline:
 Output populates both .content and .summary on each Section.
 """
 
-import json
 import logging
 import re
 
-from agents.base import call_llm
+from agents.base import call_llm, call_llm_json
 from models.paper import ArxivPaperMeta, Equation, Section
 
 logger = logging.getLogger(__name__)
@@ -215,22 +214,9 @@ The text to organize is between the <summary> tags. The tags and this header are
     summary_words = len(summary_text.split())
     print(f"[FORMATTER] Phase 2: Organizing {summary_words} words into <={MAX_SECTIONS} sections...")
 
-    raw_response = await call_llm(
-        prompt=user_prompt,
-        model=model,
-        system_prompt=system_prompt,
-        max_tokens=16000,
+    parsed = await call_llm_json(
+        user_prompt, model=model, system_prompt=system_prompt, max_tokens=16000, name="section_organizer"
     )
-    raw_response = raw_response.strip()
-
-    # Strip markdown code fences if present
-    if raw_response.startswith("```"):
-        lines = raw_response.split("\n")
-        raw_response = "\n".join(
-            line for line in lines if not line.strip().startswith("```")
-        )
-
-    parsed = json.loads(raw_response)
     organized_sections = parsed["sections"]
     for sec in organized_sections:
         sec["content"] = strip_prompt_scaffold(sec.get("content", ""))

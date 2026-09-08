@@ -11,8 +11,10 @@ actually had, not to technology enthusiasm):
   impossible at the orchestrator (the API's in-memory/DB dedupe remains as a
   cheap first line, but this is the guarantee).
 - Per-activity retry policies: transient render failures (LaTeX/CPU
-  contention) retry once automatically; generation never auto-retries, because
-  a retry doubles real LLM spend and deserves a deliberate decision.
+  contention) retry once automatically; generation retries only for a dead
+  worker (heartbeat timeout) and resumes from per-visualization checkpoints,
+  so a retry never pays for finished work twice. A single failed render is a
+  failed visualization, not a failed job.
 - Orchestration state (completion counters) lives in the workflow, not in
   shared mutable state between concurrent tasks — progress writes are issued
   by the workflow as render results arrive.
@@ -40,6 +42,7 @@ with workflow.unsafe.imports_passed_through():
         generate_visualizations_for_paper,
         ingest_paper,
         mark_job_failed,
+        record_render_failure,
         render_visualization,
         repair_visualization_code,
         update_render_progress,
@@ -50,8 +53,15 @@ RENDER_TASK_QUEUE = "paper-render"
 
 # Transient infra faults (network, DB hiccup) get one automatic retry.
 _INFRA_RETRY = RetryPolicy(maximum_attempts=2)
-# Generation is real money (~$0.07/paper of LLM spend) — never auto-retry.
+# A repair (or a repair re-render) is a single paid LLM/render step whose
+# failure keeps the original video — never worth a second attempt.
 _NO_RETRY = RetryPolicy(maximum_attempts=1)
+# Generation retries once. A heartbeat timeout (dead worker) or the 40-min
+# start-to-close timeout can trigger it; in the latter case attempt 1 may
+# still be running, which is why checkpoint ids are INSERTed under a freshly
+# read index (no overwrite possible) and why the retry only fills the slots
+# this run has not checkpointed — it never pays for finished work twice.
+_GENERATION_RETRY = RetryPolicy(maximum_attempts=2)
 
 
 @workflow.defn
@@ -76,7 +86,8 @@ class PaperPipelineWorkflow:
                 generate_visualizations_for_paper,
                 params,
                 start_to_close_timeout=timedelta(minutes=40),
-                retry_policy=_NO_RETRY,
+                heartbeat_timeout=timedelta(minutes=8),
+                retry_policy=_GENERATION_RETRY,
             )
 
             total = len(render_inputs)
@@ -86,16 +97,11 @@ class PaperPipelineWorkflow:
 
             # Start all renders; the render worker's concurrency cap does the
             # throttling (Temporal queues the surplus — no semaphore needed).
-            render_tasks = [
-                workflow.execute_activity(
-                    render_visualization,
-                    ri,
-                    task_queue=RENDER_TASK_QUEUE,
-                    start_to_close_timeout=timedelta(minutes=15),
-                    retry_policy=_INFRA_RETRY,
-                )
-                for ri in render_inputs
-            ]
+            # Each render is wrapped so ONE failed activity (timeout, worker
+            # death past its retry) becomes a failed RenderResult instead of
+            # aborting the workflow — which used to fail the whole job and
+            # strand every unfinished visualization at 'pending'.
+            render_tasks = [self._render_one(ri) for ri in render_inputs]
 
             succeeded = 0
             results: list[RenderResult] = []
@@ -141,6 +147,30 @@ class PaperPipelineWorkflow:
                 retry_policy=_INFRA_RETRY,
             )
             raise
+
+    async def _render_one(self, ri: RenderInput) -> RenderResult:
+        try:
+            return await workflow.execute_activity(
+                render_visualization,
+                ri,
+                task_queue=RENDER_TASK_QUEUE,
+                start_to_close_timeout=timedelta(minutes=15),
+                retry_policy=_INFRA_RETRY,
+            )
+        except Exception as exc:
+            workflow.logger.warning("Render activity failed for %s: %s", ri.viz_id, exc)
+            # Best effort: the recorder keeps the row from stranding at
+            # 'pending', but a recorder failure must never abort the job.
+            try:
+                await workflow.execute_activity(
+                    record_render_failure,
+                    ri,
+                    start_to_close_timeout=timedelta(minutes=1),
+                    retry_policy=_INFRA_RETRY,
+                )
+            except Exception as rec_exc:
+                workflow.logger.warning("Could not record render failure for %s: %s", ri.viz_id, rec_exc)
+            return RenderResult(viz_id=ri.viz_id, succeeded=False)
 
     async def _repair_one(self, job_id: str, result: RenderResult, code: str) -> bool:
         """Repair one defective visualization; returns True if the re-render

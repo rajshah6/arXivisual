@@ -150,7 +150,7 @@ def _azure_model(model: str | None) -> str:
 
 
 def _azure_request_kwargs(
-    model: str, prompt: str, system_prompt: str, max_tokens: int
+    model: str, prompt: str, system_prompt: str, max_tokens: int, json_mode: bool = False
 ) -> dict:
     messages = []
     if system_prompt:
@@ -161,6 +161,11 @@ def _azure_request_kwargs(
         "messages": messages,
         "max_completion_tokens": max_tokens + _AZURE_REASONING_HEADROOM,
     }
+    if json_mode:
+        # The API then guarantees a parseable JSON object — ~4% of papers lost
+        # a section's candidates and ~6% a planned visualization to unparseable
+        # output (unescaped backslashes, stray quotes) before this.
+        kwargs["response_format"] = {"type": "json_object"}
     # minimal | low | medium | high — low keeps the pipeline fast/cheap
     kwargs["reasoning_effort"] = os.environ.get("AZURE_OPENAI_REASONING_EFFORT", "low")
     return kwargs
@@ -224,6 +229,7 @@ async def call_llm(
     system_prompt: str = "",
     max_tokens: int = 4096,
     name: str | None = None,
+    json_mode: bool = False,
 ) -> str:
     """Async LLM call routed through the configured provider."""
     provider = get_provider()
@@ -237,7 +243,7 @@ async def call_llm(
             client = _get_azure_client()
             resp = await client.chat.completions.create(
                 **_with_trace_name(
-                    _azure_request_kwargs(resolved, prompt, system_prompt, max_tokens),
+                    _azure_request_kwargs(resolved, prompt, system_prompt, max_tokens, json_mode),
                     name,
                 )
             )
@@ -251,6 +257,8 @@ async def call_llm(
             raise
 
     dedalus_model = _dedalus_model(model or DEFAULT_DEDALUS_MODEL)
+    if json_mode:
+        logger.warning("[LLM] json_mode requested but the Dedalus provider cannot enforce it; relying on the prompt")
     logger.info(f"[LLM] Calling {dedalus_model} ({input_words} input words, max_tokens={max_tokens})")
     try:
         runner = _get_dedalus_runner()
@@ -276,6 +284,7 @@ def call_llm_sync(
     system_prompt: str = "",
     max_tokens: int = 4096,
     name: str | None = None,
+    json_mode: bool = False,
 ) -> str:
     """Synchronous LLM call routed through the configured provider."""
     provider = get_provider()
@@ -285,11 +294,13 @@ def call_llm_sync(
         client = _get_azure_sync_client()
         resp = client.chat.completions.create(
             **_with_trace_name(
-                _azure_request_kwargs(resolved, prompt, system_prompt, max_tokens),
+                _azure_request_kwargs(resolved, prompt, system_prompt, max_tokens, json_mode),
                 name,
             )
         )
         return resp.choices[0].message.content or ""
+    if json_mode:
+        logger.warning("[LLM] json_mode requested but the Dedalus provider cannot enforce it; relying on the prompt")
 
     import asyncio
 
@@ -301,6 +312,76 @@ def call_llm_sync(
         max_tokens=max_tokens,
     ))
     return result.final_output or ""
+
+
+# An escaped pair is consumed whole (first alternative) so its second
+# backslash is never mistaken for a lone one — the old lookahead-only pattern
+# turned a correctly escaped \\alpha into \\\alpha and could never salvage a
+# compliant reply that also had a trailing comma. \u counts as an escape only
+# when four hex digits follow.
+_BACKSLASH_RE = re.compile(r'\\\\|\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})')
+# String literals are matched (and kept) by the first alternative so a comma
+# INSIDE a string value ("a, ]") is never mistaken for a trailing comma.
+_STRING_OR_TRAILING_COMMA_RE = re.compile(r'("(?:[^"\\]|\\.)*")|,\s*([}\]])')
+
+
+def repair_json_text(text: str) -> str:
+    """Best-effort repair of LLM JSON: escape LONE backslashes (LaTeX inside
+    strings: \\alpha -> \\\\alpha; already-escaped pairs untouched) and drop
+    trailing commas outside string literals. Idempotent on valid JSON."""
+    # Both cases map to an escaped pair: a matched pair stays a pair, a lone
+    # backslash becomes one.
+    repaired = _BACKSLASH_RE.sub("\\\\\\\\", text)
+    return _STRING_OR_TRAILING_COMMA_RE.sub(lambda m: m.group(1) if m.group(1) is not None else m.group(2), repaired)
+
+
+_JSON_RETRY_SUFFIX = (
+    "\n\nYour previous reply was not valid JSON. Return ONLY a valid JSON object. "
+    "Escape every backslash inside strings as \\\\ and every double quote as \\\"."
+)
+
+
+def parse_json_response(content: str) -> dict:
+    """JSON from a model reply: fenced or bare, with lenient repair as the
+    last resort. Raises ValueError with the reply head on failure."""
+    candidates = []
+    for pattern in (r"```json\s*([\s\S]*?)\s*```", r"```\s*([\s\S]*?)\s*```"):
+        m = re.search(pattern, content)
+        if m:
+            candidates.append(m.group(1).strip())
+    candidates.append(content.strip())
+    for cand in candidates:
+        for text in (cand, repair_json_text(cand)):
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                continue
+    raise ValueError(f"Failed to parse JSON from response: {content[:500]}")
+
+
+async def call_llm_json(
+    prompt: str,
+    *,
+    model: str | None = None,
+    system_prompt: str = "",
+    max_tokens: int = 4096,
+    name: str | None = None,
+) -> dict:
+    """JSON-mode call with one repair retry — the single implementation the
+    agents and the ingestion organizer share (two copies had already drifted:
+    one retry suffix forgot the double-quote rule)."""
+    text = await call_llm(prompt, model=model, system_prompt=system_prompt,
+                          max_tokens=max_tokens, name=name, json_mode=True)
+    try:
+        return parse_json_response(text)
+    except ValueError as first:
+        logger.warning("%s returned unparseable JSON; retrying once", name or "llm")
+        text = await call_llm(prompt + _JSON_RETRY_SUFFIX, model=model, system_prompt=system_prompt,
+                              max_tokens=max_tokens, name=name, json_mode=True)
+        try:
+            return parse_json_response(text)
+        except ValueError as second:
+            raise second from first
 
 
 class BaseAgent:
@@ -316,11 +397,14 @@ class BaseAgent:
         prompt_file: str,
         model: str | None = None,
         max_tokens: int = 4096,
+        system_prompt_file: str = "system/manim_reference.md",
     ):
         self._provider = get_provider()
         self.model = get_model_name(model)
         self.max_tokens = max_tokens
-        self.system_prompt = self._load_system_prompt()
+        # Only the code generator needs the 17KB Manim reference; the JSON
+        # agents (analyzer, planner) get a short analyst persona instead.
+        self.system_prompt = self._load_system_prompt(system_prompt_file)
         self.prompt_template = self._load_prompt(prompt_file)
         # Readable Langfuse generation name, e.g. "manim_generator"
         self._trace_name = Path(prompt_file).stem
@@ -338,9 +422,9 @@ class BaseAgent:
         """Get the prompts directory path."""
         return Path(__file__).parent.parent / "prompts"
 
-    def _load_system_prompt(self) -> str:
-        """Load the curated Manim reference as system prompt."""
-        path = self._get_prompts_dir() / "system" / "manim_reference.md"
+    def _load_system_prompt(self, relative: str = "system/manim_reference.md") -> str:
+        """Load a system prompt file from the prompts directory ('' if absent)."""
+        path = self._get_prompts_dir() / relative
         if path.exists():
             return path.read_text()
         return ""
@@ -372,30 +456,20 @@ class BaseAgent:
         return result.replace("\x00LB\x00", "{").replace("\x00RB\x00", "}")
 
     def _parse_json_response(self, content: str) -> dict:
-        """
-        Extract and parse JSON from the response.
+        """See module-level parse_json_response (single implementation)."""
+        return parse_json_response(content)
 
-        Handles both raw JSON and JSON wrapped in markdown code blocks.
-        """
-        # Try to extract JSON from markdown code blocks
-        json_patterns = [
-            r"```json\s*([\s\S]*?)\s*```",  # ```json ... ```
-            r"```\s*([\s\S]*?)\s*```",       # ``` ... ```
-        ]
-
-        for pattern in json_patterns:
-            match = re.search(pattern, content)
-            if match:
-                try:
-                    return json.loads(match.group(1).strip())
-                except json.JSONDecodeError:
-                    continue
-
-        # Try parsing the whole content as JSON
-        try:
-            return json.loads(content.strip())
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Failed to parse JSON from response: {e}\nContent: {content[:500]}") from e
+    async def _call_llm_json(self, prompt: str, **kwargs: Any) -> dict:
+        """JSON-mode call with one repair retry (see module-level call_llm_json):
+        a malformed reply used to drop a section's candidates or a planned
+        visualization permanently."""
+        return await call_llm_json(
+            prompt,
+            model=kwargs.get("model", self.model),
+            system_prompt=kwargs.get("system_prompt") or self.system_prompt,
+            max_tokens=kwargs.get("max_tokens", self.max_tokens),
+            name=self._trace_name,
+        )
 
     def _extract_code_block(self, content: str, language: str = "python") -> str:
         """
@@ -432,6 +506,7 @@ class BaseAgent:
         prompt: str,
         system_prompt: str | None = None,
         max_tokens: int | None = None,
+        json_mode: bool = False,
     ) -> str:
         """Call the LLM via the configured provider (async)."""
         return await call_llm(
@@ -440,6 +515,7 @@ class BaseAgent:
             system_prompt=system_prompt or self.system_prompt,
             max_tokens=max_tokens or self.max_tokens,
             name=self._trace_name,
+            json_mode=json_mode,
         )
 
     def _call_llm_sync(

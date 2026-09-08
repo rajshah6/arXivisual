@@ -4,6 +4,7 @@ Database queries for ArXiviz.
 CRUD operations for papers, sections, visualizations, and processing jobs.
 """
 
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -341,6 +342,107 @@ async def create_visualization(
     db.add(viz)
     await db.commit()
     return viz
+
+
+async def get_visualizations_for_paper(
+    db: AsyncSession,
+    paper_id: str,
+    since: datetime | None = None,
+    include_superseded: bool = False,
+) -> list[Visualization]:
+    """A paper's visualization rows, oldest first.
+
+    ``since`` scopes to rows created by a particular run (a job's created_at);
+    superseded rows — previous runs' rows, hidden once a newer run succeeded —
+    are excluded unless asked for.
+    """
+    stmt = select(Visualization).where(Visualization.paper_id == paper_id)
+    if since is not None:
+        stmt = stmt.where(Visualization.created_at >= since)
+    if not include_superseded:
+        stmt = stmt.where(Visualization.status != "superseded")
+    result = await db.execute(stmt.order_by(Visualization.created_at.asc(), Visualization.id.asc()))
+    return list(result.scalars().all())
+
+
+def next_viz_index(rows: list[Visualization]) -> int:
+    """First unused ``_N`` suffix across ALL of a paper's rows (superseded
+    included): ids are never reused, so feedback votes keep pointing at the
+    video they were cast on."""
+    highest = 0
+    for row in rows:
+        m = re.search(r"_(\d+)$", row.id)
+        if m:
+            highest = max(highest, int(m.group(1)))
+    return highest + 1
+
+
+async def insert_visualization_with_next_index(
+    *,
+    paper_suffix: str,
+    paper_id: str,
+    section_id: str | None,
+    concept: str,
+    storyboard: dict | None,
+    manim_code: str | None,
+    session_maker,
+    attempts: int = 5,
+) -> str:
+    """INSERT a checkpoint row under the first unused ``viz_{suffix}_{N}`` id.
+
+    Read-then-insert in its own session, retried on IntegrityError, so two
+    overlapping generation attempts can never write the same id (an upsert
+    would silently overwrite the other attempt's row).
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    last_exc: Exception | None = None
+    for _ in range(attempts):
+        async with session_maker() as db:
+            rows = await get_visualizations_for_paper(db, paper_id, include_superseded=True)
+            viz_id = f"viz_{paper_suffix}_{next_viz_index(rows)}"
+            try:
+                await create_visualization(
+                    db, viz_id=viz_id, paper_id=paper_id, section_id=section_id,
+                    concept=concept, status="pending", storyboard=storyboard, manim_code=manim_code,
+                )
+                return viz_id
+            except IntegrityError as exc:
+                last_exc = exc
+                await db.rollback()
+    raise RuntimeError(f"Could not allocate a visualization id for {paper_id}") from last_exc
+
+
+async def supersede_visualizations_before(
+    db: AsyncSession, paper_id: str, before: datetime
+) -> int:
+    """Hide a paper's rows from previous runs once a newer run has produced
+    videos. Rows are NOT deleted: feedback.viz_id references them (a hard
+    delete violated that foreign key and, worse, would have discarded the
+    labeled ground truth the feedback loop exists to collect)."""
+    rows = await get_visualizations_for_paper(db, paper_id)
+    older = [r for r in rows if r.created_at is not None and r.created_at < before]
+    for r in older:
+        r.status = "superseded"
+    if older:
+        await db.commit()
+    return len(older)
+
+
+async def fail_pending_visualizations(
+    db: AsyncSession, paper_id: str, error: str, since: datetime | None = None
+) -> int:
+    """Mark still-pending rows failed (a job that died mid-render used to
+    strand them at 'pending' forever, where the gallery counted them as
+    visuals). ``since`` limits it to the failed run's own rows."""
+    rows = await get_visualizations_for_paper(db, paper_id, since=since)
+    stranded = [r for r in rows if r.status in ("pending", "rendering")]
+    for r in stranded:
+        r.status = "failed"
+        r.error = error
+    if stranded:
+        await db.commit()
+    return len(stranded)
 
 
 async def get_visualization(db: AsyncSession, viz_id: str) -> Visualization | None:

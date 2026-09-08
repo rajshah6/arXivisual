@@ -56,11 +56,11 @@ _INFRA_RETRY = RetryPolicy(maximum_attempts=2)
 # A repair (or a repair re-render) is a single paid LLM/render step whose
 # failure keeps the original video — never worth a second attempt.
 _NO_RETRY = RetryPolicy(maximum_attempts=1)
-# Generation retries once, and only a dead worker can trigger it: the
-# activity swallows per-candidate errors itself and heartbeats on a 30s timer
-# (not just per finished viz), so a heartbeat timeout genuinely means the
-# worker died. The retry skips this run's checkpointed concepts, so it costs
-# the unfinished work only.
+# Generation retries once. A heartbeat timeout (dead worker) or the 40-min
+# start-to-close timeout can trigger it; in the latter case attempt 1 may
+# still be running, which is why checkpoint ids are INSERTed under a freshly
+# read index (no overwrite possible) and why the retry only fills the slots
+# this run has not checkpointed — it never pays for finished work twice.
 _GENERATION_RETRY = RetryPolicy(maximum_attempts=2)
 
 

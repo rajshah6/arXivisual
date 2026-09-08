@@ -469,7 +469,10 @@ async def update_visualization_status(
         return None
 
     viz.status = status
-    if video_url:
+    if status == "failed":
+        # Never leave a failed row pointing at a (stale) video.
+        viz.video_url = video_url
+    elif video_url:
         viz.video_url = video_url
     if error:
         viz.error = error
@@ -497,9 +500,14 @@ async def upsert_visualization(
 
     if viz:
         # Update existing visualization
+        viz.paper_id = paper_id  # was never rewritten -> orphan rows across sibling papers
         viz.section_id = section_id
         viz.concept = concept
         viz.status = status
+        if status == "pending":
+            # A re-run must not keep serving the previous run's video/error.
+            viz.video_url = None
+            viz.error = None
         if video_url:
             viz.video_url = video_url
         if storyboard:

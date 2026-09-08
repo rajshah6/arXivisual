@@ -9,7 +9,7 @@ import logging
 import os
 import re
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse
@@ -36,6 +36,7 @@ from .schemas import (
     RenderRequest,
     RenderResponse,
     SectionResponse,
+    SectionVideo,
     StatusResponse,
     StepInfo,
     VisualizationResponse,
@@ -58,6 +59,21 @@ from .turnstile import verify_turnstile
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
+
+# DB datetimes are naive UTC (backend convention #6); a naive floor for sorting.
+_NAIVE_EPOCH = datetime(1970, 1, 1)  # noqa: DTZ001
+
+
+def _first_video_url(videos: list[SectionVideo] | None) -> str | None:
+    """Legacy single-video field: the newest complete video, if any."""
+    return videos[0].video_url if videos else None
+
+
+def _viz_order(v) -> tuple:
+    """Newest first; equal timestamps break on the numeric id suffix (a
+    string tiebreak ordered viz_x_9 before viz_x_10)."""
+    m = re.search(r"_(\d+)$", v.id)
+    return (v.created_at or _NAIVE_EPOCH, int(m.group(1)) if m else 0, v.id)
 
 
 def _authorize_render(secret: str | None) -> None:
@@ -310,23 +326,17 @@ async def get_paper(arxiv_id: str, db: AsyncSession = Depends(get_db)):
 
         # Previous runs' rows are kept for feedback integrity but never shown.
         visible_viz = [v for v in paper.visualizations if v.status != "superseded"]
-        # Build section_id -> video_url lookup from visualizations
-        # Prioritize complete videos and take the first complete one for each section
-        section_video_map = {}
-        section_status_map = {}  # Track status of mapped videos
-        for v in visible_viz:
-            if v.video_url and v.section_id:
-                existing_status = section_status_map.get(v.section_id)
-                # Only update if:
-                # 1. We don't have a video for this section yet, OR
-                # 2. This video is complete and the existing one is not complete
-                if v.section_id not in section_video_map:
-                    section_video_map[v.section_id] = v.video_url
-                    section_status_map[v.section_id] = v.status
-                elif v.status == "complete" and existing_status != "complete":
-                    # Prefer complete videos over failed/pending/rendering
-                    section_video_map[v.section_id] = v.video_url
-                    section_status_map[v.section_id] = v.status
+        # Every COMPLETE video per section, newest first. The old picker kept
+        # one row per section and could prefer a stale previous-run row (the
+        # relationship loads in heap order); pending/failed rows with a
+        # leftover video_url were also mapped.
+        section_videos: dict[str, list[SectionVideo]] = {}
+        ordered = sorted(visible_viz, key=_viz_order, reverse=True)
+        for v in ordered:
+            if v.status == "complete" and v.video_url and v.section_id:
+                section_videos.setdefault(v.section_id, []).append(
+                    SectionVideo(viz_id=v.id, video_url=v.video_url, concept=v.concept or "")
+                )
 
         return PaperResponse(
             paper_id=paper.id,
@@ -346,7 +356,8 @@ async def get_paper(arxiv_id: str, db: AsyncSession = Depends(get_db)):
                     level=s.level,
                     order_index=s.order_index,
                     equations=s.equations or [],
-                    video_url=section_video_map.get(s.id),
+                    video_url=_first_video_url(section_videos.get(s.id)),
+                    videos=section_videos.get(s.id, []),
                 )
                 for s in sections
             ],

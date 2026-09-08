@@ -39,5 +39,12 @@ export type Section = {
   equations: string[];
   video_url?: string;
   viz_id?: string;
+  videos?: SectionVideo[];
+};
+
+export type SectionVideo = {
+  viz_id: string;
+  video_url: string;
+  concept: string;
 };
 

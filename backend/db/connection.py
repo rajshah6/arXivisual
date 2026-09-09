@@ -5,6 +5,7 @@ Uses SQLite with aiosqlite for local development.
 Automatically switches to PostgreSQL when DATABASE_URL environment variable is set (Railway/Render).
 """
 
+import logging
 import os
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -65,3 +66,12 @@ async def init_db():
     """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    # Idempotent data hygiene, run at every API start (one cheap scan of the
+    # visualizations table): hide pre-fix truncated-id video rows where a
+    # full-id row exists (see queries.supersede_legacy_truncated_rows).
+    from db import queries
+
+    async with async_session_maker() as db:
+        retired = await queries.supersede_legacy_truncated_rows(db)
+        if retired:
+            logging.getLogger(__name__).info("Superseded %d legacy truncated-id visualization row(s)", retired)

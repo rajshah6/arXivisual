@@ -14,9 +14,11 @@ def _utcnow_naive() -> datetime:
     must stay naive; this just replaces the deprecated _utcnow_naive()."""
     return datetime.now(UTC).replace(tzinfo=None)
 
-from sqlalchemy import distinct, func, select
+from sqlalchemy import delete, distinct, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+
+from models.paper import ArxivPaperMeta
 
 from .models import Feedback, Paper, ProcessingJob, Section, Visualization
 
@@ -172,6 +174,92 @@ async def create_feedback(
     return fb
 
 
+# === Stale (abstract-only) papers ===
+
+# The ingest that refuses abstract pages (PR #69) went live at this instant
+# (UTC, naive like every timestamp in this schema). Papers ingested or
+# re-ingested after it are trusted whatever their length: the summarizer
+# refuses sources under MIN_SOURCE_WORDS, and a short real paper must not be
+# re-ingested on every request. Before it, ~31% of the corpus was the arXiv
+# abstract inflated to ~300 words by the old summarizer floor.
+ABSTRACT_INGEST_FIXED_AT = datetime(2026, 9, 9, tzinfo=UTC).replace(tzinfo=None)
+# Measured on the live corpus (1,016 pre-fix papers, 2026-09-09): inflated
+# abstracts total 2,000-3,266 chars of stored text; the shortest real paper
+# summary is 3,463. Halfway into that gap.
+STALE_TEXT_CHARS = 3400
+
+
+def is_stale(ingested_at: datetime | None, text_chars: int) -> bool:
+    """Pre-fix ingest whose stored text is abstract-sized: not a paper."""
+    if ingested_at is not None and ingested_at >= ABSTRACT_INGEST_FIXED_AT:
+        return False
+    return text_chars < STALE_TEXT_CHARS
+
+
+async def paper_is_stale(db: AsyncSession, paper_id: str) -> bool:
+    """Stale papers are hidden from the gallery and the reader, and
+    re-ingested (not skipped) on the next request."""
+    result = await db.execute(select(Paper.updated_at, Paper.created_at).where(Paper.id == paper_id))
+    row = result.one_or_none()
+    if row is None:
+        return False
+    chars = await db.execute(
+        select(func.coalesce(func.sum(func.length(Section.content)), 0)).where(Section.paper_id == paper_id)
+    )
+    return is_stale(row[0] or row[1], int(chars.scalar_one() or 0))
+
+
+async def reset_paper_for_reingest(db: AsyncSession, meta: ArxivPaperMeta) -> None:
+    """Replace a stale paper's metadata and drop its sections so the ingest
+    loop can store the real ones. Old visualization rows are unlinked from
+    the sections (FK) rather than deleted — feedback references them, and
+    finalize_job supersedes them once the new run has videos. ``updated_at``
+    moves past ABSTRACT_INGEST_FIXED_AT, so the paper is trusted from here."""
+    # Core statements, not loaded objects: a Paper loaded earlier in this
+    # session (with its sections) must not resurrect the deleted rows on flush.
+    await db.execute(
+        update(Paper).where(Paper.id == meta.arxiv_id).values(
+            title=meta.title, authors=meta.authors, abstract=meta.abstract,
+            pdf_url=meta.pdf_url, html_url=meta.html_url, updated_at=_utcnow_naive(),
+        )
+    )
+    await db.execute(update(Visualization).where(Visualization.paper_id == meta.arxiv_id).values(section_id=None))
+    await db.execute(delete(Section).where(Section.paper_id == meta.arxiv_id))
+    await db.commit()
+    db.expire_all()
+
+
+# Pre-fix ids were ``viz_{arxiv_id.replace(".", "")[:8]}_{n}``: eight characters
+# of the id, so ``viz_17060376_1`` and, for old-style ids, ``viz_math/061_1``.
+# Full ids are never eight characters (``0805.3898`` is nine).
+_LEGACY_VIZ_ID_RE = re.compile(r"^viz_[^_]{8}_\d+$")
+
+
+async def supersede_legacy_truncated_rows(db: AsyncSession) -> int:
+    """Idempotent, run at every API start: legacy truncated-id rows are hidden
+    wherever the paper also has a full-id complete row, so re-processed papers
+    stop showing two generations of videos. Papers whose only videos are
+    legacy rows keep them."""
+    result = await db.execute(
+        select(Visualization.id, Visualization.paper_id, Visualization.status, Visualization.video_url)
+    )
+    rows = result.all()
+    has_new_complete = {
+        pid for vid, pid, status, url in rows
+        if not _LEGACY_VIZ_ID_RE.match(vid) and status == "complete" and url
+    }
+    legacy_ids = [
+        vid for vid, pid, status, url in rows
+        if _LEGACY_VIZ_ID_RE.match(vid) and status != "superseded" and pid in has_new_complete
+    ]
+    if legacy_ids:
+        await db.execute(
+            update(Visualization).where(Visualization.id.in_(legacy_ids)).values(status="superseded")
+        )
+        await db.commit()
+    return len(legacy_ids)
+
+
 # === Papers ===
 
 async def get_paper(db: AsyncSession, arxiv_id: str) -> Paper | None:
@@ -229,6 +317,14 @@ async def list_paper_summaries(db: AsyncSession, active_job_max_age_hours: float
         .group_by(Visualization.paper_id)
         .subquery()
     )
+    text = (
+        select(
+            Section.paper_id.label("paper_id"),
+            func.coalesce(func.sum(func.length(Section.content)), 0).label("chars"),
+        )
+        .group_by(Section.paper_id)
+        .subquery()
+    )
     cutoff = _utcnow_naive() - timedelta(hours=active_job_max_age_hours)
     active = (
         select(ProcessingJob.paper_id.label("paper_id"))
@@ -248,9 +344,11 @@ async def list_paper_summaries(db: AsyncSession, active_job_max_age_hours: float
             Paper.updated_at,
             func.coalesce(playable.c.n, 0),
             active.c.paper_id.isnot(None),
+            func.coalesce(text.c.chars, 0),
         )
         .outerjoin(playable, playable.c.paper_id == Paper.id)
         .outerjoin(active, active.c.paper_id == Paper.id)
+        .outerjoin(text, text.c.paper_id == Paper.id)
         .order_by(Paper.created_at.desc())
     )
     return [
@@ -258,8 +356,9 @@ async def list_paper_summaries(db: AsyncSession, active_job_max_age_hours: float
             "paper_id": pid, "title": title, "authors": authors or [],
             "created_at": created, "updated_at": updated,
             "playable_sections": int(n), "processing": bool(is_active),
+            "text_chars": int(chars or 0),
         }
-        for pid, title, authors, created, updated, n, is_active in result.all()
+        for pid, title, authors, created, updated, n, is_active, chars in result.all()
     ]
 
 

@@ -150,5 +150,15 @@ backend ruff and frontend eslint are both HARD gates). `security.yml` — gitlea
    that way. Fetched bodies must contain `ltx_document`. Sources under 400 words raise
    `SourceTooShortError` (never retried); other formatting failures are retried once in-function and the
    Temporal ingest activity then fails the job with the real message (`ApplicationError`, non-retryable).
-9. **Keep `pytest` hermetic.** `testpaths=["tests"]` exists because scripts under `tools/` fire real API calls
+9. **Pre-fix abstract-only papers are stale, not visualized.** A paper ingested before
+   `queries.ABSTRACT_INGEST_FIXED_AT` (when the ingest that refuses abstract pages went live) whose stored section
+   text totals under `STALE_TEXT_CHARS` (3,400; the live corpus has a gap between 3,266 and 3,463) is an inflated abstract, not a paper (`queries.is_stale`). Papers
+   ingested or re-ingested after that instant are trusted whatever their length — stored `content` is the ~35%
+   summary, so a short real paper must never loop through re-ingestion. `GET /api/papers` reports stale papers
+   `stale` (Explore hides them), `GET /api/paper/{id}` answers 404 so the reader offers Start, and both job paths
+   re-ingest instead of skipping (`_ingest_and_store_paper(replace=True)`: metadata + `updated_at` refreshed,
+   sections replaced, old viz rows unlinked from sections, then superseded by `finalize_job` once the new run has
+   videos). Legacy truncated-id viz rows (`viz_17060376_1`) are superseded at API startup where a full-id complete
+   row exists.
+10. **Keep `pytest` hermetic.** `testpaths=["tests"]` exists because scripts under `tools/` fire real API calls
    on collection; new tests must not need network or real keys.

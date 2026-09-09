@@ -5,7 +5,7 @@
  */
 
 import { DEMO_PAPER_IDS, getDemoPaper, MOCK_PAPER, MOCK_STATUS } from "./mock-data";
-import type { Paper, PaperSummary, ProcessingStatus, Section } from "./types";
+import type { Paper, PaperStatus, PaperSummary, ProcessingStatus, Section } from "./types";
 
 // Toggle between mock and real API
 const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK === "true";
@@ -86,7 +86,7 @@ export interface PaperSummaryResponse {
   title: string;
   authors: string[];
   visualization_count: number;
-  status?: "ready" | "processing" | "empty";
+  status?: PaperStatus;
   processed_at: string;
 }
 

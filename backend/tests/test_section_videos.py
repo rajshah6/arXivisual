@@ -42,7 +42,7 @@ async def client(db):
 async def _seed(db):
     db.add(Paper(id="2608.13717", title="StreamHear", authors=["A"]))
     sec = "2608.13717-section-2"
-    db.add(Section(id=sec, paper_id="2608.13717", title="Pipeline", content="x", order_index=0))
+    db.add(Section(id=sec, paper_id="2608.13717", title="Pipeline", content="word " * 500, order_index=0))
     db.add(Visualization(id="viz_2608_13717_3", paper_id="2608.13717", section_id=sec,
                          concept="Teacher -> Student", status="complete",
                          video_url="https://x/3.mp4", created_at=datetime(2026, 9, 7, 10)))
@@ -86,7 +86,7 @@ async def test_failed_status_drops_stale_url(db):
 async def test_superseded_rows_never_reach_the_api(client, db):
     # Reviewer: this exact filter broke once during the stack merge.
     db.add(Paper(id="1706.03762", title="A"))
-    db.add(Section(id="s1", paper_id="1706.03762", title="S", content="c", order_index=0))
+    db.add(Section(id="s1", paper_id="1706.03762", title="S", content="word " * 500, order_index=0))
     db.add(Visualization(id="viz_1706_03762_1", paper_id="1706.03762", section_id="s1", concept="old",
                          status="superseded", video_url="https://x/old.mp4", created_at=datetime(2026, 9, 9)))
     db.add(Visualization(id="viz_1706_03762_2", paper_id="1706.03762", section_id="s1", concept="new",

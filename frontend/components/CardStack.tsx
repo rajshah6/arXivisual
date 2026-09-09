@@ -9,7 +9,7 @@ import {
   type MotionValue,
 } from "framer-motion";
 import { StackCard } from "@/components/StackCard";
-import type { ScrollySectionModel } from "@/components/ScrollySection";
+import type { ScrollySectionModel } from "@/lib/section-model";
 import { cn } from "@/lib/utils";
 
 // --- Layout constants ---

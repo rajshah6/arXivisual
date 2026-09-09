@@ -57,6 +57,13 @@ variable "acr_admin_password" {
   sensitive   = true
 }
 
+variable "ip_hash_secret" {
+  description = "HMAC key behind the pseudonymous client-IP fingerprints in admission logs (IP_HASH_SECRET). Set on the live API app; keep it here so an apply does not remove it."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "turnstile_secret_key" {
   description = "Cloudflare Turnstile secret for POST /api/process human verification. Empty = verification disabled."
   type        = string

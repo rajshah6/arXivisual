@@ -189,13 +189,18 @@ async def _process_paper_job_impl(job_id: str, arxiv_id: str):
             )
 
             paper_exists = await queries.paper_exists(db, arxiv_id)
-            if paper_exists:
+            # Same rule as the Temporal activity: a pre-fix abstract-only
+            # ingest is re-ingested, a healthy paper is skipped.
+            replace = paper_exists and await queries.paper_is_stale(db, arxiv_id)
+            if replace:
+                logger.info(f"Paper {arxiv_id} is a pre-fix abstract-only ingest; re-ingesting")
+            elif paper_exists:
                 logger.info(f"Paper {arxiv_id} already exists in database, skipping ingestion")
             else:
                 logger.info(f"Paper {arxiv_id} not found, fetching from arXiv...")
 
-            if not paper_exists:
-                await _ingest_and_store_paper(db, job_id, arxiv_id)
+            if replace or not paper_exists:
+                await _ingest_and_store_paper(db, job_id, arxiv_id, replace=replace)
             else:
                 # Paper already exists, just link the job to it
                 logger.info("Linking job to existing paper...")
@@ -419,9 +424,12 @@ async def _process_paper_job_impl(job_id: str, arxiv_id: str):
             raise
 
 
-async def _ingest_and_store_paper(db, job_id: str, arxiv_id: str):
+async def _ingest_and_store_paper(db, job_id: str, arxiv_id: str, replace: bool = False):
     """
     Ingest a real paper from arXiv and store it in the database.
+
+    ``replace=True`` re-ingests a paper that exists but is stale (a pre-fix
+    ingest of the abstract page): metadata is updated and sections replaced.
     """
     from ingestion import ingest_paper
 
@@ -431,7 +439,7 @@ async def _ingest_and_store_paper(db, job_id: str, arxiv_id: str):
         progress=0.15
     )
 
-    structured_paper = await ingest_paper(arxiv_id)
+    structured_paper = await ingest_paper(arxiv_id, force_refresh=replace)
     meta = structured_paper.meta
 
     await queries.update_job_status(
@@ -440,16 +448,19 @@ async def _ingest_and_store_paper(db, job_id: str, arxiv_id: str):
         progress=0.30
     )
 
-    # Store paper record
-    await queries.create_paper(
-        db,
-        arxiv_id=meta.arxiv_id,
-        title=meta.title,
-        authors=meta.authors,
-        abstract=meta.abstract,
-        pdf_url=meta.pdf_url,
-        html_url=meta.html_url,
-    )
+    # Store paper record (or replace a stale one)
+    if replace:
+        await queries.reset_paper_for_reingest(db, meta)
+    else:
+        await queries.create_paper(
+            db,
+            arxiv_id=meta.arxiv_id,
+            title=meta.title,
+            authors=meta.authors,
+            abstract=meta.abstract,
+            pdf_url=meta.pdf_url,
+            html_url=meta.html_url,
+        )
 
     # Now that the paper exists, link the job to it
     job = await queries.get_job(db, job_id)

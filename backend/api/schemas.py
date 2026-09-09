@@ -204,9 +204,9 @@ class PaperSummary(BaseModel):
     visualization_count: int = Field(
         0, description="Sections that have a playable (complete) video — what the paper page can show"
     )
-    status: Literal["ready", "processing", "empty"] = Field(
+    status: Literal["ready", "processing", "empty", "stale"] = Field(
         "ready",
-        description="ready = has playable videos; processing = a job is in flight; empty = nothing to show",
+        description="ready = has playable videos; processing = a job is in flight; empty = nothing to show; stale = abstract-only ingest, hidden until re-processed",
     )
     processed_at: datetime
 

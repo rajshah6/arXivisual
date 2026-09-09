@@ -68,7 +68,7 @@ export default function ExplorePage() {
   // Papers with nothing playable and no job in flight are dead entries
   // (failed or stranded runs); listing them sends readers to empty pages.
   const visiblePapers =
-    state.type === "ready" ? state.papers.filter((p) => p.status !== "empty") : [];
+    state.type === "ready" ? state.papers.filter((p) => p.status !== "empty" && p.status !== "stale") : [];
 
   return (
     <main className="min-h-dvh relative overflow-hidden bg-black">

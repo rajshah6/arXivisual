@@ -40,7 +40,7 @@ async def client(db):
 async def _paper(db, pid, title="T", with_section=True):
     db.add(Paper(id=pid, title=title, authors=["A"]))
     if with_section:
-        db.add(Section(id=f"{pid}-section-1", paper_id=pid, title="Intro", content="x", order_index=0))
+        db.add(Section(id=f"{pid}-section-1", paper_id=pid, title="Intro", content="word " * 500, order_index=0))
     await db.commit()
 
 

@@ -78,7 +78,9 @@ attribute reads a `sensitive = true` variable (see `variables.tf`):
 
 `postgres_admin_password`, `database_url`, `azure_openai_api_key`,
 `s3_access_key`, `s3_secret_key`, `langfuse_public_key`,
-`langfuse_secret_key`, `acr_admin_password`, and optionally `turnstile_secret_key` (empty = Turnstile off).
+`langfuse_secret_key`, `acr_admin_password`, and optionally `turnstile_secret_key` (empty = Turnstile off) and `ip_hash_secret`
+(the HMAC key behind the IP fingerprints in admission logs; empty = `IP_HASH_SECRET` not set). Both are
+set on the live API app; leave either empty here and an apply removes it.
 
 Supply them either as environment variables:
 

@@ -186,8 +186,12 @@ function PaperCard({ paper, index }: { paper: PaperSummary; index: number }) {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, delay: Math.min(index * 0.05, 0.4), ease: "easeOut" }}
     >
+      {/* prefetch={false}: each card entering the viewport otherwise fires two
+          RSC prefetches of the server-rendered paper route — ~300-1,300 Vercel
+          edge requests per gallery visit (measured 313 for one scroll). */}
       <Link
         href={`/abs/${encodeURIComponent(paper.paper_id)}`}
+        prefetch={false}
         className="block h-full"
       >
         <GlassCard animate={false} className="h-full p-6 flex flex-col">

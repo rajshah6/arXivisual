@@ -48,7 +48,8 @@ from .throttle import (
     enforce,
     enforce_all,
     feedback_limiter,
-    global_limiter,
+    global_window_seconds,
+    global_window_verdict,
     ip_fingerprint,
     per_ip_daily_limiter,
     per_ip_limiter,
@@ -172,6 +173,22 @@ async def start_processing(
             headers={"Retry-After": str(retry_after)},
         )
 
+    # Durable global window (rolling, jobs-table-counted so every replica sees
+    # the same number). Before Turnstile for the same reason as the daily cap.
+    window_seconds = global_window_seconds()
+    started_in_window = await queries.count_jobs_created_since(db, now - timedelta(seconds=window_seconds))
+    saturated, retry_after = global_window_verdict(started_in_window)
+    if saturated:
+        logger.info(
+            "Rate limit denied: The service is at capacity for new papers right now (%d in %ds) (client %s)",
+            started_in_window, window_seconds, client_tag,
+        )
+        raise HTTPException(
+            status_code=429,
+            detail="The service is at capacity for new papers right now. Try again later.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
     verdict = await verify_turnstile_detailed(
         request.turnstile_token, ip, expected_cdata=turnstile_cdata(arxiv_id),
     )
@@ -189,8 +206,6 @@ async def start_processing(
             (per_ip_limiter, ip, "Rate limit reached for starting new papers. Try again later."),
             (per_ip_daily_limiter, ip,
              "You've started today's share of new papers from this address. Try again tomorrow."),
-            (global_limiter, "global",
-             "The service is at capacity for new papers right now. Try again later."),
         ],
         client_tag=client_tag,
     )

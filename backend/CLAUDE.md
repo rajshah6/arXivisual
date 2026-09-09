@@ -95,9 +95,11 @@ backend ruff and frontend eslint are both HARD gates). `security.yml` — gitlea
   when unset, fails CLOSED when set; every token is minted with action `start-paper` and the paper id as cData
   (`turnstile_cdata`, mirrored in `TurnstileWidget.tsx`) and the API refuses tokens for any other action/paper,
   so one solved challenge starts one paper — deploy the frontend BEFORE the API when the binding changes; (2) `DAILY_NEW_PAPER_CAP` (80) — durable per-UTC-day ceiling counted from
-  the jobs table (the spend guarantee; cached papers stay free; 0 disables); (3) in-memory sliding windows:
-  `RATE_LIMIT_PROCESS_PER_IP` (5/h), `RATE_LIMIT_PROCESS_PER_IP_DAILY` (3/day), `RATE_LIMIT_PROCESS_GLOBAL`
-  (30/h; prod sets 6), `RATE_LIMIT_PROCESS_WINDOW_SECONDS` (3600), `PROCESS_DEDUPE_TTL_SECONDS` (600).
+  the jobs table (the spend guarantee; cached papers stay free; 0 disables); (3) `RATE_LIMIT_PROCESS_GLOBAL`
+  (30 per `RATE_LIMIT_PROCESS_WINDOW_SECONDS`=3600; prod sets 6) — the global rolling window, ALSO counted from
+  the jobs table (it was an in-memory limiter, i.e. per replica: two replicas silently doubled it); (4) in-memory
+  per-IP sliding windows: `RATE_LIMIT_PROCESS_PER_IP` (5/h), `RATE_LIMIT_PROCESS_PER_IP_DAILY` (3/day),
+  `PROCESS_DEDUPE_TTL_SECONDS` (600).
   `client_ip()` takes the RIGHTMOST `X-Forwarded-For` hop (the one the ingress appends) — never the first.
   `ProcessRequest.arxiv_id` is validated and normalized (version suffix stripped) at the boundary — the paper is
   stored under the base id, and non-arXiv identifiers are rejected with 422 before any budget is spent.

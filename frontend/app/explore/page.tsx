@@ -85,6 +85,7 @@ export default function ExplorePage() {
       >
         <Link
           href="/"
+          prefetch={false}
           className="group inline-flex items-center gap-2 rounded-full bg-black/60 backdrop-blur-xl px-4 py-2.5 text-sm text-white/50 border border-white/[0.08] transition-all hover:bg-black/80 hover:text-white/80 hover:border-white/[0.15] shadow-lg shadow-black/30"
         >
           <span className="transition-transform group-hover:-translate-x-0.5">&larr;</span>
@@ -146,6 +147,7 @@ export default function ExplorePage() {
             action={
               <Link
                 href="/"
+                prefetch={false}
                 className="rounded-2xl bg-white/[0.08] hover:bg-white/[0.12] px-8 py-4 text-sm font-medium text-white border border-white/[0.15] hover:border-white/[0.25] transition-all"
               >
                 Visualize a paper

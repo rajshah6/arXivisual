@@ -201,16 +201,35 @@ def enforce_all(
 
 
 # Defaults: a person exploring the site can start 5 papers an hour; the whole
-# world combined is capped at 30/hour (~$3/hour worst-case LLM+render spend).
-# Set either env to 0 to disable that limiter.
+# world combined is capped by the durable global window below (30/hour default;
+# prod sets 6). Set either env to 0 to disable that limiter.
 per_ip_limiter = SlidingWindowLimiter(
     max_events=_int_env("RATE_LIMIT_PROCESS_PER_IP", 5),
     window_seconds=_int_env("RATE_LIMIT_PROCESS_WINDOW_SECONDS", 3600),
 )
-global_limiter = SlidingWindowLimiter(
-    max_events=_int_env("RATE_LIMIT_PROCESS_GLOBAL", 30),
-    window_seconds=_int_env("RATE_LIMIT_PROCESS_WINDOW_SECONDS", 3600),
-)
+
+
+def global_window_cap() -> int:
+    """Ceiling on NEW-paper jobs per rolling window across the whole service.
+    Counted from the jobs table by the route (see ``global_window_verdict``),
+    not in memory: the in-memory limiter was per replica, so with two API
+    replicas "6/hour" was really up to 12. 0 disables."""
+    return _int_env("RATE_LIMIT_PROCESS_GLOBAL", 30)
+
+
+def global_window_seconds() -> int:
+    return _int_env("RATE_LIMIT_PROCESS_WINDOW_SECONDS", 3600)
+
+
+def global_window_verdict(started_in_window: int) -> tuple[bool, int]:
+    """(saturated, retry_after_seconds) for the durable global window, given
+    the number of jobs created within it. Like the daily cap: a fuse, not a
+    ledger — concurrency can overshoot by a request or two."""
+    cap = global_window_cap()
+    if cap <= 0 or started_in_window < cap:
+        return False, 0
+    return True, 60
+
 # A slower second per-IP window: 5/hour still allows 120/day from one patient
 # client. Daily quotas belong to a person, not a script.
 per_ip_daily_limiter = SlidingWindowLimiter(

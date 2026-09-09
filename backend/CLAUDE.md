@@ -92,7 +92,9 @@ backend ruff and frontend eslint are both HARD gates). `security.yml` — gitlea
 - **Admission control on `POST /api/process`** (`api/throttle.py`, `api/turnstile.py`) — layered, each layer
   assumes the previous is gamed (the code is public; a crawler ran ~250 papers/day through the old limits by
   spoofing `X-Forwarded-For`): (1) `TURNSTILE_SECRET_KEY`\* — server-verified Cloudflare Turnstile, skipped
-  when unset, fails CLOSED when set; (2) `DAILY_NEW_PAPER_CAP` (80) — durable per-UTC-day ceiling counted from
+  when unset, fails CLOSED when set; every token is minted with action `start-paper` and the paper id as cData
+  (`turnstile_cdata`, mirrored in `TurnstileWidget.tsx`) and the API refuses tokens for any other action/paper,
+  so one solved challenge starts one paper — deploy the frontend BEFORE the API when the binding changes; (2) `DAILY_NEW_PAPER_CAP` (80) — durable per-UTC-day ceiling counted from
   the jobs table (the spend guarantee; cached papers stay free; 0 disables); (3) in-memory sliding windows:
   `RATE_LIMIT_PROCESS_PER_IP` (5/h), `RATE_LIMIT_PROCESS_PER_IP_DAILY` (3/day), `RATE_LIMIT_PROCESS_GLOBAL`
   (30/h; prod sets 6), `RATE_LIMIT_PROCESS_WINDOW_SECONDS` (3600), `PROCESS_DEDUPE_TTL_SECONDS` (600).

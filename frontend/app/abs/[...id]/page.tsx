@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { CardStack } from "@/components/CardStack";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { SiteFeedback } from "@/components/SiteFeedback";
-import { TurnstileWidget, isTurnstileConfigured } from "@/components/TurnstileWidget";
+import { TURNSTILE_ACTION, TurnstileWidget, isTurnstileConfigured, turnstileCData } from "@/components/TurnstileWidget";
 import type { ScrollySectionModel } from "@/lib/section-model";
 import { GlassCard } from "@/components/ui/glass-card";
 import { MosaicBackground } from "@/components/ui/mosaic-background";
@@ -705,7 +705,7 @@ function NotFoundState({
           </p>
 
           <div className="mt-8 space-y-4">
-            <TurnstileWidget onToken={setTurnstileToken} />
+            <TurnstileWidget onToken={setTurnstileToken} action={TURNSTILE_ACTION} cData={turnstileCData(arxivId)} />
             <motion.button
               whileHover={{ scale: starting ? 1 : 1.02 }}
               whileTap={{ scale: starting ? 1 : 0.98 }}

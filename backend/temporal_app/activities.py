@@ -97,10 +97,10 @@ async def ingest_paper(params: PipelineInput) -> None:
         )
         replace = False
         if await queries.paper_exists(db, params.arxiv_id):
-            if await queries.paper_is_degraded(db, params.arxiv_id):
+            if await queries.paper_is_stale(db, params.arxiv_id):
                 # Stored from the abstract page before the LaTeXML fix: the
                 # request is the signal to ingest the real paper this time.
-                logger.info("Paper %s is abstract-only from an earlier ingest; re-ingesting", params.arxiv_id)
+                logger.info("Paper %s is a pre-fix abstract-only ingest; re-ingesting", params.arxiv_id)
                 replace = True
             else:
                 job = await queries.get_job(db, params.job_id)

@@ -18,6 +18,8 @@ from sqlalchemy import delete, distinct, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from models.paper import ArxivPaperMeta
+
 from .models import Feedback, Paper, ProcessingJob, Section, Visualization
 
 # === Processing Jobs ===
@@ -174,54 +176,70 @@ async def create_feedback(
 
 # === Stale (abstract-only) papers ===
 
-# ~400 words — the same floor the summarizer refuses below. Papers stored with
-# less text were ingested from the arXiv abstract page before that fix.
-STALE_TEXT_CHARS = 2000
+# The ingest that refuses abstract pages (PR #69) went live at this instant
+# (UTC, naive like every timestamp in this schema). Papers ingested or
+# re-ingested after it are trusted whatever their length: the summarizer
+# refuses sources under MIN_SOURCE_WORDS, and a short real paper must not be
+# re-ingested on every request. Before it, ~31% of the corpus was the arXiv
+# abstract inflated to ~300 words by the old summarizer floor.
+ABSTRACT_INGEST_FIXED_AT = datetime(2026, 9, 9, tzinfo=UTC).replace(tzinfo=None)
+# Measured on the live corpus (1,016 pre-fix papers, 2026-09-09): inflated
+# abstracts total 2,000-3,266 chars of stored text; the shortest real paper
+# summary is 3,463. Halfway into that gap.
+STALE_TEXT_CHARS = 3400
 
 
-async def paper_text_chars(db: AsyncSession, paper_id: str) -> int:
-    result = await db.execute(
+def is_stale(ingested_at: datetime | None, text_chars: int) -> bool:
+    """Pre-fix ingest whose stored text is abstract-sized: not a paper."""
+    if ingested_at is not None and ingested_at >= ABSTRACT_INGEST_FIXED_AT:
+        return False
+    return text_chars < STALE_TEXT_CHARS
+
+
+async def paper_is_stale(db: AsyncSession, paper_id: str) -> bool:
+    """Stale papers are hidden from the gallery and the reader, and
+    re-ingested (not skipped) on the next request."""
+    result = await db.execute(select(Paper.updated_at, Paper.created_at).where(Paper.id == paper_id))
+    row = result.one_or_none()
+    if row is None:
+        return False
+    chars = await db.execute(
         select(func.coalesce(func.sum(func.length(Section.content)), 0)).where(Section.paper_id == paper_id)
     )
-    return int(result.scalar_one() or 0)
+    return is_stale(row[0] or row[1], int(chars.scalar_one() or 0))
 
 
-async def paper_is_degraded(db: AsyncSession, paper_id: str) -> bool:
-    """True when the stored text is an abstract, not a paper — hidden from the
-    gallery and the reader, and re-ingested (not skipped) on the next request."""
-    return await paper_text_chars(db, paper_id) < STALE_TEXT_CHARS
-
-
-async def reset_paper_for_reingest(
-    db: AsyncSession, arxiv_id: str, *, title: str, authors: list[str], abstract: str,
-    pdf_url: str, html_url: str | None,
-) -> None:
-    """Replace a degraded paper's metadata and drop its sections so the
-    ingest loop can store the real ones. Old visualization rows are unlinked
-    from the sections (FK) rather than deleted — feedback references them,
-    and finalize_job supersedes them once the new run has videos."""
+async def reset_paper_for_reingest(db: AsyncSession, meta: ArxivPaperMeta) -> None:
+    """Replace a stale paper's metadata and drop its sections so the ingest
+    loop can store the real ones. Old visualization rows are unlinked from
+    the sections (FK) rather than deleted — feedback references them, and
+    finalize_job supersedes them once the new run has videos. ``updated_at``
+    moves past ABSTRACT_INGEST_FIXED_AT, so the paper is trusted from here."""
     # Core statements, not loaded objects: a Paper loaded earlier in this
     # session (with its sections) must not resurrect the deleted rows on flush.
     await db.execute(
-        update(Paper).where(Paper.id == arxiv_id).values(
-            title=title, authors=authors, abstract=abstract, pdf_url=pdf_url, html_url=html_url,
-            updated_at=_utcnow_naive(),
+        update(Paper).where(Paper.id == meta.arxiv_id).values(
+            title=meta.title, authors=meta.authors, abstract=meta.abstract,
+            pdf_url=meta.pdf_url, html_url=meta.html_url, updated_at=_utcnow_naive(),
         )
     )
-    await db.execute(update(Visualization).where(Visualization.paper_id == arxiv_id).values(section_id=None))
-    await db.execute(delete(Section).where(Section.paper_id == arxiv_id))
+    await db.execute(update(Visualization).where(Visualization.paper_id == meta.arxiv_id).values(section_id=None))
+    await db.execute(delete(Section).where(Section.paper_id == meta.arxiv_id))
     await db.commit()
     db.expire_all()
 
 
-_LEGACY_VIZ_ID_RE = re.compile(r"^viz_\d{8}_\d+$")
+# Pre-fix ids were ``viz_{arxiv_id.replace(".", "")[:8]}_{n}``: eight characters
+# of the id, so ``viz_17060376_1`` and, for old-style ids, ``viz_math/061_1``.
+# Full ids are never eight characters (``0805.3898`` is nine).
+_LEGACY_VIZ_ID_RE = re.compile(r"^viz_[^_]{8}_\d+$")
 
 
 async def supersede_legacy_truncated_rows(db: AsyncSession) -> int:
-    """One-time, idempotent: rows named with the pre-fix truncated arXiv id
-    (``viz_17060376_1``) are hidden wherever the paper also has a full-id
-    complete row, so re-processed papers stop showing two generations of
-    videos. Papers whose only videos are legacy rows keep them."""
+    """Idempotent, run at every API start: legacy truncated-id rows are hidden
+    wherever the paper also has a full-id complete row, so re-processed papers
+    stop showing two generations of videos. Papers whose only videos are
+    legacy rows keep them."""
     result = await db.execute(
         select(Visualization.id, Visualization.paper_id, Visualization.status, Visualization.video_url)
     )

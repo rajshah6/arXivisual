@@ -11,7 +11,6 @@ regexTarget = "line"
 regexes = [
   # Container image tags pinned to git commit SHAs (gh-<sha>) are public identifiers.
   '''azurecr\.io/arxivisual-api:gh-[0-9a-f]{40}''',
-  # Documented placeholders in env templates.
+  # Documented placeholder in backend/.env.example.
   '''DEDALUS_API_KEY=dsk-your-dedalus-api-key''',
-  '''your-[a-z0-9-]+-api-key''',
 ]

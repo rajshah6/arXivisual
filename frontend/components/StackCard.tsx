@@ -7,8 +7,6 @@ import { VideoPlayer } from "@/components/VideoPlayer";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { cn } from "@/lib/utils";
 
-export type { ScrollySectionModel } from "@/lib/section-model";
-
 // Merge equations that the summary references but does not inline.
 function mergeContentWithEquations(content: string, equations?: string[]): string {
   if (!equations || equations.length === 0) return content;

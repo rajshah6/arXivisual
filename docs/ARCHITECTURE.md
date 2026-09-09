@@ -16,7 +16,7 @@ You give the system an arXiv paper ID. It gives you back narrated, animated expl
 
 `POST /api/process` first passes admission control (server-verified Turnstile → durable daily cap from the jobs table → per-IP hourly/daily and global sliding windows; see `SECURITY.md`), then creates a `ProcessingJob` row (status `queued`) and schedules `jobs/worker.py:process_paper_job` as a FastAPI background task, returning the job ID immediately. The frontend polls `GET /api/status/{job_id}`; the worker writes progress milestones as it moves through three phases:
 
-1. **Ingest** (progress 0.10 → 0.30) — fetch and parse the paper, store paper + sections in the database. Skipped if the paper was processed before.
+1. **Ingest** (progress 0.10 → 0.30) — fetch and parse the paper, store paper + sections in the database. Skipped if the paper was processed before; a pre-fix abstract-only ingest (`queries.is_stale`) is re-ingested instead.
 2. **Generate** (0.50) — run the agent pipeline to produce validated Manim code for up to 5 concepts.
 3. **Render** (0.75 → 0.95) — render each visualization to MP4 and upload it, at most 3 concurrently (`asyncio.Semaphore(3)`). Each render task commits through its own DB session; a lock serializes progress updates.
 
@@ -117,7 +117,7 @@ self.set_speech_service(OpenAIService(voice="nova", model="gpt-4o-mini-tts", tra
 |--------|----------|---------|
 | POST | `/api/process` | Start processing a paper; returns a job ID |
 | GET | `/api/status/{job_id}` | Poll job progress |
-| GET | `/api/paper/{arxiv_id}` | Processed paper: sections (each with `videos` = every `complete` visualization, newest first; `video_url` = `videos[0]` for older clients) + visualizations; superseded rows excluded; 404 for abstract-only (stale) papers so the reader offers re-processing |
+| GET | `/api/paper/{arxiv_id}` | Processed paper: sections (each with `videos` = every `complete` visualization, newest first; `video_url` = `videos[0]` for older clients) + visualizations; superseded rows excluded; 404 for stale (pre-fix abstract-only) papers so the reader offers re-processing |
 | GET | `/api/papers` | Explore gallery: all processed papers |
 | GET | `/api/video/{video_id}` | Serve or redirect to a rendered video |
 | POST | `/api/render` | Dev-only raw Manim render — in production, 404 unless `RENDER_API_SECRET` is configured and presented via `X-Render-Secret` (timing-safe compare) |

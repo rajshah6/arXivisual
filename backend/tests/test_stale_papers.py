@@ -1,11 +1,16 @@
-"""Abstract-only ("stale") papers and legacy viz-row hygiene (in-memory SQLite, no network).
+"""Stale (pre-fix abstract-only) papers and legacy viz-row hygiene (in-memory SQLite, no network).
 
 ~31% of the corpus was ingested from the arXiv abstract page before the
 LaTeXML fix. Those rows are not papers: the gallery hides them, the reader
 reports them as not visualized, and a new request re-ingests instead of
-skipping. Older still are viz rows named with the truncated id
-(``viz_17060376_1``) that show up as a second generation of videos.
+skipping. Staleness needs provenance, not just length — stored content is
+the ~35% summary, so a short real paper ingested after the fix must never
+loop through re-ingestion. Older still are viz rows named with the
+truncated id (``viz_17060376_1``) that show up as a second generation of
+videos.
 """
+
+from datetime import timedelta
 
 import pytest_asyncio
 from fastapi import FastAPI
@@ -19,8 +24,10 @@ from db.models import Base, Paper, ProcessingJob, Section, Visualization
 from models.paper import ArxivPaperMeta, StructuredPaper
 from models.paper import Section as PaperSection
 
-REAL_TEXT = "word " * 800  # 4000 chars, comfortably above STALE_TEXT_CHARS
-ABSTRACT_TEXT = "an abstract inflated to a few sentences " * 8  # ~320 chars
+REAL_TEXT = "word " * 1600  # 8000 chars: a real paper's summary
+ABSTRACT_TEXT = "an abstract inflated to three hundred words by the old floor " * 40  # ~2500 chars
+PRE_FIX = queries.ABSTRACT_INGEST_FIXED_AT - timedelta(days=3)
+POST_FIX = queries.ABSTRACT_INGEST_FIXED_AT + timedelta(hours=1)
 
 
 @pytest_asyncio.fixture
@@ -43,8 +50,8 @@ async def client(db):
         yield c
 
 
-async def _paper(db, pid, *, text, title="T", video=False):
-    db.add(Paper(id=pid, title=title, authors=["A"], abstract="abs"))
+async def _paper(db, pid, *, text, ingested_at=PRE_FIX, title="T", video=False):
+    db.add(Paper(id=pid, title=title, authors=["A"], abstract="abs", created_at=ingested_at, updated_at=ingested_at))
     db.add(Section(id=f"{pid}-section-0", paper_id=pid, title="Intro", content=text, order_index=0))
     if video:
         db.add(Visualization(id=f"viz_{pid}_1", paper_id=pid, section_id=f"{pid}-section-0", concept="c",
@@ -52,19 +59,28 @@ async def _paper(db, pid, *, text, title="T", video=False):
     await db.commit()
 
 
-class TestDegradedDetection:
-    async def test_abstract_only_is_degraded(self, db):
+class TestStaleRule:
+    def test_pre_fix_abstract_sized_text_is_stale(self):
+        assert queries.is_stale(PRE_FIX, 2500)
+
+    def test_pre_fix_real_summary_is_not(self):
+        assert not queries.is_stale(PRE_FIX, 8000)
+
+    def test_post_fix_ingest_is_trusted_whatever_its_length(self):
+        # The summarizer already refused abstracts; a short real paper stays a paper.
+        assert not queries.is_stale(POST_FIX, 900)
+
+    def test_unknown_ingest_time_falls_back_to_length(self):
+        assert queries.is_stale(None, 2500) and not queries.is_stale(None, 8000)
+
+    async def test_paper_is_stale_reads_the_row(self, db):
         await _paper(db, "2301.00001", text=ABSTRACT_TEXT)
-        assert await queries.paper_is_degraded(db, "2301.00001")
-
-    async def test_real_paper_is_not(self, db):
         await _paper(db, "2301.00002", text=REAL_TEXT)
-        assert not await queries.paper_is_degraded(db, "2301.00002")
-
-    async def test_no_sections_is_degraded(self, db):
-        db.add(Paper(id="2301.00003", title="T", authors=[]))
-        await db.commit()
-        assert await queries.paper_is_degraded(db, "2301.00003")
+        await _paper(db, "2301.00003", text=ABSTRACT_TEXT, ingested_at=POST_FIX)
+        assert await queries.paper_is_stale(db, "2301.00001")
+        assert not await queries.paper_is_stale(db, "2301.00002")
+        assert not await queries.paper_is_stale(db, "2301.00003")
+        assert not await queries.paper_is_stale(db, "missing")
 
 
 class TestGalleryAndReader:
@@ -72,24 +88,35 @@ class TestGalleryAndReader:
         # The videos exist but were made from the abstract; not worth a card.
         await _paper(db, "2301.00001", text=ABSTRACT_TEXT, video=True)
         await _paper(db, "2301.00002", text=REAL_TEXT, video=True)
+        await _paper(db, "2301.00003", text=ABSTRACT_TEXT, ingested_at=POST_FIX, video=True)
         by_id = {p["paper_id"]: p["status"] for p in (await client.get("/api/papers")).json()["papers"]}
-        assert by_id == {"2301.00001": "stale", "2301.00002": "ready"}
+        assert by_id == {"2301.00001": "stale", "2301.00002": "ready", "2301.00003": "ready"}
 
-    async def test_processing_wins_over_stale(self, client, db):
+    async def test_stale_paper_being_regenerated_shows_processing(self, client, db):
         await _paper(db, "2301.00001", text=ABSTRACT_TEXT)
         db.add(ProcessingJob(id="job_1", paper_id="2301.00001", status="processing"))
         await db.commit()
         [p] = (await client.get("/api/papers")).json()["papers"]
         assert p["status"] == "processing"
 
-    async def test_reader_404s_degraded_paper(self, client, db):
+    async def test_ready_paper_being_rerun_keeps_its_count(self, client, db):
+        # Unchanged behaviour for healthy papers: videos win over an in-flight job.
+        await _paper(db, "2301.00002", text=REAL_TEXT, video=True)
+        db.add(ProcessingJob(id="job_1", paper_id="2301.00002", status="processing"))
+        await db.commit()
+        [p] = (await client.get("/api/papers")).json()["papers"]
+        assert p["status"] == "ready" and p["visualization_count"] == 1
+
+    async def test_reader_404s_stale_paper(self, client, db):
         await _paper(db, "2301.00001", text=ABSTRACT_TEXT, video=True)
         r = await client.get("/api/paper/2301.00001")
-        assert r.status_code == 404 and "abstract-only" in r.json()["detail"]
+        assert r.status_code == 404 and "process it again" in r.json()["detail"]
 
-    async def test_reader_serves_real_paper(self, client, db):
+    async def test_reader_serves_real_and_post_fix_papers(self, client, db):
         await _paper(db, "2301.00002", text=REAL_TEXT, video=True)
+        await _paper(db, "2301.00003", text=ABSTRACT_TEXT, ingested_at=POST_FIX)
         assert (await client.get("/api/paper/2301.00002")).status_code == 200
+        assert (await client.get("/api/paper/2301.00003")).status_code == 200
 
 
 def _structured(arxiv_id: str, title: str = "Real title") -> StructuredPaper:
@@ -125,14 +152,44 @@ class TestReingest:
         paper = await queries.get_paper(db, "2301.00001")
         assert paper.title == "Real title" and paper.abstract == "real abstract"
         assert sorted(s.id for s in paper.sections) == [f"2301.00001-section-{i}" for i in range(3)]
-        assert not await queries.paper_is_degraded(db, "2301.00001")
+        assert paper.updated_at >= queries.ABSTRACT_INGEST_FIXED_AT  # trusted from now on
+        assert not await queries.paper_is_stale(db, "2301.00001")
         # The old video row survives (feedback may reference it) but no longer points at a section.
         [old] = await queries.get_visualizations_for_paper(db, "2301.00001", include_superseded=True)
         assert old.id == "viz_2301.00001_1" and old.section_id is None
-        job = await queries.get_job(db, "job_1")
-        assert job.paper_id == "2301.00001"
+        assert (await queries.get_job(db, "job_1")).paper_id == "2301.00001"
 
-    async def test_activity_reingests_degraded_and_skips_healthy(self, db, monkeypatch):
+    async def test_reingested_short_paper_is_not_reingested_again(self, db, monkeypatch):
+        # A genuinely short paper: its real summary is still under the threshold.
+        import ingestion
+        from jobs.worker import _ingest_and_store_paper
+
+        await _paper(db, "2301.00001", text=ABSTRACT_TEXT)
+        db.add(ProcessingJob(id="job_1", status="processing"))
+        await db.commit()
+        short = _structured("2301.00001")
+        for s in short.sections:
+            s.content = "short " * 100
+
+        async def fake_ingest(arxiv_id, force_refresh=False, prefer_pdf=False):
+            return short
+
+        monkeypatch.setattr(ingestion, "ingest_paper", fake_ingest)
+        await _ingest_and_store_paper(db, "job_1", "2301.00001", replace=True)
+        assert not await queries.paper_is_stale(db, "2301.00001")
+
+    async def test_finalize_supersedes_the_unlinked_rows_once_the_new_run_has_videos(self, db):
+        await _paper(db, "2301.00001", text=REAL_TEXT, video=True)
+        await db.execute(
+            queries.update(Visualization).where(Visualization.id == "viz_2301.00001_1").values(section_id=None)
+        )
+        await db.commit()
+        run_started = queries._utcnow_naive() + timedelta(seconds=1)
+        await queries.supersede_visualizations_before(db, "2301.00001", run_started)
+        [old] = await queries.get_visualizations_for_paper(db, "2301.00001", include_superseded=True)
+        assert old.status == "superseded"
+
+    async def test_activity_reingests_stale_and_skips_healthy(self, db, monkeypatch):
         import contextlib
 
         import db.connection as connection
@@ -167,6 +224,11 @@ class TestReingest:
 class TestLegacyTruncatedRows:
     async def _viz(self, db, vid, pid, status="complete", url="https://x/v.mp4"):
         db.add(Visualization(id=vid, paper_id=pid, concept="c", status=status, video_url=url))
+
+    def test_legacy_id_shape(self):
+        m = queries._LEGACY_VIZ_ID_RE.match
+        assert m("viz_17060376_1") and m("viz_math/061_2") and m("viz_08053898_1")
+        assert not m("viz_1706.03762_1") and not m("viz_0805.3898_1") and not m("viz_math/0612817_1")
 
     async def test_legacy_rows_superseded_only_where_full_id_video_exists(self, db):
         db.add(Paper(id="1706.03762", title="A", authors=[]))

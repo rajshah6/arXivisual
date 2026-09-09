@@ -66,7 +66,8 @@ async def init_db():
     """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    # Idempotent data hygiene: hide pre-fix truncated-id video rows where a
+    # Idempotent data hygiene, run at every API start (one cheap scan of the
+    # visualizations table): hide pre-fix truncated-id video rows where a
     # full-id row exists (see queries.supersede_legacy_truncated_rows).
     from db import queries
 

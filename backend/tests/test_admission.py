@@ -181,10 +181,11 @@ async def test_turnstile_rejects_missing_token_when_configured(client, monkeypat
 async def test_turnstile_accepts_verified_token(client, monkeypatch):
     monkeypatch.setenv("TURNSTILE_SECRET_KEY", "test-secret")
 
-    async def fake_verify(token, remote_ip=None):
-        return token == "good-token"
+    async def fake_verify(token, remote_ip=None, *, expected_cdata=None):
+        assert expected_cdata in ("1706_03762", "1810_04805")  # token bound to the paper
+        return turnstile.TurnstileVerdict(token == "good-token", None, 12.0)
 
-    monkeypatch.setattr(routes_module, "verify_turnstile", fake_verify)
+    monkeypatch.setattr(routes_module, "verify_turnstile_detailed", fake_verify)
     ok = await client.post("/api/process", json={"arxiv_id": "1706.03762", "turnstile_token": "good-token"})
     bad = await client.post("/api/process", json={"arxiv_id": "1810.04805", "turnstile_token": "forged"})
     assert ok.status_code == 200
@@ -267,3 +268,49 @@ def test_request_context_is_compact_and_never_the_ip():
     assert ctx.startswith('ua="Mozilla/5.0 (X11; Linux x86_64) HeadlessChrome/128 \'quoted\'"')
     assert 'lang="en-US,en;q=0.9"' in ctx and "ref=www.arxivisual.org" in ctx
     assert "origin=https://www.arxivisual.org" in ctx and "203.0.113.9" not in ctx
+
+
+
+# --- token binding: one solved challenge starts one paper --------------------
+
+def test_cdata_encoding_is_deterministic_and_in_alphabet():
+    assert turnstile.turnstile_cdata("1706.03762") == "1706_03762"
+    assert turnstile.turnstile_cdata("math.GT/0309136") == "math_GT-0309136"
+    assert turnstile.turnstile_cdata("adap-org/9707006") == "adap-org-9707006"
+    assert turnstile.turnstile_cdata("1706.03762v2") == "1706_03762v2"
+
+
+def _client_returning(body):
+    class Resp:
+        def json(self): return body
+
+    class Client:
+        def __init__(self, *a, **k): ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, *a, **k): return Resp()
+    return Client
+
+
+async def test_token_bound_to_action_and_paper(monkeypatch):
+    monkeypatch.setenv("TURNSTILE_SECRET_KEY", "test-secret")
+    from datetime import UTC, datetime, timedelta
+
+    minted = (datetime.now(UTC) - timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    good = {"success": True, "hostname": "arxivisual.org", "action": "start-paper",
+            "cdata": "1706_03762v2", "challenge_ts": minted}
+    monkeypatch.setattr(turnstile.httpx, "AsyncClient", _client_returning(good))
+    v = await turnstile.verify_turnstile_detailed("tok", "203.0.113.9", expected_cdata="1706_03762")
+    assert v.ok and 25 <= v.token_age_s <= 40  # version suffix ignored, age from challenge_ts
+
+    monkeypatch.setattr(turnstile.httpx, "AsyncClient", _client_returning({**good, "cdata": "1810_04805"}))
+    v = await turnstile.verify_turnstile_detailed("tok", "203.0.113.9", expected_cdata="1706_03762")
+    assert not v.ok and v.reason.startswith("cdata")
+
+    monkeypatch.setattr(turnstile.httpx, "AsyncClient", _client_returning({**good, "action": "login"}))
+    v = await turnstile.verify_turnstile_detailed("tok", "203.0.113.9", expected_cdata="1706_03762")
+    assert not v.ok and v.reason.startswith("action")
+
+    # Binding is only enforced when the caller asks for it (older callers/tests).
+    monkeypatch.setattr(turnstile.httpx, "AsyncClient", _client_returning({"success": True, "hostname": "arxivisual.org"}))
+    assert await turnstile.verify_turnstile("tok", "203.0.113.9") is True

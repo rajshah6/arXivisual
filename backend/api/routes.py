@@ -55,7 +55,7 @@ from .throttle import (
     recent_jobs,
     request_context,
 )
-from .turnstile import verify_turnstile
+from .turnstile import turnstile_cdata, verify_turnstile_detailed
 
 logger = logging.getLogger(__name__)
 
@@ -172,12 +172,17 @@ async def start_processing(
             headers={"Retry-After": str(retry_after)},
         )
 
-    if not await verify_turnstile(request.turnstile_token, ip):
-        logger.info("Turnstile check failed (client %s)", client_tag)
+    verdict = await verify_turnstile_detailed(
+        request.turnstile_token, ip, expected_cdata=turnstile_cdata(arxiv_id),
+    )
+    if not verdict.ok:
+        logger.info("Turnstile check failed: %s (client %s)", verdict.reason, client_tag)
         raise HTTPException(
             status_code=403,
             detail="Human verification failed. Reload the page and try again.",
         )
+    if verdict.token_age_s is not None:
+        logger.info("Turnstile ok token_age=%.1fs (client %s)", verdict.token_age_s, client_tag)
 
     enforce_all(
         [

@@ -14,6 +14,8 @@ declare global {
           "error-callback"?: () => void;
           appearance?: "always" | "execute" | "interaction-only";
           theme?: "light" | "dark" | "auto";
+          action?: string;
+          cData?: string;
         }
       ) => string;
       remove: (widgetId: string) => void;
@@ -23,6 +25,16 @@ declare global {
 
 const SCRIPT_SRC = "https://challenges.cloudflare.com/turnstile/v0/api.js";
 export const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? "";
+
+/** Every token is minted for this action with the paper id as cData; the
+ *  backend (api/turnstile.py) refuses tokens for anything else, so one solved
+ *  challenge starts exactly one paper. */
+export const TURNSTILE_ACTION = "start-paper";
+
+/** Mirror of backend turnstile_cdata: '.' -> '_', '/' -> '-', else dropped. */
+export function turnstileCData(arxivId: string): string {
+  return arxivId.replace(/\./g, "_").replace(/\//g, "-").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 255);
+}
 
 /** Single source of truth for "is human verification on in this build". */
 export function isTurnstileConfigured(): boolean {
@@ -41,8 +53,12 @@ const LOAD_HINT_MS = 10_000;
  */
 export function TurnstileWidget({
   onToken,
+  action,
+  cData,
 }: {
   onToken: (token: string | null) => void;
+  action?: string;
+  cData?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const onTokenRef = useRef(onToken);
@@ -72,6 +88,8 @@ export function TurnstileWidget({
         // interaction-only: invisible for humans, a checkbox only when
         // Cloudflare is unsure — keeps the Start button one tap for readers.
         appearance: "interaction-only",
+        action,
+        cData,
         callback: (token) => {
           setSlow(false);
           onTokenRef.current(token);
@@ -98,7 +116,7 @@ export function TurnstileWidget({
       cancelled = true;
       if (widgetId !== null) window.turnstile?.remove(widgetId);
     };
-  }, []);
+  }, [action, cData]);
 
   if (!TURNSTILE_SITE_KEY) return null;
   return (

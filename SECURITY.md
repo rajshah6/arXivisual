@@ -34,7 +34,7 @@ limits are designed to hold even when the attacker has read them:
    Direct API scripts never pass; verification fails closed if Cloudflare is unreachable.
 2. **Durable daily cap** — `DAILY_NEW_PAPER_CAP` new-paper jobs per UTC day, counted from Postgres so
    it survives restarts and replicas. Already-visualized papers are always served for free.
-3. **Sliding windows** — per-IP hourly, per-IP daily, and global. Client identity is the rightmost
+3. **Sliding windows** — per-IP hourly and per-IP daily in memory; the global window is counted from the jobs table so every replica enforces the same number. Client identity is the rightmost
    `X-Forwarded-For` hop (appended by the ingress); client-supplied prefixes are ignored.
 
 Submissions are logged with a hashed client fingerprint (never raw IPs) for abuse forensics.

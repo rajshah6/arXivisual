@@ -43,11 +43,11 @@ async def client(db, monkeypatch):
     monkeypatch.setattr(routes_module, "process_paper_job", _noop)
     monkeypatch.delenv("USE_TEMPORAL", raising=False)
     monkeypatch.delenv("TURNSTILE_SECRET_KEY", raising=False)
-    for lim in (throttle.per_ip_limiter, throttle.per_ip_daily_limiter, throttle.global_limiter):
+    for lim in (throttle.per_ip_limiter, throttle.per_ip_daily_limiter):
         lim.reset()
     monkeypatch.setattr(throttle.per_ip_limiter, "max_events", 100)
     monkeypatch.setattr(throttle.per_ip_daily_limiter, "max_events", 100)
-    monkeypatch.setattr(throttle.global_limiter, "max_events", 100)
+    monkeypatch.setenv("RATE_LIMIT_PROCESS_GLOBAL", "100")
     monkeypatch.setenv("DAILY_NEW_PAPER_CAP", "0")
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
@@ -104,7 +104,7 @@ async def test_spoofed_forwarded_header_cannot_mint_new_buckets(client, monkeypa
 async def test_global_denial_does_not_consume_per_ip_budget(client, monkeypatch):
     # Reviewer-reproduced lockout: chained record-and-check let three "at
     # capacity" answers exhaust a real user's 3/day quota with zero papers started.
-    monkeypatch.setattr(throttle.global_limiter, "max_events", 1)
+    monkeypatch.setenv("RATE_LIMIT_PROCESS_GLOBAL", "1")
     monkeypatch.setattr(throttle.per_ip_daily_limiter, "max_events", 3)
     xff = {"X-Forwarded-For": "203.0.113.77"}
     assert (await _submit(client, "1706.03762", **xff)).status_code == 200
@@ -113,8 +113,24 @@ async def test_global_denial_does_not_consume_per_ip_budget(client, monkeypatch)
         assert hit.status_code == 429 and "capacity" in hit.json()["detail"]
     # Three global denials must not have touched this client's daily budget.
     assert len(throttle.per_ip_daily_limiter._events["203.0.113.77"]) == 1
-    throttle.global_limiter.reset()
+    monkeypatch.setenv("RATE_LIMIT_PROCESS_GLOBAL", "100")
     assert (await _submit(client, "1810.04805", **xff)).status_code == 200
+
+
+async def test_global_window_is_counted_from_the_jobs_table(client, db, monkeypatch):
+    # Two API replicas used to keep two in-memory windows ("6/h" was really 12).
+    # A job created by anyone else — another replica, an earlier request —
+    # counts here too, and the answer carries Retry-After.
+    from db.models import ProcessingJob
+
+    monkeypatch.setenv("RATE_LIMIT_PROCESS_GLOBAL", "1")
+    db.add(ProcessingJob(id="job_other_replica", status="queued"))
+    await db.commit()
+    hit = await _submit(client, "1706.03762", **{"X-Forwarded-For": "203.0.113.5"})
+    assert hit.status_code == 429 and "capacity" in hit.json()["detail"]
+    assert hit.headers.get("Retry-After") == "60"
+    monkeypatch.setenv("RATE_LIMIT_PROCESS_GLOBAL", "0")  # 0 disables
+    assert (await _submit(client, "1706.03762", **{"X-Forwarded-For": "203.0.113.5"})).status_code == 200
 
 
 async def test_per_ip_daily_quota(client, monkeypatch):

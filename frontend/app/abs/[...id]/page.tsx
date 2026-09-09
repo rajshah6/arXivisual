@@ -447,6 +447,7 @@ export default function PaperPage({
             >
               <Link
                 href="/"
+                prefetch={false}
                 className="group inline-flex items-center gap-2 rounded-full bg-black/60 backdrop-blur-xl px-4 py-2.5 text-sm text-white/50 border border-white/[0.08] transition-all hover:bg-black/80 hover:text-white/80 hover:border-white/[0.15] shadow-lg shadow-black/30"
               >
                 <span className="transition-transform group-hover:-translate-x-0.5">&larr;</span>
@@ -634,7 +635,7 @@ function ReadyState({
             View on arXiv
           </a>
           <span className="w-1 h-1 rounded-full bg-white/20" />
-          <Link href="/" className="text-white/30 hover:text-white/60 transition-colors">
+          <Link href="/" prefetch={false} className="text-white/30 hover:text-white/60 transition-colors">
             Explore another paper
           </Link>
         </div>

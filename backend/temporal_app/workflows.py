@@ -33,6 +33,7 @@ from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
     from temporal_app.activities import (
+        FailInput,
         PipelineInput,
         ProgressUpdate,
         RenderInput,
@@ -64,6 +65,19 @@ _NO_RETRY = RetryPolicy(maximum_attempts=1)
 _GENERATION_RETRY = RetryPolicy(maximum_attempts=2)
 
 
+def _failure_reason(exc: BaseException) -> str:
+    """Human-readable cause for the job row: the innermost Temporal cause
+    (activity error message or timeout type) rather than the wrapper."""
+    parts: list[str] = []
+    cur: BaseException | None = exc
+    while cur is not None and len(parts) < 4:
+        msg = str(cur).strip()
+        if msg and msg not in parts:
+            parts.append(msg)
+        cur = cur.__cause__
+    return " <- ".join(parts)[:500]
+
+
 @workflow.defn
 class PaperPipelineWorkflow:
     """ingest → generate → parallel renders → honest finalize."""
@@ -71,10 +85,15 @@ class PaperPipelineWorkflow:
     @workflow.run
     async def run(self, params: PipelineInput) -> str:
         try:
+            # 15 min: a real full-length paper (5k words) goes through two LLM
+            # passes (summarize + organize), each retried once in-function,
+            # with 300s client timeouts. 5 min fit only the abstract-only
+            # ingests that #69 eliminated; the first real paper after it timed
+            # out twice and failed with no error line in the logs.
             await workflow.execute_activity(
                 ingest_paper,
                 params,
-                start_to_close_timeout=timedelta(minutes=5),
+                start_to_close_timeout=timedelta(minutes=15),
                 retry_policy=_INFRA_RETRY,
             )
 
@@ -137,12 +156,13 @@ class PaperPipelineWorkflow:
             await self._finalize(params.job_id, succeeded=succeeded, total=total)
             defective = sum(1 for r in results if r.severity == "major")
             return f"rendered {succeeded}/{total} ({defective} flagged, {len(to_repair)} repaired)"
-        except Exception:
-            # Mark the job failed so pollers see the truth, then let Temporal
-            # record the workflow failure with full history for debugging.
+        except Exception as exc:
+            # Mark the job failed so pollers see the truth — with the real
+            # reason — then let Temporal record the workflow failure with full
+            # history for debugging.
             await workflow.execute_activity(
                 mark_job_failed,
-                params,
+                FailInput(job_id=params.job_id, arxiv_id=params.arxiv_id, reason=_failure_reason(exc)),
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=_INFRA_RETRY,
             )

@@ -18,7 +18,8 @@ export type Paper = {
   sections: Section[];
 };
 
-export type PaperStatus = "ready" | "processing" | "empty";
+// stale = abstract-only ingest from before the LaTeXML fix; hidden until re-processed.
+export type PaperStatus = "ready" | "processing" | "empty" | "stale";
 
 export type PaperSummary = {
   paper_id: string; // e.g. "1706.03762"

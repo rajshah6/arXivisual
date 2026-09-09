@@ -7,7 +7,7 @@ import { CardStack } from "@/components/CardStack";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { SiteFeedback } from "@/components/SiteFeedback";
 import { TurnstileWidget, isTurnstileConfigured } from "@/components/TurnstileWidget";
-import type { ScrollySectionModel } from "@/components/ScrollySection";
+import type { ScrollySectionModel } from "@/lib/section-model";
 import { GlassCard } from "@/components/ui/glass-card";
 import { MosaicBackground } from "@/components/ui/mosaic-background";
 import { ShardField } from "@/components/ui/glass-shard";

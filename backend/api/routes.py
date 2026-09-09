@@ -320,6 +320,14 @@ async def get_paper(arxiv_id: str, db: AsyncSession = Depends(get_db)):
 
     paper = await queries.get_paper(db, base_id)
 
+    if paper and sum(len(s.content or "") for s in paper.sections) < queries.STALE_TEXT_CHARS:
+        # Stored from the abstract page, not the paper. Reported as not
+        # visualized so the reader offers "Start Processing", which re-ingests.
+        raise HTTPException(
+            status_code=404,
+            detail=f"Paper '{arxiv_id}' was ingested from an abstract-only source; process it again to regenerate.",
+        )
+
     if paper:
         # Convert database models to response schemas
         sections = sorted(paper.sections, key=lambda s: s.order_index)
@@ -393,9 +401,13 @@ async def list_papers(db: AsyncSession = Depends(get_db)):
     rows = await queries.list_paper_summaries(db)
 
     def _status(row: dict) -> str:
-        if row["playable_sections"] > 0:
-            return "ready"
-        return "processing" if row["processing"] else "empty"
+        if row["processing"]:
+            return "processing"
+        # Abstract-only ingests from before the LaTeXML fix: not a paper,
+        # whatever videos were made from it. Hidden; re-ingested on request.
+        if row["text_chars"] < queries.STALE_TEXT_CHARS:
+            return "stale"
+        return "ready" if row["playable_sections"] > 0 else "empty"
 
     return PaperListResponse(
         papers=[

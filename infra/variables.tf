@@ -57,6 +57,13 @@ variable "acr_admin_password" {
   sensitive   = true
 }
 
+variable "ip_hash_secret" {
+  description = "HMAC key for client-IP fingerprints in logs (IP_HASH_SECRET). Set by Ajith via az on 2026-09-08; kept here so an apply does not remove it."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "turnstile_secret_key" {
   description = "Cloudflare Turnstile secret for POST /api/process human verification. Empty = verification disabled."
   type        = string

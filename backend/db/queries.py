@@ -14,7 +14,7 @@ def _utcnow_naive() -> datetime:
     must stay naive; this just replaces the deprecated _utcnow_naive()."""
     return datetime.now(UTC).replace(tzinfo=None)
 
-from sqlalchemy import distinct, func, select
+from sqlalchemy import delete, distinct, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -172,6 +172,76 @@ async def create_feedback(
     return fb
 
 
+# === Stale (abstract-only) papers ===
+
+# ~400 words — the same floor the summarizer refuses below. Papers stored with
+# less text were ingested from the arXiv abstract page before that fix.
+STALE_TEXT_CHARS = 2000
+
+
+async def paper_text_chars(db: AsyncSession, paper_id: str) -> int:
+    result = await db.execute(
+        select(func.coalesce(func.sum(func.length(Section.content)), 0)).where(Section.paper_id == paper_id)
+    )
+    return int(result.scalar_one() or 0)
+
+
+async def paper_is_degraded(db: AsyncSession, paper_id: str) -> bool:
+    """True when the stored text is an abstract, not a paper — hidden from the
+    gallery and the reader, and re-ingested (not skipped) on the next request."""
+    return await paper_text_chars(db, paper_id) < STALE_TEXT_CHARS
+
+
+async def reset_paper_for_reingest(
+    db: AsyncSession, arxiv_id: str, *, title: str, authors: list[str], abstract: str,
+    pdf_url: str, html_url: str | None,
+) -> None:
+    """Replace a degraded paper's metadata and drop its sections so the
+    ingest loop can store the real ones. Old visualization rows are unlinked
+    from the sections (FK) rather than deleted — feedback references them,
+    and finalize_job supersedes them once the new run has videos."""
+    # Core statements, not loaded objects: a Paper loaded earlier in this
+    # session (with its sections) must not resurrect the deleted rows on flush.
+    await db.execute(
+        update(Paper).where(Paper.id == arxiv_id).values(
+            title=title, authors=authors, abstract=abstract, pdf_url=pdf_url, html_url=html_url,
+            updated_at=_utcnow_naive(),
+        )
+    )
+    await db.execute(update(Visualization).where(Visualization.paper_id == arxiv_id).values(section_id=None))
+    await db.execute(delete(Section).where(Section.paper_id == arxiv_id))
+    await db.commit()
+    db.expire_all()
+
+
+_LEGACY_VIZ_ID_RE = re.compile(r"^viz_\d{8}_\d+$")
+
+
+async def supersede_legacy_truncated_rows(db: AsyncSession) -> int:
+    """One-time, idempotent: rows named with the pre-fix truncated arXiv id
+    (``viz_17060376_1``) are hidden wherever the paper also has a full-id
+    complete row, so re-processed papers stop showing two generations of
+    videos. Papers whose only videos are legacy rows keep them."""
+    result = await db.execute(
+        select(Visualization.id, Visualization.paper_id, Visualization.status, Visualization.video_url)
+    )
+    rows = result.all()
+    has_new_complete = {
+        pid for vid, pid, status, url in rows
+        if not _LEGACY_VIZ_ID_RE.match(vid) and status == "complete" and url
+    }
+    legacy_ids = [
+        vid for vid, pid, status, url in rows
+        if _LEGACY_VIZ_ID_RE.match(vid) and status != "superseded" and pid in has_new_complete
+    ]
+    if legacy_ids:
+        await db.execute(
+            update(Visualization).where(Visualization.id.in_(legacy_ids)).values(status="superseded")
+        )
+        await db.commit()
+    return len(legacy_ids)
+
+
 # === Papers ===
 
 async def get_paper(db: AsyncSession, arxiv_id: str) -> Paper | None:
@@ -229,6 +299,14 @@ async def list_paper_summaries(db: AsyncSession, active_job_max_age_hours: float
         .group_by(Visualization.paper_id)
         .subquery()
     )
+    text = (
+        select(
+            Section.paper_id.label("paper_id"),
+            func.coalesce(func.sum(func.length(Section.content)), 0).label("chars"),
+        )
+        .group_by(Section.paper_id)
+        .subquery()
+    )
     cutoff = _utcnow_naive() - timedelta(hours=active_job_max_age_hours)
     active = (
         select(ProcessingJob.paper_id.label("paper_id"))
@@ -248,9 +326,11 @@ async def list_paper_summaries(db: AsyncSession, active_job_max_age_hours: float
             Paper.updated_at,
             func.coalesce(playable.c.n, 0),
             active.c.paper_id.isnot(None),
+            func.coalesce(text.c.chars, 0),
         )
         .outerjoin(playable, playable.c.paper_id == Paper.id)
         .outerjoin(active, active.c.paper_id == Paper.id)
+        .outerjoin(text, text.c.paper_id == Paper.id)
         .order_by(Paper.created_at.desc())
     )
     return [
@@ -258,8 +338,9 @@ async def list_paper_summaries(db: AsyncSession, active_job_max_age_hours: float
             "paper_id": pid, "title": title, "authors": authors or [],
             "created_at": created, "updated_at": updated,
             "playable_sections": int(n), "processing": bool(is_active),
+            "text_chars": int(chars or 0),
         }
-        for pid, title, authors, created, updated, n, is_active in result.all()
+        for pid, title, authors, created, updated, n, is_active, chars in result.all()
     ]
 
 

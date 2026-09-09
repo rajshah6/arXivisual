@@ -7,10 +7,9 @@ import { VideoPlayer } from "@/components/VideoPlayer";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { cn } from "@/lib/utils";
 
-// Re-export the model type so page.tsx can import from here
-export type { ScrollySectionModel } from "@/components/ScrollySection";
+export type { ScrollySectionModel } from "@/lib/section-model";
 
-// Reuse the equation-merging logic from ScrollySection
+// Merge equations that the summary references but does not inline.
 function mergeContentWithEquations(content: string, equations?: string[]): string {
   if (!equations || equations.length === 0) return content;
 

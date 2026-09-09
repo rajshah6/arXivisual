@@ -99,6 +99,14 @@ resource "azurerm_container_app" "api" {
       value = var.turnstile_secret_key
     }
   }
+  # HMAC key for the pseudonymous client-IP fingerprints in admission logs.
+  dynamic "secret" {
+    for_each = var.ip_hash_secret != "" ? [1] : []
+    content {
+      name  = "ip-hash-secret"
+      value = var.ip_hash_secret
+    }
+  }
 
   template {
     min_replicas = 1
@@ -210,6 +218,13 @@ resource "azurerm_container_app" "api" {
         content {
           name        = "TURNSTILE_SECRET_KEY"
           secret_name = "turnstile-secret-key"
+        }
+      }
+      dynamic "env" {
+        for_each = var.ip_hash_secret != "" ? [1] : []
+        content {
+          name        = "IP_HASH_SECRET"
+          secret_name = "ip-hash-secret"
         }
       }
 

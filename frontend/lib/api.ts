@@ -86,7 +86,7 @@ export interface PaperSummaryResponse {
   title: string;
   authors: string[];
   visualization_count: number;
-  status?: "ready" | "processing" | "empty";
+  status?: "ready" | "processing" | "empty" | "stale";
   processed_at: string;
 }
 

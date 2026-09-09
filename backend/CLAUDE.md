@@ -150,5 +150,12 @@ backend ruff and frontend eslint are both HARD gates). `security.yml` — gitlea
    that way. Fetched bodies must contain `ltx_document`. Sources under 400 words raise
    `SourceTooShortError` (never retried); other formatting failures are retried once in-function and the
    Temporal ingest activity then fails the job with the real message (`ApplicationError`, non-retryable).
-9. **Keep `pytest` hermetic.** `testpaths=["tests"]` exists because scripts under `tools/` fire real API calls
+9. **Abstract-only papers are stale, not visualized.** A paper whose stored section text totals under
+   `queries.STALE_TEXT_CHARS` (2000 ≈ 400 words) was ingested from the arXiv abstract page before the LaTeXML
+   fix. `GET /api/papers` reports it `stale` (Explore hides it), `GET /api/paper/{id}` answers 404 so the reader
+   offers Start, and `POST /api/process` re-ingests instead of skipping (`_ingest_and_store_paper(replace=True)`:
+   metadata updated, sections replaced, old viz rows unlinked from sections, then superseded by `finalize_job`
+   once the new run has videos). Healthy papers are still skipped on resubmission. Legacy truncated-id viz rows
+   (`viz_17060376_1`) are superseded at API startup where a full-id complete row exists.
+10. **Keep `pytest` hermetic.** `testpaths=["tests"]` exists because scripts under `tools/` fire real API calls
    on collection; new tests must not need network or real keys.

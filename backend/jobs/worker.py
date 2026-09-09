@@ -419,9 +419,12 @@ async def _process_paper_job_impl(job_id: str, arxiv_id: str):
             raise
 
 
-async def _ingest_and_store_paper(db, job_id: str, arxiv_id: str):
+async def _ingest_and_store_paper(db, job_id: str, arxiv_id: str, replace: bool = False):
     """
     Ingest a real paper from arXiv and store it in the database.
+
+    ``replace=True`` re-ingests a paper that exists but is degraded (stored
+    from the abstract page): metadata is updated and sections replaced.
     """
     from ingestion import ingest_paper
 
@@ -431,7 +434,7 @@ async def _ingest_and_store_paper(db, job_id: str, arxiv_id: str):
         progress=0.15
     )
 
-    structured_paper = await ingest_paper(arxiv_id)
+    structured_paper = await ingest_paper(arxiv_id, force_refresh=replace)
     meta = structured_paper.meta
 
     await queries.update_job_status(
@@ -440,16 +443,22 @@ async def _ingest_and_store_paper(db, job_id: str, arxiv_id: str):
         progress=0.30
     )
 
-    # Store paper record
-    await queries.create_paper(
-        db,
-        arxiv_id=meta.arxiv_id,
-        title=meta.title,
-        authors=meta.authors,
-        abstract=meta.abstract,
-        pdf_url=meta.pdf_url,
-        html_url=meta.html_url,
-    )
+    # Store paper record (or replace a degraded one)
+    if replace:
+        await queries.reset_paper_for_reingest(
+            db, meta.arxiv_id, title=meta.title, authors=meta.authors, abstract=meta.abstract,
+            pdf_url=meta.pdf_url, html_url=meta.html_url,
+        )
+    else:
+        await queries.create_paper(
+            db,
+            arxiv_id=meta.arxiv_id,
+            title=meta.title,
+            authors=meta.authors,
+            abstract=meta.abstract,
+            pdf_url=meta.pdf_url,
+            html_url=meta.html_url,
+        )
 
     # Now that the paper exists, link the job to it
     job = await queries.get_job(db, job_id)

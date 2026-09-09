@@ -95,19 +95,26 @@ async def ingest_paper(params: PipelineInput) -> None:
             current_step="Fetching paper from arXiv",
             progress=0.10,
         )
+        replace = False
         if await queries.paper_exists(db, params.arxiv_id):
-            job = await queries.get_job(db, params.job_id)
-            if job:
-                job.paper_id = params.arxiv_id
-                await db.commit()
-            await queries.update_job_status(
-                db, params.job_id,
-                current_step="Paper already processed",
-                progress=0.30,
-            )
-            return
+            if await queries.paper_is_degraded(db, params.arxiv_id):
+                # Stored from the abstract page before the LaTeXML fix: the
+                # request is the signal to ingest the real paper this time.
+                logger.info("Paper %s is abstract-only from an earlier ingest; re-ingesting", params.arxiv_id)
+                replace = True
+            else:
+                job = await queries.get_job(db, params.job_id)
+                if job:
+                    job.paper_id = params.arxiv_id
+                    await db.commit()
+                await queries.update_job_status(
+                    db, params.job_id,
+                    current_step="Paper already processed",
+                    progress=0.30,
+                )
+                return
         try:
-            await _ingest_and_store_paper(db, params.job_id, params.arxiv_id)
+            await _ingest_and_store_paper(db, params.job_id, params.arxiv_id, replace=replace)
         except Exception as exc:
             # Deterministic ingestion failures (abstract-only source, formatting
             # failed after its own attempts) must reach the job row verbatim and

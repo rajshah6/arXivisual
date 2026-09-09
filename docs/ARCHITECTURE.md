@@ -117,7 +117,7 @@ self.set_speech_service(OpenAIService(voice="nova", model="gpt-4o-mini-tts", tra
 |--------|----------|---------|
 | POST | `/api/process` | Start processing a paper; returns a job ID |
 | GET | `/api/status/{job_id}` | Poll job progress |
-| GET | `/api/paper/{arxiv_id}` | Processed paper: sections (each with `videos` = every `complete` visualization, newest first; `video_url` = `videos[0]` for older clients) + visualizations; superseded rows excluded |
+| GET | `/api/paper/{arxiv_id}` | Processed paper: sections (each with `videos` = every `complete` visualization, newest first; `video_url` = `videos[0]` for older clients) + visualizations; superseded rows excluded; 404 for abstract-only (stale) papers so the reader offers re-processing |
 | GET | `/api/papers` | Explore gallery: all processed papers |
 | GET | `/api/video/{video_id}` | Serve or redirect to a rendered video |
 | POST | `/api/render` | Dev-only raw Manim render — in production, 404 unless `RENDER_API_SECRET` is configured and presented via `X-Render-Secret` (timing-safe compare) |

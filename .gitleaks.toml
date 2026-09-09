@@ -3,7 +3,15 @@
 useDefault = true
 
 [allowlist]
-description = "Container image tags pinned to git commit SHAs (gh-<sha>) are public identifiers, not secrets; gitleaks' generic-api-key rule trips on their entropy."
+description = "Known non-secrets that trip the generic-api-key entropy rule."
+# Match the allowlist against the whole line. Gitleaks' default target is the
+# captured secret alone, so a pattern that includes the surrounding key
+# name/host never matched and the weekly full-history scan kept failing.
+regexTarget = "line"
 regexes = [
+  # Container image tags pinned to git commit SHAs (gh-<sha>) are public identifiers.
   '''azurecr\.io/arxivisual-api:gh-[0-9a-f]{40}''',
+  # Documented placeholders in env templates.
+  '''DEDALUS_API_KEY=dsk-your-dedalus-api-key''',
+  '''your-[a-z0-9-]+-api-key''',
 ]

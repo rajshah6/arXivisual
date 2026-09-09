@@ -184,3 +184,29 @@ class TestTargetedFixSuggestions:
     def test_real_latex_errors_still_detected(self):
         info = RenderTester()._refine_error("RuntimeError", "latex error converting to dvi")
         assert info["type"] == "LaTeXError"
+
+
+class TestCameraFrameStaticRule:
+    """Escaped the dry-run gate on a 3D scene in production (viz_2301_00002_4):
+    caught statically now, before any paid render."""
+
+    def test_frame_on_non_moving_camera_scene_is_critical(self):
+        from agents.code_validator import CodeValidator
+
+        code = (
+            "from manim import *\nfrom manim_voiceover import VoiceoverScene\n"
+            "class S(VoiceoverScene):\n    def construct(self):\n"
+            "        self.play(self.camera.frame.animate.scale(0.5))\n"
+        )
+        out = CodeValidator().validate(code)
+        assert any("camera.frame" in i for i in out.issues_found)
+        assert out.needs_regeneration
+
+    def test_frame_on_moving_camera_scene_is_fine(self):
+        from agents.code_validator import CodeValidator
+
+        code = (
+            "from manim import *\nclass S(MovingCameraScene):\n    def construct(self):\n"
+            "        self.play(self.camera.frame.animate.scale(0.5))\n"
+        )
+        assert not any("camera.frame" in i for i in CodeValidator().validate(code).issues_found)

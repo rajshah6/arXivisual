@@ -35,7 +35,7 @@ POST /api/process  (api/routes.py: rate-limit + dedupe [api/throttle.py] + stale
 | 1 | SectionAnalyzer | `agents/section_analyzer.py` | LLM: pick concepts worth animating |
 | 2 | VisualizationPlanner | `agents/visualization_planner.py` | LLM: scene-by-scene storyboard |
 | 3 | ManimGenerator (voice-aware) | `agents/manim_generator.py` | LLM: full `VoiceoverScene` code, few-shot by viz type |
-| 4 | CodeValidator | `agents/code_validator.py` | gate: AST/structure/auto-fixes, no LLM |
+| 4 | CodeValidator | `agents/code_validator.py` | gate: AST/structure/auto-fixes + static rules (MathTex splitting, `camera.frame` outside MovingCameraScene), no LLM |
 | 5 | SpatialValidator | `agents/spatial_validator.py` | gate: bounds/overlap regex, no LLM |
 | 6 | VoiceoverScriptValidator | `agents/voiceover_script_validator.py` | gate: narration quality, heuristics + LLM judge |
 | 7 | RenderTester | `agents/render_tester.py` | gate: dry-run construct() execution in a stubbed subprocess (auto-skipped when `RENDER_MODE=modal`) |
@@ -97,6 +97,8 @@ backend ruff and frontend eslint are both HARD gates). `security.yml` — gitlea
   `RATE_LIMIT_PROCESS_PER_IP` (5/h), `RATE_LIMIT_PROCESS_PER_IP_DAILY` (3/day), `RATE_LIMIT_PROCESS_GLOBAL`
   (30/h; prod sets 6), `RATE_LIMIT_PROCESS_WINDOW_SECONDS` (3600), `PROCESS_DEDUPE_TTL_SECONDS` (600).
   `client_ip()` takes the RIGHTMOST `X-Forwarded-For` hop (the one the ingress appends) — never the first.
+  `ProcessRequest.arxiv_id` is validated and normalized (version suffix stripped) at the boundary — the paper is
+  stored under the base id, and non-arXiv identifiers are rejected with 422 before any budget is spent.
 - `RATE_LIMIT_FEEDBACK_PER_IP` (30) / `RATE_LIMIT_FEEDBACK_WINDOW_SECONDS` (3600) — bounds `POST /api/feedback` (viewer 👍/👎 per video + site
   suggestions → `feedback` table). Video votes are labeled ground truth for calibrating the visual-QA judge;
   `paper_id` is denormalized from the viz row, never trusted from the client.

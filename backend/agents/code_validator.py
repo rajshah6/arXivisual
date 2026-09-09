@@ -85,10 +85,17 @@ class CodeValidator:
         mathtex_issues = self._check_mathtex_splitting(fixed_code)
         if mathtex_issues:
             issues_found.extend(mathtex_issues)
-        
+
+        # Step 7: camera.frame outside MovingCameraScene. The dry-run gate
+        # does not catch this on 3D scenes (it surfaced only in the real
+        # render as "'ThreeDCamera' object has no attribute 'frame'").
+        camera_issues = self._check_camera_frame(fixed_code)
+        if camera_issues:
+            issues_found.extend(camera_issues)
+
         # Determine if regeneration is needed
-        # More than 1 unfixed issue OR MathTex issues = regenerate
-        needs_regeneration = len(issues_found) > 1 or bool(mathtex_issues)
+        # More than 1 unfixed issue OR MathTex/camera issues = regenerate
+        needs_regeneration = len(issues_found) > 1 or bool(mathtex_issues) or bool(camera_issues)
         
         return ValidatorOutput(
             is_valid=len(issues_found) == 0,
@@ -204,6 +211,20 @@ class CodeValidator:
             return fixed_code, fixes
         return None
     
+    _CAMERA_FRAME_RE = re.compile(r"\bself\.camera\.frame\b")
+    _MOVING_CAMERA_RE = re.compile(r"class\s+\w+\s*\([^)]*MovingCameraScene[^)]*\)")
+
+    def _check_camera_frame(self, code: str) -> list[str]:
+        """``self.camera.frame`` exists only on MovingCameraScene; on Scene,
+        ThreeDScene and VoiceoverScene it raises at render time."""
+        if self._CAMERA_FRAME_RE.search(code) and not self._MOVING_CAMERA_RE.search(code):
+            return [
+                "CRITICAL: self.camera.frame is used but the scene is not a MovingCameraScene "
+                "— it raises AttributeError at render time. Zoom/pan by animating the content "
+                "instead: self.play(group.animate.scale(1.5).shift(...))."
+            ]
+        return []
+
     def _check_mathtex_splitting(self, code: str) -> list[str]:
         """
         Check for dangerous MathTex splitting patterns that will crash Manim.

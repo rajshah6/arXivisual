@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_serializer
+from pydantic import BaseModel, Field, field_serializer, field_validator
 
 # === Enums ===
 
@@ -51,6 +51,24 @@ class ProcessRequest(BaseModel):
         description="arXiv paper ID (e.g., '1706.03762' or '1706.03762v1')",
         examples=["1706.03762", "2301.07041v2"]
     )
+
+    @field_validator("arxiv_id")
+    @classmethod
+    def _canonical_arxiv_id(cls, value: str) -> str:
+        """Reject non-arXiv identifiers before a job, a workflow and a
+        daily-cap slot are spent on them (a medRxiv DOI path was accepted
+        and failed at ingestion), and strip the version suffix: the paper is
+        stored under the base id, and a versioned id ('0805.3898v2') used to
+        crash generation with a None paper lookup."""
+        from ingestion.arxiv_fetcher import ARXIV_ID_PATTERN, normalize_arxiv_id
+
+        cleaned = value.strip().removeprefix("arXiv:").removeprefix("arxiv:").strip()
+        if not ARXIV_ID_PATTERN.match(cleaned):
+            raise ValueError(
+                "Not an arXiv identifier. Expected forms: 1706.03762, 1706.03762v1, or cs/0123456"
+            )
+        return normalize_arxiv_id(cleaned)
+
     turnstile_token: str | None = Field(
         None, max_length=4096,
         description="Cloudflare Turnstile response token; required when the server has verification enabled",

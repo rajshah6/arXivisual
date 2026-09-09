@@ -226,3 +226,21 @@ async def test_turnstile_rejects_token_for_foreign_hostname(monkeypatch):
 async def test_turnstile_empty_token_rejected_when_configured(monkeypatch, token):
     monkeypatch.setenv("TURNSTILE_SECRET_KEY", "test-secret")
     assert await turnstile.verify_turnstile(token, "203.0.113.9") is False
+
+
+# --- id validation is enforced before any budget is spent ------------------
+
+async def test_non_arxiv_id_is_rejected_before_creating_a_job(client, db, monkeypatch):
+    from sqlalchemy import func, select
+
+    from db.models import ProcessingJob
+
+    resp = await client.post("/api/process", json={"arxiv_id": "10.64898/2026.06.29.26356713v1.full.pdf"})
+    assert resp.status_code == 422
+    assert (await db.execute(select(func.count()).select_from(ProcessingJob))).scalar_one() == 0
+
+
+async def test_versioned_id_is_normalized_on_the_job(client, db):
+    resp = await client.post("/api/process", json={"arxiv_id": "0805.3898v2"})
+    assert resp.status_code == 200
+    assert resp.json()["arxiv_id"] == "0805.3898"

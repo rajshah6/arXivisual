@@ -124,7 +124,7 @@ class RenderTester:
          "which `from manim import *` already provides as `np`."),
         ("has no attribute 'add_coordinate_labels'",
          "Use axes.add_coordinates() — add_coordinate_labels does not exist in Manim CE."),
-        ("'Camera' object has no attribute 'frame'",
+        ("object has no attribute 'frame'",
          "self.camera.frame only exists in MovingCameraScene; this is a VoiceoverScene. "
          "Zoom/pan by animating the content instead: self.play(group.animate.scale(1.5).shift(...))."),
         ("'function' object has no attribute",

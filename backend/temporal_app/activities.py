@@ -175,6 +175,14 @@ async def generate_visualizations_for_paper(params: PipelineInput) -> list[Rende
             if r.manim_code
         ]
         db_paper = await queries.get_paper(db, params.arxiv_id)
+        if db_paper is None:
+            from temporalio.exceptions import ApplicationError
+
+            # Used to surface as "'NoneType' object has no attribute 'sections'".
+            raise ApplicationError(
+                f"Paper {params.arxiv_id} is not stored — ingestion did not complete for this id",
+                non_retryable=True,
+            )
         db_sections = sorted(db_paper.sections, key=lambda s: s.order_index)
         structured_paper = _build_structured_paper_from_db(db_paper, db_sections)
 

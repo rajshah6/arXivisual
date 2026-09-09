@@ -170,11 +170,14 @@ class PaperPipelineWorkflow:
 
     async def _render_one(self, ri: RenderInput) -> RenderResult:
         try:
+            # 25 min: under multi-paper load (KEDA scaled out ten minutes into
+            # a two-paper burst) two renders that were on track hit the old
+            # 15-min ceiling and shipped as failed visualizations.
             return await workflow.execute_activity(
                 render_visualization,
                 ri,
                 task_queue=RENDER_TASK_QUEUE,
-                start_to_close_timeout=timedelta(minutes=15),
+                start_to_close_timeout=timedelta(minutes=25),
                 retry_policy=_INFRA_RETRY,
             )
         except Exception as exc:
@@ -219,7 +222,7 @@ class PaperPipelineWorkflow:
                     is_repair=True,
                 ),
                 task_queue=RENDER_TASK_QUEUE,
-                start_to_close_timeout=timedelta(minutes=15),
+                start_to_close_timeout=timedelta(minutes=25),
                 retry_policy=_NO_RETRY,  # original video already exists as fallback
             )
             return rerender.succeeded and rerender.severity != "major"

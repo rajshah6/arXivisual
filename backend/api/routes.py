@@ -53,6 +53,7 @@ from .throttle import (
     per_ip_daily_limiter,
     per_ip_limiter,
     recent_jobs,
+    request_context,
 )
 from .turnstile import verify_turnstile
 
@@ -150,7 +151,8 @@ async def start_processing(
     #   3. per-IP hourly + daily, then global sliding windows (in-memory),
     #      peeked together and recorded only once every layer passes
     ip = client_ip(http_request)
-    client_tag = ip_fingerprint(ip)
+    # Fingerprint first (the log queries extract it), then request forensics.
+    client_tag = f"{ip_fingerprint(ip)} {request_context(http_request)}"
 
     now = _utcnow_naive()
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)

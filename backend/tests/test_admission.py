@@ -244,3 +244,26 @@ async def test_versioned_id_is_normalized_on_the_job(client, db):
     resp = await client.post("/api/process", json={"arxiv_id": "0805.3898v2"})
     assert resp.status_code == 200
     assert resp.json()["arxiv_id"] == "0805.3898"
+
+
+
+def test_request_context_is_compact_and_never_the_ip():
+    from starlette.requests import Request
+
+    from api.throttle import request_context
+
+    scope = {
+        "type": "http", "method": "POST", "path": "/api/process", "query_string": b"",
+        "client": ("203.0.113.9", 1234),
+        "headers": [
+            (b"user-agent", b'Mozilla/5.0 (X11; Linux x86_64) HeadlessChrome/128 "quoted"'),
+            (b"accept-language", b"en-US,en;q=0.9"),
+            (b"referer", b"https://www.arxivisual.org/abs/2301.00001"),
+            (b"origin", b"https://www.arxivisual.org"),
+            (b"x-forwarded-for", b"203.0.113.9"),
+        ],
+    }
+    ctx = request_context(Request(scope))
+    assert ctx.startswith('ua="Mozilla/5.0 (X11; Linux x86_64) HeadlessChrome/128 \'quoted\'"')
+    assert 'lang="en-US,en;q=0.9"' in ctx and "ref=www.arxivisual.org" in ctx
+    assert "origin=https://www.arxivisual.org" in ctx and "203.0.113.9" not in ctx

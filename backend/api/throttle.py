@@ -25,6 +25,7 @@ import threading
 import time
 from collections import deque
 from datetime import datetime, timedelta
+from urllib.parse import urlsplit
 
 from fastapi import HTTPException, Request
 
@@ -146,6 +147,18 @@ def client_ip(request: Request) -> str:
         if last:
             return last
     return request.client.host if request.client else "unknown"
+
+
+def request_context(request: Request) -> str:
+    """Compact forensics for admission logs, so a paced crawler on rotating
+    IPs can still be told apart from people: user agent, Accept-Language,
+    Referer host and Origin. Never the raw IP."""
+    h = request.headers
+    ua = h.get("user-agent", "-").replace('"', "'")[:90]
+    lang = h.get("accept-language", "-").replace('"', "'")[:24]
+    ref = urlsplit(h.get("referer", "")).netloc or "-"
+    origin = h.get("origin", "-")[:40]
+    return f'ua="{ua}" lang="{lang}" ref={ref} origin={origin}'
 
 
 def ip_fingerprint(ip: str) -> str:

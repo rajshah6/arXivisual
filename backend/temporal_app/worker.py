@@ -74,7 +74,19 @@ async def main() -> None:
     )
     # Container Apps fronts gRPC with HTTP/2 ingress behind TLS (:443);
     # raw TCP ingress proved unroutable on this environment.
-    client = await Client.connect(address, namespace=namespace, tls=use_tls)
+    # Retry the connect: during a revision rollover the first attempt failed
+    # (exit 1, container restarted by the platform 10s later). Exiting on a
+    # transient gRPC error just adds a restart to every deploy.
+    client = None
+    for attempt in range(1, 7):
+        try:
+            client = await Client.connect(address, namespace=namespace, tls=use_tls)
+            break
+        except Exception as exc:
+            if attempt == 6:
+                raise
+            logger.warning("Temporal connect attempt %d failed (%s); retrying in %ds", attempt, exc, 5 * attempt)
+            await asyncio.sleep(5 * attempt)
     logger.info("Connected. Render concurrency: %d", render_concurrency)
 
     # Backpressure: observed in production that unbounded concurrent

@@ -66,6 +66,15 @@ class RepairInput:
 
 
 @dataclass
+class FailInput:
+    job_id: str
+    arxiv_id: str
+    # The workflow's exception text: the job row used to carry only a generic
+    # "failed after retries", which hid the real cause from the site and logs.
+    reason: str = ""
+
+
+@dataclass
 class ProgressUpdate:
     job_id: str
     completed: int
@@ -468,16 +477,18 @@ async def record_render_failure(params: RenderInput) -> None:
 
 
 @activity.defn
-async def mark_job_failed(params: PipelineInput) -> None:
+async def mark_job_failed(params: FailInput) -> None:
     """Terminal failure marker for unrecoverable workflow errors."""
     from db import queries
     from db.connection import async_session_maker
 
+    reason = (params.reason or "").strip()[:500]
     async with async_session_maker() as db:
         await queries.update_job_status(
             db, params.job_id,
             status="failed",
-            error="Pipeline failed after retries. See worker logs for details.",
+            error=f"Pipeline failed: {reason}" if reason else
+                  "Pipeline failed after retries. See worker logs for details.",
         )
         # Rows the dead run never got to render would otherwise sit at
         # 'pending' forever and count as visuals in the gallery.

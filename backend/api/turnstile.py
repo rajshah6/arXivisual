@@ -50,7 +50,15 @@ class TurnstileVerdict:
 
 
 def _allowed_hostnames() -> set[str]:
-    raw = os.getenv("TURNSTILE_ALLOWED_HOSTNAMES", _DEFAULT_HOSTNAMES)
+    """Hostnames a token may have been minted on. ``localhost`` is for local
+    development only: in production a copy of our widget on an attacker's
+    localhost page would mint tokens Cloudflare reports as ``localhost``,
+    so it is dropped there unless the env var names it explicitly."""
+    raw = os.getenv("TURNSTILE_ALLOWED_HOSTNAMES")
+    if raw is None:
+        raw = _DEFAULT_HOSTNAMES
+        if os.getenv("ENVIRONMENT", "development").lower() == "production":
+            raw = raw.replace(",localhost", "")
     return {h.strip() for h in raw.split(",") if h.strip()}
 
 

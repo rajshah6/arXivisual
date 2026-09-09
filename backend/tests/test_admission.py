@@ -314,3 +314,16 @@ async def test_token_bound_to_action_and_paper(monkeypatch):
     # Binding is only enforced when the caller asks for it (older callers/tests).
     monkeypatch.setattr(turnstile.httpx, "AsyncClient", _client_returning({"success": True, "hostname": "arxivisual.org"}))
     assert await turnstile.verify_turnstile("tok", "203.0.113.9") is True
+
+
+
+async def test_localhost_tokens_refused_in_production_by_default(monkeypatch):
+    monkeypatch.setenv("TURNSTILE_SECRET_KEY", "test-secret")
+    monkeypatch.delenv("TURNSTILE_ALLOWED_HOSTNAMES", raising=False)
+    monkeypatch.setattr(turnstile.httpx, "AsyncClient", _client_returning({"success": True, "hostname": "localhost"}))
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    assert await turnstile.verify_turnstile("tok", "203.0.113.9") is True
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    assert await turnstile.verify_turnstile("tok", "203.0.113.9") is False
+    monkeypatch.setenv("TURNSTILE_ALLOWED_HOSTNAMES", "arxivisual.org,localhost")  # explicit opt-in still works
+    assert await turnstile.verify_turnstile("tok", "203.0.113.9") is True

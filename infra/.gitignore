@@ -11,3 +11,10 @@ terraform.tfvars
 # Local backend override used only for offline plan dry-runs
 backend_override.tf
 tfplan*
+
+# Cut-over wizard artifacts (one-off runbook, local only). Plan files embed
+# variable values, so they are secrets too.
+*.tfplan
+tf_env.sh
+.cutover-wizard.env
+cutover-wizard.sh

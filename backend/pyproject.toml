@@ -39,6 +39,8 @@ dependencies = [
     # Observability — LLM tracing / cost tracking
     "langfuse>=3.0.0",
     "temporalio>=1.32.0",
+    "posthog>=7.48.0",
+    "azure-monitor-opentelemetry>=1.8.10",
 ]
 
 [project.optional-dependencies]

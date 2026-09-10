@@ -124,7 +124,7 @@ self.set_speech_service(OpenAIService(voice="nova", model="gpt-4o-mini-tts", tra
 | POST | `/api/feedback` | Store viewer feedback: per-video 👍/👎 (labeled QA ground truth) or site suggestion |
 | GET | `/api/health` | Database / Manim / storage health |
 
-CORS allows `arxivisual.org`, this project's Vercel preview deployments, and localhost dev.
+CORS allows `arxivisual.org`, `www.arxivisual.org`, localhost dev, and whatever `CORS_EXTRA_ORIGINS` adds (in production: the frontend Container App's own FQDN) — see `backend/api/cors.py`.
 
 ## Persistence (`backend/db/`)
 

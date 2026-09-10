@@ -1,11 +1,13 @@
 # Deploying arXivisual
 
-Production runs in two pieces:
+Production runs in two pieces, both in the same Azure Container Apps environment (`arxivisual-api-env`, resource group `arxivisual-rg`, Terraform in [infra/](../infra/)):
 
 | Part | Stack | Host |
 |------|-------|------|
-| Backend | FastAPI in Docker ([backend/Dockerfile](../backend/Dockerfile)) | Azure Container Apps (`arxivisual-api` in resource group `arxivisual-rg`) |
-| Frontend | Next.js 16 | Vercel, auto-deployed from `main` |
+| Backend | FastAPI in Docker ([backend/Dockerfile](../backend/Dockerfile)) | Container App `arxivisual-api` (+ `arxivisual-worker`, `arxivisual-temporal`) |
+| Frontend | Next.js 16 server (SSR, `output: "standalone"`) in Docker ([frontend/Dockerfile](../frontend/Dockerfile)) | Container App `arxivisual-web`, serving `arxivisual.org` |
+
+Deploys are manual GitHub Actions runs (no push-to-deploy): `deploy-backend.yml` and `deploy-frontend.yml`, both authenticating to Azure with OIDC.
 
 The backend image bundles Manim's system dependencies (FFmpeg, Cairo, Pango, a TeX Live install for `MathTex`), so it is large (~3 GB) and takes several minutes to build.
 
@@ -91,28 +93,93 @@ az acr repository delete -n ca82c08e2eadacr --image arxivisual-api:<old-tag>
 
 ---
 
-## Frontend: Vercel
+## Frontend: Azure Container Apps
 
-The Vercel project builds from the `frontend/` directory and auto-deploys on every push to `main`; pull requests get preview deployments (the backend's CORS policy allows `arxivisual.org`, this project's `ar-xivisual-*.vercel.app` previews, and `localhost:3000`).
+### 1. Build and deploy
 
-One environment variable matters:
+```bash
+gh workflow run deploy-frontend.yml          # from main, once CI is green
+gh run watch                                 # ~4 minutes
+```
 
-| Variable | Value |
+[.github/workflows/deploy-frontend.yml](../.github/workflows/deploy-frontend.yml) builds `frontend/` in ACR as `arxivisual-web:gh-<sha>`, rolls the `arxivisual-web` Container App to it, then polls `/healthz` until the response carries that commit — in single-revision mode the old revision keeps serving until the new one passes its probes, so a plain 200 would prove nothing.
+
+Build-time inputs come from **GitHub repository variables** (`gh variable set NAME --body VALUE`), not container env vars, because `next build` inlines them into the bundles:
+
+| Repository variable | Value |
 |----------|-------|
-| `NEXT_PUBLIC_API_URL` | The backend URL (the Azure Container Apps URL above) |
+| `NEXT_PUBLIC_API_URL` | The backend origin (the Azure Container Apps API URL above). Unset: production builds fall back to it anyway ([frontend/lib/api.ts](../frontend/lib/api.ts)) |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Cloudflare Turnstile site key (public). Unset = no widget, backend must have no secret either |
 
-`NEXT_PUBLIC_*` variables are baked in at build time — redeploy the frontend after changing it. As a safety net, production builds fall back to the Azure backend URL when the variable is unset (see [frontend/lib/api.ts](../frontend/lib/api.ts)); dev builds fall back to `http://localhost:8000`.
+The image also bakes in `APP_COMMIT_SHA` (reported by `/healthz`). Nothing else is configurable at runtime; the container listens on `:3000` as a non-root user.
+
+First-time bootstrap (the app does not exist yet): run the workflow with `roll=false` so the image exists, then `terraform apply` with `web_image_tag = "gh-<sha>"` (see [infra/README.md](../infra/README.md)); every later deploy is the plain workflow run.
+
+### 2. Verify
+
+```bash
+WEB=https://arxivisual-web.purplepond-ac9e2dc5.eastus2.azurecontainerapps.io
+curl -s $WEB/healthz                                  # {"status":"ok","commit":"<sha>","uptime_s":N}
+curl -s -o /dev/null -w '%{http_code}\n' $WEB/explore   # 200
+curl -s $WEB/abs/1706.03762 | grep -o '<title>[^<]*'    # "Attention Is All You Need · arXivisual" (server-rendered)
+```
+
+The last line is the SSR payoff: the paper route's server component fetches the paper's title/abstract from the API (3 s timeout, 10 min cache, any failure falls back to a generic title) so links unfurl with the paper, not the site card.
+
+### 3. Rollback
+
+```bash
+az acr repository show-tags -n ca82c08e2eadacr --repository arxivisual-web --orderby time_desc -o table
+az containerapp update -n arxivisual-web -g arxivisual-rg \
+  --image ca82c08e2eadacr.azurecr.io/arxivisual-web:<previous-tag>
+```
+
+or `az containerapp revision activate` as for the backend. Images are ~400 MB (the bundled demo media is most of it); prune old `arxivisual-web` tags with the same `az acr repository delete` housekeeping.
+
+### 4. Custom domain and DNS (Porkbun)
+
+`arxivisual.org` and `www.arxivisual.org` are custom domains on `arxivisual-web` with free Azure-managed (DigiCert) certificates ([infra/frontend.tf](../infra/frontend.tf), gated by `web_custom_domains_enabled`). Container Apps validates ownership through DNS, so the records must resolve **before** the apply that enables the domains — every phase fails without them, the certificate one only after a 30-minute wait. At Porkbun (DNS → arxivisual.org):
+
+| Type | Host | Answer | Why |
+|------|------|--------|-----|
+| `CNAME` | `www` | `arxivisual-web.purplepond-ac9e2dc5.eastus2.azurecontainerapps.io` | routes www to the app |
+| `TXT` | `asuid.www` | the environment's custom-domain verification id | proves ownership of www |
+| `A` | *(blank / apex)* | `20.10.252.218` (the environment's static IP) | apex cannot be a CNAME |
+| `TXT` | `asuid` | the same verification id | proves ownership of the apex |
+
+`terraform output web_dns_records` prints exactly these four rows once the app exists; or read the two values directly:
+
+```bash
+az containerapp env show -n arxivisual-api-env -g arxivisual-rg \
+  --query '{ip:properties.staticIp, asuid:properties.customDomainConfiguration.customDomainVerificationId}'
+```
+
+Rules that matter: the `www` CNAME must point *directly* at the app FQDN (an intermediate CNAME or ALIAS blocks issuance and renewal); the apex must be an `A` record, not an ALIAS; if the zone ever gets a `CAA` record, add `0 issue digicert.com` next to it (as of the migration the zone has none — do not add one). Remove the old `www` CNAME to `vercel-dns` and any apex records Vercel asked for at the same time — a hostname resolving to two places validates nowhere. Certificates are issued a few minutes after validation and renew automatically as long as the records and public HTTP ingress stay in place.
+
+### 5. Cut-over order (Vercel → Azure)
+
+1. Merge, run `deploy-frontend.yml` with `roll=false`, then `terraform apply` with `web_image_tag = "gh-<sha>"` and `web_custom_domains_enabled = false` (creates `arxivisual-web`, and sets `CORS_EXTRA_ORIGINS` + `TURNSTILE_ALLOWED_HOSTNAMES` on the API app so the new host may call it). Verify on the `azurecontainerapps.io` URL (step 2). Add that hostname to the Turnstile widget's allowed hostnames in the Cloudflare dashboard if you want the Start flow to work there too.
+2. Create the four Porkbun records from `terraform output web_dns_records`; wait until `dig +short www.arxivisual.org` answers with the app FQDN, `dig +short arxivisual.org` with the static IP, and `dig +short TXT asuid.arxivisual.org` with the verification id. Apply with `web_custom_domains_enabled = true` (issuance takes a few minutes; the apply waits), then confirm `az containerapp hostname list -n arxivisual-web -g arxivisual-rg -o table` shows `SniEnabled` for both names.
+3. `curl -sI https://www.arxivisual.org` and `https://arxivisual.org` return 200 with a valid certificate. Only now remove the domain from the Vercel project and delete the project — nothing in the backend references Vercel any more.
+
+Rollback of the cut-over is the DNS change in reverse (point `www` back at `vercel-dns` while the Vercel project still exists). Note that removing a bound domain from Terraform needs a manual unbind first (`az containerapp hostname delete`): the azapi binding step has no delete behaviour.
+
+### 6. Local production image
+
+```bash
+docker build -t arxivisual-web:local --build-arg NEXT_PUBLIC_API_URL=<api url> frontend
+docker run --rm -p 3000:3000 arxivisual-web:local
+```
 
 ---
 
 ## CI
 
-[.github/workflows/ci.yml](../.github/workflows/ci.yml) runs on every push and PR: backend pytest on Python 3.11 and 3.13 (offline, dummy provider credentials), frontend typecheck + build (lint is advisory), and a Docker image build gated on changes to the Dockerfile, `pyproject.toml`, or `uv.lock`. Deploys are manual via the `az` commands above — CI validates that the image still builds but does not push it.
+[.github/workflows/ci.yml](../.github/workflows/ci.yml) runs on every push and PR: backend ruff + pytest on Python 3.11 and 3.13 (offline, dummy provider credentials), frontend typecheck + lint + build (all hard gates), and Docker image builds for both halves gated on changes to their build inputs (backend: Dockerfile, `pyproject.toml`, `uv.lock`; frontend: Dockerfile, `.dockerignore`, `package*.json`, `next.config.ts`). Deploys are the manual workflows above — CI validates that the images still build but does not push them.
 
 ## Turnstile rollout order (matters)
 
-1. Set `NEXT_PUBLIC_TURNSTILE_SITE_KEY` on Vercel and redeploy the frontend — the widget appears and sends
+1. Set the `NEXT_PUBLIC_TURNSTILE_SITE_KEY` repository variable and run `deploy-frontend.yml` — the widget appears and sends
    tokens; the backend ignores them while it has no secret (harmless).
 2. Confirm the deployed bundle contains the widget (search for "Verifying you're human").
 3. Only then set `turnstile_secret_key` (Terraform) / the `turnstile-secret-key` Container App secret.

@@ -16,7 +16,12 @@
 #
 # NEXT_PUBLIC_* values are inlined into the JS bundles by `next build`, which is
 # why they are build args here and not container env vars. They are public by
-# definition (every visitor's browser has them) and appear in ACR build logs.
+# definition (every visitor's browser has them) and appear in ACR build logs —
+# never pass a secret through --build-arg.
+#
+# Do NOT add `environment:` to the job: that changes the OIDC subject to
+# repo:...:environment:<name>, which the federated credential (ref:refs/heads/main)
+# does not match.
 
 name: Deploy frontend
 
@@ -57,12 +62,20 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      # Context = frontend/ (its .dockerignore is honored when the CLI packs
+      # the upload). Quick builds have no documented timeout default (on-demand
+      # tasks default to 600 s), so set one that covers a cold `next build`.
       - name: Build image in ACR
+        env:
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+          NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ vars.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}
         run: |
           az acr build -r "$ACR_NAME" -t "$IMAGE_NAME:gh-${{ github.sha }}" \
-            --build-arg NEXT_PUBLIC_API_URL="${{ vars.NEXT_PUBLIC_API_URL }}" \
-            --build-arg NEXT_PUBLIC_TURNSTILE_SITE_KEY="${{ vars.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}" \
-            --build-arg APP_COMMIT_SHA="${{ github.sha }}" \
+            --platform linux/amd64 \
+            --timeout 1800 \
+            --build-arg "NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL" \
+            --build-arg "NEXT_PUBLIC_TURNSTILE_SITE_KEY=$NEXT_PUBLIC_TURNSTILE_SITE_KEY" \
+            --build-arg "APP_COMMIT_SHA=${{ github.sha }}" \
             frontend
 
       - name: Roll Container App to the new image
@@ -90,5 +103,7 @@ jobs:
             sleep 10
           done
           echo "The new revision did not become live within ~5 minutes." >&2
-          echo "Inspect: az containerapp revision list -n $APP_NAME -g $RESOURCE_GROUP -o table" >&2
+          echo "Traffic stays on the previous revision (single-revision mode). Revision states:" >&2
+          az containerapp revision list -n "$APP_NAME" -g "$RESOURCE_GROUP" \
+            --query "[].{name:name, active:properties.active, provisioning:properties.provisioningState, health:properties.healthState, running:properties.runningState, traffic:properties.trafficWeight}" -o table >&2 || true
           exit 1

@@ -2,6 +2,8 @@ import "server-only";
 
 import type { Metadata } from "next";
 import { API_BASE } from "./api";
+import { baseArxivId, isArxivId } from "./arxiv-id";
+import { getDemoPaper } from "./mock-data";
 
 /**
  * Per-paper <title> / description / OpenGraph for /abs/[...id].
@@ -13,14 +15,27 @@ import { API_BASE } from "./api";
  * paper) or malformed body falls back to a generic title, so the reader
  * (which fetches client-side and offers "Start" for unknown papers) is never
  * blocked on this request.
+ *
+ * Only pages that show a processed paper are indexable: a syntactically valid
+ * but unprocessed id is a soft 404 (the reader offers "Start"), and anything
+ * that is not an arXiv id at all gets a fixed title — otherwise /abs/<any
+ * text> would be an unbounded set of indexable pages with a caller-chosen
+ * title and a self-referential canonical.
  */
 
 const SITE_URL = "https://arxivisual.org";
 const DESCRIPTION_MAX = 160;
+const MAX_AUTHOR_TAGS = 10; // collaboration papers list thousands of authors
 const FETCH_TIMEOUT_MS = 3000;
 // Titles and abstracts never change once processed; a paper that is still
 // processing turns into a real one within minutes, hence a short window.
 const REVALIDATE_SECONDS = 600;
+
+// Mirrors the layout's openGraph/twitter blocks: page-level metadata
+// replaces those objects wholesale (Next merges per top-level key), so the
+// site/creator/locale/image fields have to be restated here.
+const OG_IMAGE = { url: "/landing.jpeg", width: 1200, height: 630 };
+const TWITTER_HANDLE = "@armaangupt0";
 
 type PaperMeta = { title: string; abstract: string; authors: string[] };
 
@@ -61,23 +76,64 @@ function formatAuthors(authors: string[]): string {
   return `${authors.slice(0, 3).join(", ")} et al.`;
 }
 
-export async function paperMetadata(arxivId: string): Promise<Metadata> {
-  if (!arxivId) return {};
+function socialCards(title: string, description: string, url: string, imageAlt: string): Metadata {
+  return {
+    openGraph: {
+      type: "article",
+      url,
+      siteName: "arXivisual",
+      locale: "en_US",
+      title,
+      description,
+      images: [{ ...OG_IMAGE, alt: imageAlt }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      site: TWITTER_HANDLE,
+      creator: TWITTER_HANDLE,
+      title,
+      description,
+      images: [OG_IMAGE.url],
+    },
+  };
+}
 
-  const canonical = `${SITE_URL}/abs/${arxivId}`;
-  const paper = await fetchPaperMeta(arxivId);
-
-  if (!paper) {
-    // Unknown, stale, or unreachable: a generic but still paper-specific
-    // title. The client reader shows the "Start" flow for these.
+export async function paperMetadata(rawId: string): Promise<Metadata> {
+  if (!rawId || !isArxivId(rawId)) {
+    // Not an arXiv id: never reflect the path into the title, never index.
     return {
-      title: `arXiv:${arxivId}`,
-      description: `Visualize arXiv paper ${arxivId} as an interactive scrollytelling explainer with AI-generated Manim animations.`,
-      alternates: { canonical },
+      title: "Paper not found",
+      description: "arXivisual visualizes arXiv papers; this address is not an arXiv identifier.",
+      robots: { index: false, follow: false },
     };
   }
 
-  const title = `${paper.title} · arXivisual`;
+  // Every version of an id is the same page (the backend strips the suffix),
+  // so all of them share one canonical URL and one cache entry.
+  const arxivId = baseArxivId(rawId);
+  const canonical = `${SITE_URL}/abs/${arxivId}`;
+
+  const demo = getDemoPaper(arxivId);
+  const paper: PaperMeta | null = demo
+    ? { title: demo.title, abstract: demo.abstract, authors: demo.authors }
+    : await fetchPaperMeta(arxivId);
+
+  if (!paper) {
+    // Unknown, stale, or unreachable: a paper-specific title so a shared link
+    // still reads sensibly, but a soft 404 for search engines. The client
+    // reader shows the "Start" flow for these.
+    const title = `arXiv:${arxivId}`;
+    const description = `Visualize arXiv paper ${arxivId} as an interactive scrollytelling explainer with AI-generated Manim animations.`;
+    return {
+      title,
+      description,
+      alternates: { canonical },
+      robots: { index: false, follow: true },
+      ...socialCards(`${title} · arXivisual`, description, canonical, "arXivisual — arXiv papers, visualized"),
+    };
+  }
+
+  const fullTitle = `${paper.title} · arXivisual`;
   const description = truncate(
     paper.abstract ||
       `${paper.title}${paper.authors.length ? ` by ${formatAuthors(paper.authors)}` : ""}, visualized with AI-generated Manim animations.`,
@@ -89,27 +145,7 @@ export async function paperMetadata(arxivId: string): Promise<Metadata> {
     title: paper.title,
     description,
     alternates: { canonical },
-    authors: paper.authors.map((name) => ({ name })),
-    openGraph: {
-      type: "article",
-      url: canonical,
-      siteName: "arXivisual",
-      title,
-      description,
-      images: [
-        {
-          url: "/landing.jpeg",
-          width: 1200,
-          height: 630,
-          alt: `${paper.title} — visualized on arXivisual`,
-        },
-      ],
-    },
-    twitter: {
-      card: "summary_large_image",
-      title,
-      description,
-      images: ["/landing.jpeg"],
-    },
+    authors: paper.authors.slice(0, MAX_AUTHOR_TAGS).map((name) => ({ name })),
+    ...socialCards(fullTitle, description, canonical, `${paper.title} — visualized on arXivisual`),
   };
 }

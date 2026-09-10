@@ -231,13 +231,16 @@ resource "azapi_update_resource" "web_domain_binding" {
   depends_on = [azurerm_container_app_custom_domain.web]
 }
 
-# The records to create at Porkbun BEFORE enabling the custom domains.
+# The records to create at Porkbun BEFORE enabling the custom domains. The
+# verification id is read from the ENVIRONMENT: the same value is exported on
+# the app, but the provider marks that attribute sensitive, which would force
+# this whole output to be sensitive and hide the DNS rows.
 output "web_dns_records" {
   description = "Porkbun records for arxivisual.org -> arxivisual-web. Create these, wait for propagation, then apply with web_custom_domains_enabled = true."
   value = {
     apex_A    = { type = "A", host = "", value = azurerm_container_app_environment.main.static_ip_address }
-    apex_TXT  = { type = "TXT", host = "asuid", value = azurerm_container_app.web.custom_domain_verification_id }
+    apex_TXT  = { type = "TXT", host = "asuid", value = azurerm_container_app_environment.main.custom_domain_verification_id }
     www_CNAME = { type = "CNAME", host = "www", value = azurerm_container_app.web.ingress[0].fqdn }
-    www_TXT   = { type = "TXT", host = "asuid.www", value = azurerm_container_app.web.custom_domain_verification_id }
+    www_TXT   = { type = "TXT", host = "asuid.www", value = azurerm_container_app_environment.main.custom_domain_verification_id }
   }
 }

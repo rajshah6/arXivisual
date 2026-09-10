@@ -273,7 +273,7 @@ resource "azurerm_container_app" "temporal" {
     target_port      = 7233
     # gRPC over ACA's standard http2 ingress (envoy terminates TLS on :443 and
     # forwards h2c) — raw TCP ingress proved unroutable on this environment.
-    transport        = "http2"
+    transport = "http2"
 
     traffic_weight {
       latest_revision = true
@@ -541,14 +541,6 @@ resource "azurerm_container_app" "worker" {
         value = "gpt-5-mini"
       }
       env {
-        name  = "VISUAL_QA_REPAIR"
-        value = "1"
-      }
-      env {
-        name  = "VISUAL_QA_REPAIR_MODEL"
-        value = "gpt-5-mini"
-      }
-      env {
         name        = "AZURE_OPENAI_API_KEY"
         secret_name = "azure-openai-api-key"
       }
@@ -584,6 +576,16 @@ resource "azurerm_container_app" "worker" {
       env {
         name  = "RENDER_CONCURRENCY"
         value = "3"
+      }
+      # Last on purpose: the live app has these two after RENDER_CONCURRENCY
+      # (added with az later), and the provider diffs env blocks by position.
+      env {
+        name  = "VISUAL_QA_REPAIR"
+        value = "1"
+      }
+      env {
+        name  = "VISUAL_QA_REPAIR_MODEL"
+        value = "gpt-5-mini"
       }
     }
   }

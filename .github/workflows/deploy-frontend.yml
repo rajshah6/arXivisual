@@ -14,6 +14,9 @@
 #                                   unset → no widget, backend must then have
 #                                   no secret either — see docs/DEPLOY.md)
 #
+# Every build is tagged gh-<sha> (what gets rolled) AND latest (what Terraform
+# creates/replaces the app from — infra/frontend.tf); never prune `latest`.
+#
 # NEXT_PUBLIC_* values are inlined into the JS bundles by `next build`, which is
 # why they are build args here and not container env vars. They are public by
 # definition (every visitor's browser has them) and appear in ACR build logs —
@@ -70,7 +73,9 @@ jobs:
           NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
           NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ vars.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}
         run: |
-          az acr build -r "$ACR_NAME" -t "$IMAGE_NAME:gh-${{ github.sha }}" \
+          az acr build -r "$ACR_NAME" \
+            -t "$IMAGE_NAME:gh-${{ github.sha }}" \
+            -t "$IMAGE_NAME:latest" \
             --platform linux/amd64 \
             --timeout 1800 \
             --build-arg "NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL" \

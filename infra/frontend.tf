@@ -6,7 +6,15 @@
 # It pulls with a USER-assigned identity, unlike the API app's system identity:
 # a system identity only exists once the app exists, so a first apply cannot
 # grant AcrPull before the app tries to pull. A user-assigned identity is
-# created and granted first, and the app is born able to pull.
+# created and granted first. Azure RBAC is eventually consistent (Microsoft:
+# up to a few minutes), and Container Apps validates the pull during create,
+# so a short wait sits between the grant and the app; if a first apply still
+# fails with an ACR UNAUTHORIZED pull, wait and re-run apply.
+#
+# The app must stay SECRET-FREE: the custom-domain binding below goes through
+# azapi_update_resource, which PUTs the GET body back, and the ACA API drops
+# secret values absent from a PUT. Server-side secrets (if ever needed) go in
+# Key Vault references, or the binding moves to `az containerapp hostname bind`.
 # ---------------------------------------------------------------------------
 
 resource "azurerm_user_assigned_identity" "web" {
@@ -19,11 +27,22 @@ resource "azurerm_role_assignment" "web_acr_pull" {
   scope                = azurerm_container_registry.main.id
   role_definition_name = "AcrPull"
   principal_id         = azurerm_user_assigned_identity.web.principal_id
+  # A managed identity is a service principal; saying so skips the AAD lookup
+  # that races the brand-new identity's replication.
+  principal_type = "ServicePrincipal"
+}
+
+# RBAC propagation window between the AcrPull grant and the first image pull.
+resource "time_sleep" "web_acr_pull" {
+  create_duration = "90s"
+  depends_on      = [azurerm_role_assignment.web_acr_pull]
 }
 
 locals {
-  # Bootstrap tag; the deploy workflow owns the image afterwards (gh-<sha>
-  # tags) and Terraform ignores it, exactly like the API app.
+  # Only consulted when Terraform CREATES (or replaces) the app; afterwards
+  # the deploy workflow rolls gh-<sha> tags and Terraform ignores the image,
+  # exactly like the API app. The workflow also tags every build `latest`, so
+  # the default always names an existing image (never prune that tag).
   web_image = "${azurerm_container_registry.main.login_server}/arxivisual-web:${var.web_image_tag}"
 }
 
@@ -129,7 +148,7 @@ resource "azurerm_container_app" "web" {
     }
   }
 
-  depends_on = [azurerm_role_assignment.web_acr_pull]
+  depends_on = [time_sleep.web_acr_pull]
 }
 
 # ---------------------------------------------------------------------------
@@ -183,9 +202,11 @@ resource "azurerm_container_app_environment_managed_certificate" "web" {
   depends_on = [azurerm_container_app_custom_domain.web]
 }
 
-# Phase 3 — bind. azapi matches list items by `name`, so this only touches
-# our two entries. NOTE: azapi_update_resource's delete is a no-op — to remove
-# a domain, unbind it first (`az containerapp hostname delete`), then destroy.
+# Phase 3 — bind. azapi GETs the app, merges this body in (list items matched
+# by `name`, other ingress settings preserved) and PUTs the whole document
+# back — which is why the app must carry no secrets (see the header). NOTE:
+# azapi_update_resource's delete is a no-op — to remove a domain, unbind it
+# first (`az containerapp hostname delete`), then destroy.
 resource "azapi_update_resource" "web_domain_binding" {
   count       = var.web_custom_domains_enabled ? 1 : 0
   type        = "Microsoft.App/containerApps@2025-07-01"

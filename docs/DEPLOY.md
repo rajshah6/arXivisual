@@ -134,7 +134,7 @@ az containerapp update -n arxivisual-web -g arxivisual-rg \
   --image ca82c08e2eadacr.azurecr.io/arxivisual-web:<previous-tag>
 ```
 
-or `az containerapp revision activate` as for the backend. Images are ~400 MB (the Node runtime plus the traced server; the bundled demo media in `public/` is ~36 MB of it); prune old `arxivisual-web` tags with the same `az acr repository delete` housekeeping.
+or `az containerapp revision activate` as for the backend. Images are ~400 MB on disk (~120 MB compressed in ACR; the Node base image is most of it). Prune *older* `arxivisual-web` tags with `az acr repository delete --image arxivisual-web:<old-tag>` — never the newest one: it shares its manifest with `latest`, which Terraform creates or replaces the app from, and deleting a tag deletes the manifest and every tag on it.
 
 ### 4. Custom domain and DNS (Porkbun)
 
@@ -158,7 +158,7 @@ Rules that matter: the `www` CNAME must point *directly* at the app FQDN (an int
 
 ### 5. Cut-over order (Vercel → Azure)
 
-1. Merge, run `deploy-frontend.yml` with `roll=false`, then `terraform apply` with `web_image_tag = "gh-<sha>"` and `web_custom_domains_enabled = false` (creates `arxivisual-web`, and sets `CORS_EXTRA_ORIGINS` + `TURNSTILE_ALLOWED_HOSTNAMES` on the API app so the new host may call it). Verify on the `azurecontainerapps.io` URL (step 2). Add that hostname to the Turnstile widget's allowed hostnames in the Cloudflare dashboard if you want the Start flow to work there too.
+1. Merge, run `deploy-frontend.yml` with `roll=false`, then `terraform apply` with the defaults (`web_image_tag = "latest"`, `web_custom_domains_enabled = false`) (creates `arxivisual-web`, and sets `CORS_EXTRA_ORIGINS` + `TURNSTILE_ALLOWED_HOSTNAMES` on the API app so the new host may call it). Verify on the `azurecontainerapps.io` URL (step 2). Add that hostname to the Turnstile widget's allowed hostnames in the Cloudflare dashboard if you want the Start flow to work there too.
 2. Create the four Porkbun records from `terraform output web_dns_records`; wait until `dig +short www.arxivisual.org` answers with the app FQDN, `dig +short arxivisual.org` with the static IP, and `dig +short TXT asuid.arxivisual.org` with the verification id. Apply with `web_custom_domains_enabled = true` (issuance takes a few minutes; the apply waits), then confirm `az containerapp hostname list -n arxivisual-web -g arxivisual-rg -o table` shows `SniEnabled` for both names.
 3. `curl -sI https://www.arxivisual.org` and `https://arxivisual.org` return 200 with a valid certificate. Only now remove the domain from the Vercel project and delete the project — nothing in the backend references Vercel any more.
 

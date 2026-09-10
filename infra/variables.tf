@@ -72,8 +72,9 @@ variable "turnstile_secret_key" {
 }
 
 variable "web_image_tag" {
-  description = "Tag of the arxivisual-web image the frontend Container App is CREATED with (bootstrap only — build it first with the 'Deploy frontend' workflow, roll=false). Later deploys roll the image outside Terraform; see infra/frontend.tf."
+  description = "Tag of the arxivisual-web image the frontend Container App is created (or replaced) with. Every deploy-frontend.yml run tags its build both gh-<sha> and latest, so the default always names an existing image once the first build has run; the image is ignored by Terraform after creation (see infra/frontend.tf)."
   type        = string
+  default     = "latest"
 }
 
 variable "web_custom_domains_enabled" {

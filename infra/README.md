@@ -84,10 +84,11 @@ attribute reads a `sensitive = true` variable (see `variables.tf`):
 (the HMAC key behind the IP fingerprints in admission logs; empty = `IP_HASH_SECRET` not set). Both are
 set on the live API app; leave either empty here and an apply removes it.
 
-One non-secret variable has no default: `web_image_tag`, the `arxivisual-web`
-image tag the frontend app is *created* with. Build it first (`gh workflow run
-deploy-frontend.yml -f roll=false` on `main`) and pass `gh-<sha>`; afterwards
-the deploy workflow rolls images and Terraform ignores the attribute.
+`web_image_tag` (default `latest`) names the `arxivisual-web` image the
+frontend app is created or replaced with. Every deploy-frontend run tags its
+build `gh-<sha>` and `latest`, so the default always exists once the first
+build has run (`gh workflow run deploy-frontend.yml -f roll=false` on `main`);
+after creation Terraform ignores the image. Never prune the `latest` tag.
 
 Supply them either as environment variables:
 
@@ -117,13 +118,15 @@ resources (e.g. `frontend.tf`) are created by Terraform directly.
 `frontend.tf` is created in two steps because Terraform cannot see Porkbun:
 
 1. Build the image on `main` (`gh workflow run deploy-frontend.yml -f roll=false`),
-   then `terraform apply` with `web_image_tag = "gh-<sha>"` and the default
-   `web_custom_domains_enabled = false`. Expect: `+ azurerm_user_assigned_identity.web`,
-   `+ azurerm_role_assignment.web_acr_pull`, `+ azurerm_container_app.web`, and
+   then `terraform apply` with the default `web_image_tag = "latest"` (or a
+   `gh-<sha>`) and the default `web_custom_domains_enabled = false`. Expect:
+   `+ azurerm_user_assigned_identity.web`, `+ azurerm_role_assignment.web_acr_pull`,
+   `+ time_sleep.web_acr_pull` (90 s RBAC propagation wait), `+ azurerm_container_app.web`, and
    two new env vars on `arxivisual-api` (`CORS_EXTRA_ORIGINS`,
    `TURNSTILE_ALLOWED_HOSTNAMES`). Anything else in the plan is drift from
    `az containerapp update --set-env-vars` runs on the API app — read it
-   before applying.
+   before applying. If the app create fails with an ACR `UNAUTHORIZED` image
+   pull, RBAC had not propagated yet: wait a few minutes and re-run apply.
 2. Create the four records from `terraform output web_dns_records`, wait for
    them to resolve, apply with `web_custom_domains_enabled = true`. Expect:
    `+ azurerm_container_app_custom_domain.web["apex"|"www"]`,

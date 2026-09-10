@@ -110,6 +110,9 @@ Build-time inputs come from **GitHub repository variables** (`gh variable set NA
 |----------|-------|
 | `NEXT_PUBLIC_API_URL` | The backend origin (the Azure Container Apps API URL above). Unset: production builds fall back to it anyway ([frontend/lib/api.ts](../frontend/lib/api.ts)) |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Cloudflare Turnstile site key (public). Unset = no widget, backend must have no secret either |
+| `NEXT_PUBLIC_POSTHOG_KEY` | PostHog project token (`phc_…`, public). Unset = no product analytics and no `/ingest` proxy (see [Analytics](#analytics)) |
+| `NEXT_PUBLIC_POSTHOG_HOST` | PostHog UI host: `https://us.posthog.com` (default when unset) or `https://eu.posthog.com`; also selects the ingest region the proxy forwards to |
+| `NEXT_PUBLIC_CLARITY_PROJECT_ID` | Microsoft Clarity project id (public). Unset = no Clarity tag and no cookie consent bar |
 
 The image also bakes in `APP_COMMIT_SHA` (reported by `/healthz`). Nothing else is configurable at runtime; the container listens on `:3000` as a non-root user.
 
@@ -172,6 +175,25 @@ docker run --rm -p 3000:3000 arxivisual-web:local
 ```
 
 ---
+
+## Analytics
+
+Two client-side tools, each compiled in only when its repository variable (table above) is set. Local dev and CI run without either: no init code runs, no `/ingest` rewrite exists, and no request ever leaves for `*.posthog.com` or `clarity.ms`.
+
+**PostHog — product analytics, cookieless.** [frontend/instrumentation-client.ts](../frontend/instrumentation-client.ts) initialises `posthog-js` with `cookieless_mode: "always"` and `person_profiles: "never"`: no cookies, no local/session storage, no person profiles — a visitor is a privacy-preserving hash computed on PostHog's servers, so PostHog needs no cookie notice. Autocapture is off. Collected: pageviews and pageleaves (one per App Router navigation, via the dated `defaults`), web vitals, and four product events fired from client components through [frontend/lib/analytics.ts](../frontend/lib/analytics.ts):
+
+| Event | Fired when | Properties |
+|-------|------------|------------|
+| `paper_start` | Start clicked on an unprocessed paper (`processArxivPaper` called) | `arxiv_id` |
+| `paper_ready` | the status poll reaches `completed` | `arxiv_id`, `videos` (sections with a playable video) |
+| `paper_failed` | the poll reaches `failed` (or `completed` with no paper) | `arxiv_id`, `reason`, `partial` (text survived, only videos failed) |
+| `paper_open` | a gallery card is clicked on `/explore` | `arxiv_id`, `position` |
+
+The backend emits server-side counterparts (`paper_accepted`, `paper_completed`, `paper_failed_server`). Browser traffic goes to `/ingest/*` on our own origin; [frontend/next.config.ts](../frontend/next.config.ts) rewrites it to PostHog's US ingest/assets hosts, or the EU ones when `NEXT_PUBLIC_POSTHOG_HOST` contains `eu.` (`skipTrailingSlashRedirect` is on because the SDK posts to `/ingest/e/`). Two project toggles must be ON in the PostHog UI, otherwise cookieless events are dropped at ingestion / vitals never arrive: **Settings → Web analytics → Cookieless server hash mode** and **Settings → Autocapture → Web vitals**. Dashboards live in that PostHog project (`NEXT_PUBLIC_POSTHOG_HOST`): Web analytics for traffic, Product analytics for the events above.
+
+**Microsoft Clarity — session replays and heatmaps, with consent.** Initialised from the same file via `@microsoft/clarity`. Clarity *does* set cookies (first-party `_clck`, `_clsk`), but only after consent: [frontend/components/ConsentBar.tsx](../frontend/components/ConsentBar.tsx) is the notice — a small bar at the bottom of every page until the visitor picks Accept or Decline, remembered in `localStorage`, never blocking the page. Accept calls Clarity's `consentV2` with `analytics_Storage: "granted"` and `ad_Storage: "denied"` (ads are never granted); Decline sends both denied, so Clarity keeps running cookieless (one id per page view, no cross-page replays); a remembered answer is replayed on every load before Clarity could set anything. Clarity's Consent Mode is on by default for EEA/UK/CH visitors only — enable it for the whole project in the Clarity project settings so every visitor is cookieless until they accept. Dashboard: https://clarity.microsoft.com → the project.
+
+Checking a deployed build: with the key set, `curl -sI https://arxivisual.org/ingest/static/array.js` answers with a PostHog response (not a Next 404); with neither variable set, the served pages make no analytics request at all.
 
 ## CI
 

@@ -18,13 +18,13 @@ infra is reproducible and reviewable.
 | `registry.tf` | ACR `ca82c08e2eadacr` (Basic, admin enabled) + AcrPull role for the API app's system identity |
 | `openai.tf` | Azure OpenAI account `arxivisual-openai` + deployments `gpt-5-mini` (2025-08-07, GlobalStandard 250), `gpt-4o-mini-tts` (2025-12-15, GlobalStandard 50), `gpt-5.6-sol` (2026-07-09, GlobalStandard 250) |
 | `database.tf` | Postgres flexible server `arxivisual-db` (**westus3**, B1ms, PG16, 32GB); databases `arxiviz`, `temporal`, `temporal_visibility`; `azure.extensions=BTREE_GIN`; allow-Azure-services firewall rule |
-| `container_apps.tf` | Log Analytics workspace, managed environment `arxivisual-api-env`, and the three apps: `arxivisual-api` (external HTTP :8000), `arxivisual-temporal` (internal TCP :7233), `arxivisual-worker` (no ingress) |
+| `container_apps.tf` | Log Analytics workspace, managed environment `arxivisual-api-env`, and the three backend apps: `arxivisual-api` (external HTTP :8000), `arxivisual-temporal` (internal TCP :7233), `arxivisual-worker` (no ingress) |
+| `frontend.tf` | The Next.js frontend `arxivisual-web` (external HTTP :3000, 0.25 vCPU / 0.5 Gi, 1–3 replicas, `/healthz` probes), its user-assigned identity + AcrPull role, and the `arxivisual.org` / `www.arxivisual.org` custom domains with managed certificates |
 | `budgets.tf` | Subscription budget `arxivisual-monthly` ($300, 50%/90%/forecast-100% alerts) and billing-account budget `MonthlyReset` ($5) via **azapi** (azurerm has no billing-account budget resource) |
 | `github_oidc.tf` | Entra app `arxivisual-github-deploy`, its service principal, the GitHub OIDC federated credential (`repo:rajshah6/arXivisual:ref:refs/heads/main`), and its Contributor role on the RG |
 | `state.tf` | The `arxivisualtfstate` storage account + `tfstate` container (the backend manages state *in* it and Terraform also *manages* it) |
-| `imports.tf` | One `import` block per resource above |
 
-Not managed here: Vercel (frontend), Cloudflare R2 (object storage), Langfuse.
+Not managed here: Cloudflare R2 (object storage), Cloudflare Turnstile, Langfuse, and DNS (Porkbun — the records `frontend.tf` needs are listed in [docs/DEPLOY.md](../docs/DEPLOY.md)).
 
 ## Bootstrap history
 
@@ -82,6 +82,11 @@ attribute reads a `sensitive = true` variable (see `variables.tf`):
 (the HMAC key behind the IP fingerprints in admission logs; empty = `IP_HASH_SECRET` not set). Both are
 set on the live API app; leave either empty here and an apply removes it.
 
+One non-secret variable has no default: `web_image_tag`, the `arxivisual-web`
+image tag the frontend app is *created* with. Build it first (`gh workflow run
+deploy-frontend.yml -f roll=false` on `main`) and pass `gh-<sha>`; afterwards
+the deploy workflow rolls images and Terraform ignores the attribute.
+
 Supply them either as environment variables:
 
 ```sh
@@ -101,10 +106,31 @@ DB password or the first apply will change it out from under the running apps.
 
 ## Import-block lifecycle
 
-`imports.tf` maps every existing Azure resource ID to its Terraform address.
-`terraform plan` shows them as "N to import"; the first successful
-`terraform apply` records them in state. After that first apply the import
-blocks are inert and `imports.tf` can be deleted in a follow-up commit.
+The original estate was adopted with one `import` block per resource
+(`imports.tf`); that first apply has happened and the file was deleted. New
+resources (e.g. `frontend.tf`) are created by Terraform directly.
+
+## Frontend bootstrap (two applies)
+
+`frontend.tf` is created in two steps because Terraform cannot see Porkbun:
+
+1. Build the image on `main` (`gh workflow run deploy-frontend.yml -f roll=false`),
+   then `terraform apply` with `web_image_tag = "gh-<sha>"` and the default
+   `web_custom_domains_enabled = false`. Expect: `+ azurerm_user_assigned_identity.web`,
+   `+ azurerm_role_assignment.web_acr_pull`, `+ azurerm_container_app.web`, and
+   two new env vars on `arxivisual-api` (`CORS_EXTRA_ORIGINS`,
+   `TURNSTILE_ALLOWED_HOSTNAMES`). Anything else in the plan is drift from
+   `az containerapp update --set-env-vars` runs on the API app — read it
+   before applying.
+2. Create the four records from `terraform output web_dns_records`, wait for
+   them to resolve, apply with `web_custom_domains_enabled = true`. Expect:
+   `+ azurerm_container_app_custom_domain.web["apex"|"www"]`,
+   `+ azurerm_container_app_environment_managed_certificate.web[...]`,
+   `+ azapi_update_resource.web_domain_binding[0]`. The certificate step waits
+   for issuance (minutes; 30-minute timeout).
+
+The cut-over order, DNS rules and verification live in
+[docs/DEPLOY.md](../docs/DEPLOY.md).
 
 ## Known first-apply diffs
 

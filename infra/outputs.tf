@@ -32,3 +32,23 @@ output "github_deploy_client_id" {
   description = "Client ID GitHub Actions uses for OIDC login (AZURE_CLIENT_ID repo secret)."
   value       = azuread_application.github_deploy.client_id
 }
+
+output "web_fqdn" {
+  description = "Default public FQDN of the arxivisual-web (frontend) container app."
+  value       = azurerm_container_app.web.ingress[0].fqdn
+}
+
+output "web_identity_principal_id" {
+  description = "Principal id of the frontend app's user-assigned identity (holds AcrPull)."
+  value       = azurerm_user_assigned_identity.web.principal_id
+}
+
+output "custom_domain_verification_id" {
+  description = "Value of the asuid TXT records Porkbun needs for custom domains on this environment."
+  value       = azurerm_container_app_environment.main.custom_domain_verification_id
+}
+
+output "environment_static_ip" {
+  description = "Static inbound IP of the environment — the apex A record for arxivisual.org points here."
+  value       = azurerm_container_app_environment.main.static_ip_address
+}

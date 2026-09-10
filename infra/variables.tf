@@ -70,3 +70,14 @@ variable "turnstile_secret_key" {
   sensitive   = true
   default     = ""
 }
+
+variable "web_image_tag" {
+  description = "Tag of the arxivisual-web image the frontend Container App is CREATED with (bootstrap only — build it first with the 'Deploy frontend' workflow, roll=false). Later deploys roll the image outside Terraform; see infra/frontend.tf."
+  type        = string
+}
+
+variable "web_custom_domains_enabled" {
+  description = "Bind arxivisual.org + www.arxivisual.org to the frontend app with managed certificates. Leave false until the Porkbun records from output web_dns_records resolve (see docs/DEPLOY.md); every custom-domain step fails without them."
+  type        = bool
+  default     = false
+}

@@ -24,3 +24,13 @@ langfuse_secret_key = "sk-lf-REPLACE_ME"
 acr_admin_password = "REPLACE_ME"
 turnstile_secret_key = "" # optional: Cloudflare Turnstile secret; empty = human verification off
 ip_hash_secret       = "" # optional: HMAC key for IP fingerprints in logs; empty = env not set (unkeyed hash)
+
+# Frontend image tag the arxivisual-web app is created with (bootstrap only;
+# later deploys roll the image via the 'Deploy frontend' workflow). Build it
+# first: gh workflow run deploy-frontend.yml -f roll=false, then use gh-<sha>.
+web_image_tag = "gh-REPLACE_ME"
+
+# Flip to true only after the Porkbun records from `terraform output
+# web_dns_records` resolve publicly (dig). Binds arxivisual.org + www to the
+# frontend app with free managed certificates.
+web_custom_domains_enabled = false

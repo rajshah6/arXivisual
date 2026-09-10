@@ -26,9 +26,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Application Insights (no-op without APPLICATIONINSIGHTS_CONNECTION_STRING).
+# Before the activity/agent imports so Langfuse is bound to its own
+# TracerProvider before any client exists (see telemetry.py).
+import telemetry
+
+telemetry.configure()
+
 from temporalio.client import Client
 from temporalio.worker import Worker
 
+import analytics
 from jobs.worker import parse_render_concurrency
 from temporal_app.activities import (
     finalize_job,
@@ -113,7 +121,11 @@ async def main() -> None:
         "Workers running: %s (pipeline), %s (render, max %d concurrent)",
         TASK_QUEUE, RENDER_TASK_QUEUE, render_concurrency,
     )
-    await asyncio.gather(pipeline_worker.run(), render_worker.run())
+    try:
+        await asyncio.gather(pipeline_worker.run(), render_worker.run())
+    finally:
+        # Flush queued product events before the process goes away.
+        analytics.shutdown()
 
 
 if __name__ == "__main__":

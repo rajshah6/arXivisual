@@ -71,6 +71,19 @@ variable "turnstile_secret_key" {
   default     = ""
 }
 
+variable "posthog_api_key" {
+  description = "PostHog project token for server-side product events (POSTHOG_API_KEY on the API and worker apps, 'posthog-api-key' secret). Empty = analytics off; the backend is a no-op without it."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "posthog_host" {
+  description = "PostHog ingestion host set as POSTHOG_HOST alongside the token (US cloud by default; EU is https://eu.i.posthog.com). Only materialized when posthog_api_key is set."
+  type        = string
+  default     = "https://us.i.posthog.com"
+}
+
 variable "web_image_tag" {
   description = "Tag of the arxivisual-web image the frontend Container App is created (or replaced) with. Every deploy-frontend.yml run tags its build both gh-<sha> and latest, so the default always names an existing image once the first build has run; the image is ignored by Terraform after creation (see infra/frontend.tf)."
   type        = string

@@ -27,6 +27,7 @@ def _langfuse_on() -> bool:
     )
 
 
+import analytics
 from agents.pipeline import generate_visualizations
 from db import queries
 from db.connection import async_session_maker
@@ -42,6 +43,7 @@ from models.paper import (
     Section as PaperSection,
 )
 from rendering import process_visualization
+from telemetry import detached_trace_context
 
 logger = logging.getLogger(__name__)
 
@@ -131,8 +133,20 @@ class ProgressBar:
         logger.info(f"  [{self.name}] {bar} {percent_str} ({self.current}/{self.total}){eta_str}")
 
 
-@observe(name="process-paper")
 async def process_paper_job(job_id: str, arxiv_id: str):
+    """Entry point for the background paper pipeline (FastAPI BackgroundTasks).
+
+    Runs detached from the request's OpenTelemetry context: Starlette executes
+    background tasks inside the request's ASGI span, and with Application
+    Insights instrumenting the API that span would otherwise become the
+    parent of the Langfuse trace — an orphan in Langfuse (telemetry.py).
+    """
+    with detached_trace_context():
+        await _traced_process_paper_job(job_id, arxiv_id)
+
+
+@observe(name="process-paper")
+async def _traced_process_paper_job(job_id: str, arxiv_id: str):
     """Traced entry point for the background paper pipeline.
 
     Wraps the implementation so every LLM/render span for this job is grouped
@@ -175,8 +189,14 @@ async def _process_paper_job_impl(job_id: str, arxiv_id: str):
     logger.info(f"ArXiv ID: {arxiv_id}")
     logger.info("=" * 60)
 
+    # For the product events' duration_s; read once, before anything can fail.
+    started_at = None
+
     async with async_session_maker() as db:
         try:
+            job_row = await queries.get_job(db, job_id)
+            started_at = job_row.created_at if job_row else None
+
             # Step 1: Ingest paper from arXiv
             logger.info("STEP 1: Ingesting paper from arXiv")
             logger.info("-" * 60)
@@ -285,6 +305,10 @@ async def _process_paper_job_impl(job_id: str, arxiv_id: str):
                     current_step=step,
                     progress=1.0,
                     error=error,
+                )
+                analytics.job_outcome(
+                    job_id=job_id, arxiv_id=arxiv_id, status=status,
+                    videos_complete=0, videos_total=0, created_at=started_at, error=error,
                 )
                 return
 
@@ -396,6 +420,12 @@ async def _process_paper_job_impl(job_id: str, arxiv_id: str):
                 progress=1.0,
                 error=error,
             )
+            # Product event (paper_completed / paper_failed_server); never raises.
+            analytics.job_outcome(
+                job_id=job_id, arxiv_id=arxiv_id, status=status,
+                videos_complete=succeeded_count, videos_total=len(viz_records),
+                created_at=started_at, error=error,
+            )
 
             if status == "failed":
                 logger.error("✗ JOB FAILED: %s — every render failed", job_id)
@@ -421,6 +451,10 @@ async def _process_paper_job_impl(job_id: str, arxiv_id: str):
                 )
             except Exception:
                 logger.exception("Failed to update job status after error")
+            analytics.job_outcome(
+                job_id=job_id, arxiv_id=arxiv_id, status="failed",
+                videos_complete=None, videos_total=None, created_at=started_at, error=str(e),
+            )
             raise
 
 

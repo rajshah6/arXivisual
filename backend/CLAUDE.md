@@ -26,7 +26,11 @@ POST /api/process  (api/routes.py: rate-limit + dedupe [api/throttle.py] + stale
 - **DB**: Postgres (asyncpg) when `DATABASE_URL` set, SQLite `./arxiviz.db` locally. No alembic — schema is
   `Base.metadata.create_all` in `db/connection.py:init_db()` at startup.
 - **Observability**: Langfuse v3 (OTel-based) — `langfuse.openai` drop-in client wraps every LLM call, plus
-  `@observe` spans; active iff both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set.
+  `@observe` spans; active iff both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set. Azure Application
+  Insights (`telemetry.py`, Azure Monitor OTel distro; iff `APPLICATIONINSIGHTS_CONNECTION_STRING`) is configured
+  first thing in `main.py` / `temporal_app/worker.py` and pins Langfuse to its own never-global TracerProvider —
+  otherwise Langfuse adopts Azure's provider, its LLM spans (prompts included) get exported to App Insights and
+  Azure's sampler drops most of them. Product events go to PostHog (`analytics.py`; iff `POSTHOG_API_KEY`).
 
 ## Pipeline stages (agents/pipeline.py)
 
@@ -88,6 +92,13 @@ npm/pip audit (advisory). `evals.yml` — nightly 06:00 UTC golden-set evals, fa
 - `DATABASE_URL`\* — Postgres; `postgres://` is auto-rewritten to `postgresql+asyncpg://`. Unset = SQLite.
 - `STORAGE_MODE` `local|r2`; for r2: `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`\*, `S3_SECRET_KEY`\*, `S3_PUBLIC_URL`.
 - `LANGFUSE_PUBLIC_KEY`\*, `LANGFUSE_SECRET_KEY`\*, `LANGFUSE_HOST`, `LANGFUSE_TRACING_ENVIRONMENT`.
+- `APPLICATIONINSIGHTS_CONNECTION_STRING`\* — Azure Application Insights (requests, outbound HTTP, exceptions,
+  logs) on API + worker; unset = off. `OTEL_TRACES_SAMPLER=microsoft.fixed_percentage` +
+  `OTEL_TRACES_SAMPLER_ARG=0.2` (prod) = 20% of App Insights traces — set BOTH; the arg alone means 0.2 traces/s
+  under the distro's default rate-limited sampler. Langfuse traces are never sampled by this (`telemetry.py`).
+- `POSTHOG_API_KEY`\*, `POSTHOG_HOST` (default `https://us.i.posthog.com`) — PostHog product events
+  (`analytics.py`): `paper_accepted` (distinct_id = client fingerprint), `paper_completed` /
+  `paper_failed_server` (distinct_id = job id, emitted on both pipeline paths). Unset key = no-op.
 - `ENVIRONMENT=production` — disables `POST /api/render` (404) unless `RENDER_API_SECRET`\* matches the
   `X-Render-Secret` header. The endpoint executes caller-supplied Python; keep it locked.
 - `CORS_EXTRA_ORIGINS` — comma-separated browser origins admitted on top of arxivisual.org/www/localhost:3000

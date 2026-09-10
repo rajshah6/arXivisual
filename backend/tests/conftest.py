@@ -8,6 +8,10 @@ socket-blocking fixture is tracked in the backlog under Testing & CI.)
 import os
 
 os.environ["LANGFUSE_TRACING_ENABLED"] = "false"
+# Product analytics (PostHog) and Application Insights are NO-OPs without
+# their env vars; make sure a developer's shell never switches them on here.
+os.environ.pop("POSTHOG_API_KEY", None)
+os.environ.pop("APPLICATIONINSIGHTS_CONNECTION_STRING", None)
 
 
 def make_fake_http_client(responses: dict):

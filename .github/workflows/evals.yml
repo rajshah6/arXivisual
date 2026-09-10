@@ -44,7 +44,7 @@ jobs:
       # run_evals.py also forces this before importing the pipeline.
       RENDER_MODE: modal
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # No rendering happens, but `uv sync` still builds manim's manimpango
       # from sdist on Linux (no manylinux wheels), which needs pango/cairo

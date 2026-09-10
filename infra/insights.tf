@@ -17,4 +17,10 @@ resource "azurerm_application_insights" "main" {
   location            = azurerm_resource_group.main.location
   workspace_id        = azurerm_log_analytics_workspace.main.id
   application_type    = "web"
+
+  # Cost fuse: request traces are sampled at 20% and app logs are not exported
+  # (OTEL_LOGS_EXPORTER=none on the apps — Container Apps already ships stdout
+  # to the same workspace), so 1 GB/day is far above normal and only bites if
+  # something starts flooding telemetry.
+  daily_data_cap_in_gb = 1
 }

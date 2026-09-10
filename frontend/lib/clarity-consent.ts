@@ -63,8 +63,14 @@ export function setClarityConsent(choice: ConsentChoice): void {
   signalConsent(choice);
 }
 
-/** Replay a previously stored choice (returning visitors), once per page load. */
+/**
+ * Once per page load, right after Clarity.init(): replay a stored choice, or
+ * — for a first-time visitor — signal "denied" so Clarity stays cookieless
+ * everywhere until Accept. Clarity's own default is "denied" only for
+ * EEA/UK/CH visitors (Consent Mode); this makes the bar's promise ("it sets
+ * cookies only if you accept") true for everyone, whatever the project
+ * setting says.
+ */
 export function applyStoredClarityConsent(): void {
-  const stored = getStoredConsent();
-  if (stored) signalConsent(stored);
+  signalConsent(getStoredConsent() ?? "denied");
 }

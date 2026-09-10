@@ -285,6 +285,12 @@ resource "azurerm_container_app" "api" {
         name  = "OTEL_TRACES_SAMPLER_ARG"
         value = "0.2"
       }
+      # App logs already reach the workspace as Container Apps console logs;
+      # the distro would otherwise ship every INFO record a second time.
+      env {
+        name  = "OTEL_LOGS_EXPORTER"
+        value = "none"
+      }
       # PostHog product events (paper_accepted here; completions on the worker).
       dynamic "env" {
         for_each = var.posthog_api_key != "" ? [1] : []
@@ -662,6 +668,12 @@ resource "azurerm_container_app" "worker" {
       env {
         name  = "OTEL_TRACES_SAMPLER_ARG"
         value = "0.2"
+      }
+      # App logs already reach the workspace as Container Apps console logs;
+      # the distro would otherwise ship every INFO record a second time.
+      env {
+        name  = "OTEL_LOGS_EXPORTER"
+        value = "none"
       }
       # PostHog product events (paper_completed / paper_failed_server).
       dynamic "env" {

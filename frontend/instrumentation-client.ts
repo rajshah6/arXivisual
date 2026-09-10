@@ -13,7 +13,13 @@ import { registerAnalytics } from "@/lib/analytics";
 import { CLARITY_PROJECT_ID, applyStoredClarityConsent } from "@/lib/clarity-consent";
 
 const POSTHOG_KEY = process.env.NEXT_PUBLIC_POSTHOG_KEY;
-const POSTHOG_UI_HOST = process.env.NEXT_PUBLIC_POSTHOG_HOST || "https://us.posthog.com";
+// NEXT_PUBLIC_POSTHOG_HOST is the UI/app host (https://us.posthog.com or
+// https://eu.posthog.com). PostHog's own docs use the same variable name for
+// the INGEST host (https://us.i.posthog.com); accept that spelling too by
+// dropping the ".i" segment, since capture always goes through /ingest here.
+const POSTHOG_UI_HOST = (process.env.NEXT_PUBLIC_POSTHOG_HOST || "https://us.posthog.com")
+  .replace(".i.posthog.com", ".posthog.com")
+  .replace(/\/+$/, "");
 
 if (POSTHOG_KEY) {
   posthog.init(POSTHOG_KEY, {

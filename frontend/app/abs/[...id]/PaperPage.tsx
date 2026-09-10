@@ -953,7 +953,7 @@ function ProcessingPill({
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-full bg-black/80 backdrop-blur-xl border border-white/[0.12] px-5 py-3 shadow-2xl shadow-black/50"
+      className="processing-pill fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-full bg-black/80 backdrop-blur-xl border border-white/[0.12] px-5 py-3 shadow-2xl shadow-black/50"
     >
       <span className="relative flex h-3 w-3">
         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white/30" />

@@ -65,11 +65,19 @@ def _get_client():
 
 def capture(event: str, distinct_id: str, properties: dict[str, Any] | None = None) -> None:
     """Queue one event. Does nothing when analytics is off; logs (never raises)
-    if the client misbehaves. Returns immediately — the send is asynchronous."""
+    if the client misbehaves. Returns immediately — the send is asynchronous.
+
+    Every server-side distinct_id is a pseudonymous, mostly one-off value (an
+    IP fingerprint, a job id), so ``$process_person_profile`` is forced off:
+    the events stay anonymous (cheaper, and they do not pollute PostHog's
+    persons view or its unique-user counts) while still joinable on their
+    properties."""
     if not enabled():
         return
+    props = dict(properties or {})
+    props.setdefault("$process_person_profile", False)
     try:
-        _get_client().capture(event, distinct_id=distinct_id, properties=dict(properties or {}))
+        _get_client().capture(event, distinct_id=distinct_id, properties=props)
     except Exception:
         logger.debug("PostHog capture failed for %s", event, exc_info=True)
 

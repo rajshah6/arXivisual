@@ -94,6 +94,15 @@ def configure() -> bool:
         configure_azure_monitor(enable_live_metrics=False)
     except Exception:
         logger.exception("Application Insights setup failed; continuing without it")
+        # The distro registers the global TracerProvider early (_setup_tracing)
+        # and may fail later (logging/instrumentation setup). If a real SDK
+        # provider is already global, Langfuse would adopt it — and with it
+        # Azure's exporter and sampler — so isolate it anyway.
+        if langfuse_enabled():
+            from opentelemetry import trace as otel_trace
+
+            if not isinstance(otel_trace.get_tracer_provider(), otel_trace.ProxyTracerProvider):
+                isolate_langfuse()
         return False
     _configured = True
     logger.info(

@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { motion } from "framer-motion";
 import { getStoredConsent, setClarityConsent, type ConsentChoice } from "@/lib/clarity-consent";
 
@@ -12,8 +12,9 @@ import { getStoredConsent, setClarityConsent, type ConsentChoice } from "@/lib/c
  * way. Either answer is remembered in localStorage and the bar stays hidden.
  * PostHog is cookieless by construction and needs no notice.
  *
- * Never blocks the page: a fixed strip at the bottom, no overlay, no focus
- * trap. Visibility comes through useSyncExternalStore so the server renders
+ * Never blocks the page: a fixed card at the bottom (bottom-right from the
+ * sm breakpoint so it does not cover the reader's processing pill), no
+ * overlay, no focus trap. Visibility comes through useSyncExternalStore so the server renders
  * nothing (no hydration mismatch) and no state is set inside an effect.
  */
 
@@ -32,6 +33,17 @@ function readServerOpen(): boolean {
 
 export function ConsentBar() {
   const open = useSyncExternalStore(subscribe, readOpen, readServerOpen);
+
+  // While the bar is up, <html data-consent-open> lets other fixed bottom
+  // elements move out of its way (globals.css lifts the reader's processing
+  // pill on small screens; on wider screens the bar sits bottom-right and the
+  // centred pill is not covered).
+  useEffect(() => {
+    if (!open) return;
+    document.documentElement.setAttribute("data-consent-open", "");
+    return () => document.documentElement.removeAttribute("data-consent-open");
+  }, [open]);
+
   if (!open) return null;
 
   function choose(choice: ConsentChoice) {
@@ -46,9 +58,9 @@ export function ConsentBar() {
       transition={{ duration: 0.4, delay: 0.8, ease: "easeOut" }}
       role="region"
       aria-label="Cookie notice"
-      className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex justify-center px-4 pb-4 sm:pb-6"
+      className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex justify-center px-4 pb-4 sm:justify-end sm:pb-6 sm:pr-6"
     >
-      <div className="pointer-events-auto flex w-full max-w-2xl flex-col gap-3 rounded-2xl border border-white/[0.08] bg-black/70 p-4 shadow-lg shadow-black/30 backdrop-blur-xl sm:flex-row sm:items-center sm:gap-5 sm:px-5">
+      <div className="pointer-events-auto flex w-full max-w-2xl flex-col gap-3 sm:max-w-md rounded-2xl border border-white/[0.08] bg-black/70 p-4 shadow-lg shadow-black/30 backdrop-blur-xl sm:flex-row sm:items-center sm:gap-5 sm:px-5">
         <p className="text-sm leading-relaxed text-white/50">
           We use Microsoft Clarity to see how the site is used (session replays,
           heatmaps). It sets cookies only if you accept.{" "}

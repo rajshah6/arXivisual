@@ -81,12 +81,12 @@ class TestCapture:
         analytics.capture("paper_accepted", "fp123", {"arxiv_id": "1706.03762", "path": "legacy"})
         assert fake_client.events == [
             ("paper_accepted", {"distinct_id": "fp123",
-                                "properties": {"arxiv_id": "1706.03762", "path": "legacy"}}),
+                                "properties": {"arxiv_id": "1706.03762", "path": "legacy", "$process_person_profile": False}}),
         ]
 
     def test_properties_default_to_empty_dict(self, fake_client):
         analytics.capture("paper_accepted", "fp123")
-        assert fake_client.events[0][1]["properties"] == {}
+        assert fake_client.events[0][1]["properties"] == {"$process_person_profile": False}
 
     def test_client_errors_never_propagate(self, monkeypatch):
         monkeypatch.setenv("POSTHOG_API_KEY", "phc_test")
@@ -202,7 +202,7 @@ async def test_process_emits_paper_accepted_with_fingerprint(client, fake_client
     assert fake_client.events == [
         ("paper_accepted", {
             "distinct_id": throttle.ip_fingerprint("203.0.113.9"),
-            "properties": {"arxiv_id": "2101.00001", "job_id": job_id, "path": "legacy"},
+            "properties": {"arxiv_id": "2101.00001", "job_id": job_id, "path": "legacy", "$process_person_profile": False},
         }),
     ]
 

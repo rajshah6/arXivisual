@@ -8,6 +8,7 @@ import { ShardField } from "@/components/ui/glass-shard";
 import { GlassCard } from "@/components/ui/glass-card";
 import { CardSkeleton } from "@/components/LoadingState";
 import { listPapers } from "@/lib/api";
+import { track } from "@/lib/analytics";
 import type { PaperSummary } from "@/lib/types";
 
 type ExploreState =
@@ -194,6 +195,7 @@ function PaperCard({ paper, index }: { paper: PaperSummary; index: number }) {
       <Link
         href={`/abs/${encodeURIComponent(paper.paper_id)}`}
         prefetch={false}
+        onClick={() => track("paper_open", { arxiv_id: paper.paper_id, position: index })}
         className="block h-full"
       >
         <GlassCard animate={false} className="h-full p-6 flex flex-col">

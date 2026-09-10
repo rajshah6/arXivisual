@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { ConsentBar } from "@/components/ConsentBar";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -11,6 +12,11 @@ const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
 });
+
+// Microsoft Clarity sets cookies (after consent); the bar is the notice.
+// Inlined at build time from the NEXT_PUBLIC_CLARITY_PROJECT_ID build arg —
+// unset (local dev, CI) means no Clarity and no bar.
+const CLARITY_ENABLED = Boolean(process.env.NEXT_PUBLIC_CLARITY_PROJECT_ID);
 
 const jsonLd = {
   "@context": "https://schema.org",
@@ -137,6 +143,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-dvh bg-black text-[#e8e8e8]`}
       >
         <div className="min-h-dvh">{children}</div>
+        {CLARITY_ENABLED ? <ConsentBar /> : null}
       </body>
     </html>
   );

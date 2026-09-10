@@ -24,6 +24,11 @@ langfuse_secret_key = "sk-lf-REPLACE_ME"
 acr_admin_password = "REPLACE_ME"
 turnstile_secret_key = "" # optional: Cloudflare Turnstile secret; empty = human verification off
 ip_hash_secret       = "" # optional: HMAC key for IP fingerprints in logs; empty = env not set (unkeyed hash)
+posthog_api_key      = "" # optional: PostHog project token (phc_...); empty = no product events
+# posthog_host = "https://us.i.posthog.com"   # EU cloud: https://eu.i.posthog.com
+
+# Application Insights needs no value here: its connection string is read off
+# azurerm_application_insights.main (insights.tf) and injected as a secret.
 
 # Frontend image tag the arxivisual-web app is created (or replaced) with.
 # Default "latest" is fine once the first 'Deploy frontend' run has built an

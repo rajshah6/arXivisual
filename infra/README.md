@@ -21,12 +21,13 @@ directly. Infra changes go through `plan`/`apply` here, not ad-hoc `az`.
 | `openai.tf` | Azure OpenAI account `arxivisual-openai` + deployments `gpt-5-mini` (2025-08-07, GlobalStandard 250), `gpt-4o-mini-tts` (2025-12-15, GlobalStandard 50), `gpt-5.6-sol` (2026-07-09, GlobalStandard 250) |
 | `database.tf` | Postgres flexible server `arxivisual-db` (**westus3**, B1ms, PG16, 32GB); databases `arxiviz`, `temporal`, `temporal_visibility`; `azure.extensions=BTREE_GIN`; allow-Azure-services firewall rule |
 | `container_apps.tf` | Log Analytics workspace, managed environment `arxivisual-api-env`, and the three backend apps: `arxivisual-api` (external HTTP :8000), `arxivisual-temporal` (internal TCP :7233), `arxivisual-worker` (no ingress) |
+| `insights.tf` | Application Insights `arxivisual-insights` (workspace-based, on the Log Analytics workspace above, type `web`, default retention). Its connection string is injected into `arxivisual-api` and `arxivisual-worker` as the `appinsights-connection-string` secret → `APPLICATIONINSIGHTS_CONNECTION_STRING`, with `OTEL_TRACES_SAMPLER=microsoft.fixed_percentage` + `OTEL_TRACES_SAMPLER_ARG=0.2` (20% of traces). Output `application_insights_app_id` |
 | `frontend.tf` | The Next.js frontend `arxivisual-web` (external HTTP :3000, 0.25 vCPU / 0.5 Gi, 1–3 replicas, `/healthz` probes), its user-assigned identity + AcrPull role, and the `arxivisual.org` / `www.arxivisual.org` custom domains with managed certificates |
 | `budgets.tf` | Subscription budget `arxivisual-monthly` ($300, 50%/90%/forecast-100% alerts) and billing-account budget `MonthlyReset` ($5) via **azapi** (azurerm has no billing-account budget resource) |
 | `github_oidc.tf` | Entra app `arxivisual-github-deploy`, its service principal, the GitHub OIDC federated credential (`repo:rajshah6/arXivisual:ref:refs/heads/main`), and its Contributor role on the RG |
 | `state.tf` | The `arxivisualtfstate` storage account + `tfstate` container (the backend manages state *in* it and Terraform also *manages* it) |
 
-Not managed here: Cloudflare R2 (object storage), Cloudflare Turnstile, Langfuse, and DNS (Porkbun — the records `frontend.tf` needs are listed in [docs/DEPLOY.md](../docs/DEPLOY.md)).
+Not managed here: Cloudflare R2 (object storage), Cloudflare Turnstile, Langfuse, PostHog (only its project token is passed through, see Secrets), and DNS (Porkbun — the records `frontend.tf` needs are listed in [docs/DEPLOY.md](../docs/DEPLOY.md)).
 
 ## Bootstrap history
 
@@ -83,6 +84,19 @@ attribute reads a `sensitive = true` variable (see `variables.tf`):
 `langfuse_secret_key`, `acr_admin_password`, and optionally `turnstile_secret_key` (empty = Turnstile off) and `ip_hash_secret`
 (the HMAC key behind the IP fingerprints in admission logs; empty = `IP_HASH_SECRET` not set). Both are
 set on the live API app; leave either empty here and an apply removes it.
+`posthog_api_key` (empty = no `POSTHOG_API_KEY` / `POSTHOG_HOST` env on either
+app, and the backend emits no product events) follows the same pattern, with
+`posthog_host` (default US cloud) beside it.
+
+The Application Insights connection string is **not** a variable: it is read
+off `azurerm_application_insights.main` and written to the API and worker apps
+as the `appinsights-connection-string` secret. Expected first plan for
+`insights.tf`: `+ azurerm_application_insights.main`, then in-place updates of
+`arxivisual-api` and `arxivisual-worker` adding that secret plus the
+`APPLICATIONINSIGHTS_CONNECTION_STRING`, `OTEL_TRACES_SAMPLER` and
+`OTEL_TRACES_SAMPLER_ARG` env vars (appended last in each container, so the
+existing env blocks do not shift). Leave the connection string out of any
+`az containerapp update` — the next apply would re-submit it anyway.
 
 `web_image_tag` (default `latest`) names the `arxivisual-web` image the
 frontend app is created or replaced with. Every deploy-frontend run tags its

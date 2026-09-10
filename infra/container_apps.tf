@@ -107,6 +107,19 @@ resource "azurerm_container_app" "api" {
       value = var.ip_hash_secret
     }
   }
+  # Application Insights — read off the resource (insights.tf), not a variable.
+  secret {
+    name  = "appinsights-connection-string"
+    value = azurerm_application_insights.main.connection_string
+  }
+  # PostHog project token (product events); absent = analytics off.
+  dynamic "secret" {
+    for_each = var.posthog_api_key != "" ? [1] : []
+    content {
+      name  = "posthog-api-key"
+      value = var.posthog_api_key
+    }
+  }
 
   template {
     min_replicas = 1
@@ -253,6 +266,39 @@ resource "azurerm_container_app" "api" {
       env {
         name  = "TEMPORAL_TLS"
         value = "1"
+      }
+
+      # Appended (the provider diffs env blocks by position). Application
+      # Insights: requests, dependencies, exceptions and logs from the API via
+      # the Azure Monitor OpenTelemetry distro (backend/telemetry.py). Fixed
+      # 20% trace sampling — the sampler name matters: without it the distro
+      # reads OTEL_TRACES_SAMPLER_ARG as traces per second.
+      env {
+        name        = "APPLICATIONINSIGHTS_CONNECTION_STRING"
+        secret_name = "appinsights-connection-string"
+      }
+      env {
+        name  = "OTEL_TRACES_SAMPLER"
+        value = "microsoft.fixed_percentage"
+      }
+      env {
+        name  = "OTEL_TRACES_SAMPLER_ARG"
+        value = "0.2"
+      }
+      # PostHog product events (paper_accepted here; completions on the worker).
+      dynamic "env" {
+        for_each = var.posthog_api_key != "" ? [1] : []
+        content {
+          name        = "POSTHOG_API_KEY"
+          secret_name = "posthog-api-key"
+        }
+      }
+      dynamic "env" {
+        for_each = var.posthog_api_key != "" ? [1] : []
+        content {
+          name  = "POSTHOG_HOST"
+          value = var.posthog_host
+        }
       }
     }
   }
@@ -454,6 +500,19 @@ resource "azurerm_container_app" "worker" {
     name  = "keda-pg-conn"
     value = "postgresql://rabidcheese9:${urlencode(var.postgres_admin_password)}@${azurerm_postgresql_flexible_server.main.fqdn}:5432/arxiviz?sslmode=require"
   }
+  # Application Insights — read off the resource (insights.tf), not a variable.
+  secret {
+    name  = "appinsights-connection-string"
+    value = azurerm_application_insights.main.connection_string
+  }
+  # PostHog project token (product events); absent = analytics off.
+  dynamic "secret" {
+    for_each = var.posthog_api_key != "" ? [1] : []
+    content {
+      name  = "posthog-api-key"
+      value = var.posthog_api_key
+    }
+  }
 
   template {
     # KEDA autoscaling off durable queue depth: papers queue on Temporal, and
@@ -586,6 +645,38 @@ resource "azurerm_container_app" "worker" {
       env {
         name  = "VISUAL_QA_REPAIR_MODEL"
         value = "gpt-5-mini"
+      }
+
+      # Appended after the two above for the same positional reason.
+      # Application Insights for the worker (outbound dependencies, exceptions,
+      # logs; there are no server spans here). Same fixed 20% sampling as the
+      # API; Langfuse traces are on their own provider and unaffected.
+      env {
+        name        = "APPLICATIONINSIGHTS_CONNECTION_STRING"
+        secret_name = "appinsights-connection-string"
+      }
+      env {
+        name  = "OTEL_TRACES_SAMPLER"
+        value = "microsoft.fixed_percentage"
+      }
+      env {
+        name  = "OTEL_TRACES_SAMPLER_ARG"
+        value = "0.2"
+      }
+      # PostHog product events (paper_completed / paper_failed_server).
+      dynamic "env" {
+        for_each = var.posthog_api_key != "" ? [1] : []
+        content {
+          name        = "POSTHOG_API_KEY"
+          secret_name = "posthog-api-key"
+        }
+      }
+      dynamic "env" {
+        for_each = var.posthog_api_key != "" ? [1] : []
+        content {
+          name  = "POSTHOG_HOST"
+          value = var.posthog_host
+        }
       }
     }
   }

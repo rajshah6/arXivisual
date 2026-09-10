@@ -52,3 +52,8 @@ output "environment_static_ip" {
   description = "Static inbound IP of the environment — the apex A record for arxivisual.org points here."
   value       = azurerm_container_app_environment.main.static_ip_address
 }
+
+output "application_insights_app_id" {
+  description = "App ID of the arxivisual-insights Application Insights component (non-sensitive; the connection string stays inside the container app secrets)."
+  value       = azurerm_application_insights.main.app_id
+}

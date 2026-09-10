@@ -208,3 +208,11 @@ body {
     transition: none !important;
   }
 }
+
+/* The cookie consent bar (components/ConsentBar.tsx) spans the bottom on small
+   screens; lift the reader's processing pill above it while it is open. */
+@media (max-width: 639px) {
+  html[data-consent-open] .processing-pill {
+    bottom: 8.5rem;
+  }
+}

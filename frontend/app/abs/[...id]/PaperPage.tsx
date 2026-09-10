@@ -14,6 +14,7 @@ import { ShardField } from "@/components/ui/glass-shard";
 import type { Paper, ProcessingStatus } from "@/lib/types";
 import { DEMO_PAPER_IDS, getDemoPaper } from "@/lib/mock-data";
 import { normalizeArxivId } from "@/lib/arxiv-id";
+import { track } from "@/lib/analytics";
 import {
   getPaper,
   processArxivPaper,
@@ -31,6 +32,11 @@ const DEMO_STEPS = [
   { label: "Generating animations", at: 0.6 },
   { label: "Rendering videos", at: 0.8 },
 ];
+
+/** Sections with a playable video — same meaning as the gallery's visualization_count. */
+function countVideos(paper: Paper): number {
+  return paper.sections.filter((s) => s.video_url).length;
+}
 
 type PageState =
   | { type: "loading" }
@@ -208,6 +214,7 @@ export function PaperPage({
     setStartingJob(true);
 
     try {
+      track("paper_start", { arxiv_id: arxivId });
       const response = await processArxivPaper(arxivId, turnstileToken);
       setJobId(response.job_id);
       setState({
@@ -309,9 +316,11 @@ export function PaperPage({
           clearInterval(pollInterval);
           const paper = await getPaper(arxivId);
           if (paper) {
+            track("paper_ready", { arxiv_id: arxivId, videos: countVideos(paper) });
             notifier.fire("Your paper is ready", "The visualizations finished rendering — come take a look.");
             setState({ type: "ready", paper });
           } else {
+            track("paper_failed", { arxiv_id: arxivId, reason: "completed_but_paper_missing" });
             setState({ type: "error", message: "Paper processing completed but paper not found" });
           }
         } else if (response.status === "failed") {
@@ -319,6 +328,12 @@ export function PaperPage({
           // The paper text often survives a failed pipeline (e.g. all renders
           // failed) — show what exists instead of a dead end.
           const paper = await getPaper(arxivId).catch(() => null);
+          // partial: the text survived (reader shows it), only videos failed.
+          track("paper_failed", {
+            arxiv_id: arxivId,
+            reason: response.error || "unknown",
+            partial: paper !== null,
+          });
           if (paper) {
             notifier.fire("Paper processed with problems", "The text is readable, but some visualizations failed.");
             setState({
@@ -938,7 +953,7 @@ function ProcessingPill({
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-full bg-black/80 backdrop-blur-xl border border-white/[0.12] px-5 py-3 shadow-2xl shadow-black/50"
+      className="processing-pill fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-full bg-black/80 backdrop-blur-xl border border-white/[0.12] px-5 py-3 shadow-2xl shadow-black/50"
     >
       <span className="relative flex h-3 w-3">
         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white/30" />

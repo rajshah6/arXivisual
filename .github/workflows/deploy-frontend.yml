@@ -13,6 +13,13 @@
 #   NEXT_PUBLIC_TURNSTILE_SITE_KEY  Cloudflare Turnstile site key (public;
 #                                   unset → no widget, backend must then have
 #                                   no secret either — see docs/DEPLOY.md)
+#   NEXT_PUBLIC_POSTHOG_KEY         PostHog project token, phc_... (public;
+#                                   unset → no product analytics)
+#   NEXT_PUBLIC_POSTHOG_HOST        PostHog UI host, https://us.posthog.com or
+#                                   https://eu.posthog.com (picks the ingest
+#                                   region; unset → US)
+#   NEXT_PUBLIC_CLARITY_PROJECT_ID  Microsoft Clarity project id (public;
+#                                   unset → no Clarity, no consent bar)
 #
 # Every build is tagged gh-<sha> (what gets rolled) AND latest (what Terraform
 # creates/replaces the app from — infra/frontend.tf); never prune `latest`.
@@ -72,6 +79,9 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
           NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ vars.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}
+          NEXT_PUBLIC_POSTHOG_KEY: ${{ vars.NEXT_PUBLIC_POSTHOG_KEY }}
+          NEXT_PUBLIC_POSTHOG_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST }}
+          NEXT_PUBLIC_CLARITY_PROJECT_ID: ${{ vars.NEXT_PUBLIC_CLARITY_PROJECT_ID }}
         run: |
           az acr build -r "$ACR_NAME" \
             -t "$IMAGE_NAME:gh-${{ github.sha }}" \
@@ -80,6 +90,9 @@ jobs:
             --timeout 1800 \
             --build-arg "NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL" \
             --build-arg "NEXT_PUBLIC_TURNSTILE_SITE_KEY=$NEXT_PUBLIC_TURNSTILE_SITE_KEY" \
+            --build-arg "NEXT_PUBLIC_POSTHOG_KEY=$NEXT_PUBLIC_POSTHOG_KEY" \
+            --build-arg "NEXT_PUBLIC_POSTHOG_HOST=$NEXT_PUBLIC_POSTHOG_HOST" \
+            --build-arg "NEXT_PUBLIC_CLARITY_PROJECT_ID=$NEXT_PUBLIC_CLARITY_PROJECT_ID" \
             --build-arg "APP_COMMIT_SHA=${{ github.sha }}" \
             frontend
 

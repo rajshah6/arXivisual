@@ -444,11 +444,13 @@ async def update_render_progress(params: ProgressUpdate) -> None:
 @activity.defn
 async def finalize_job(params: ProgressUpdate) -> None:
     """Write the honest terminal status (completed/failed + failure counts)."""
+    import analytics
     from db import queries
     from db.connection import async_session_maker
     from jobs.worker import resolve_terminal_job_status
 
     status, step, error = resolve_terminal_job_status(params.completed, params.total)
+    job = None
     async with async_session_maker() as db:
         await queries.update_job_status(
             db, params.job_id,
@@ -475,6 +477,19 @@ async def finalize_job(params: ProgressUpdate) -> None:
                 if retired:
                     logger.info("Superseded %d previous-run visualization(s) for %s", retired, job.paper_id)
 
+    # Product event, after every DB write and outside the session: analytics
+    # can never fail (or retry) a finalize. distinct_id is the job id — no
+    # client identity reaches the worker (see analytics.job_outcome).
+    analytics.job_outcome(
+        job_id=params.job_id,
+        arxiv_id=job.paper_id if job else None,
+        status=status,
+        videos_complete=params.completed,
+        videos_total=params.total,
+        created_at=job.created_at if job else None,
+        error=error,
+    )
+
 
 @activity.defn
 async def record_render_failure(params: RenderInput) -> None:
@@ -494,10 +509,12 @@ async def record_render_failure(params: RenderInput) -> None:
 @activity.defn
 async def mark_job_failed(params: FailInput) -> None:
     """Terminal failure marker for unrecoverable workflow errors."""
+    import analytics
     from db import queries
     from db.connection import async_session_maker
 
     reason = (params.reason or "").strip()[:500]
+    job = None
     async with async_session_maker() as db:
         await queries.update_job_status(
             db, params.job_id,
@@ -515,3 +532,15 @@ async def mark_job_failed(params: FailInput) -> None:
         )
         if stranded:
             logger.info("Marked %d stranded visualization(s) failed for %s", stranded, params.arxiv_id)
+
+    # Product event (distinct_id = job id; no client identity here). The job
+    # row's counters are the best available render tally for a dead run.
+    analytics.job_outcome(
+        job_id=params.job_id,
+        arxiv_id=params.arxiv_id,
+        status="failed",
+        videos_complete=job.sections_completed if job else None,
+        videos_total=job.sections_total if job else None,
+        created_at=job.created_at if job else None,
+        error=reason or "Pipeline failed after retries",
+    )

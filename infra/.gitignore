@@ -18,3 +18,4 @@ tfplan*
 tf_env.sh
 .cutover-wizard.env
 cutover-wizard.sh
+tf.sh

@@ -55,14 +55,14 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full walkthrough.
 | Database | PostgreSQL in production, SQLite locally (SQLAlchemy async) |
 | Video storage | Cloudflare R2 (S3-compatible), local filesystem in dev |
 | Observability | Langfuse |
-| Hosting | Azure Container Apps (backend), Vercel (frontend) |
+| Hosting | Azure Container Apps (backend and frontend, one environment, Terraform-managed) |
 | CI | GitHub Actions |
 
 ## Quick Start
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 20.9+ (Next.js 16 minimum)
 - Python 3.11+ and [uv](https://docs.astral.sh/uv/getting-started/installation/)
 - FFmpeg, Cairo, Pango (for Manim); a LaTeX distribution for `MathTex` scenes
 - An Azure OpenAI resource with a GPT-5-family deployment (Dedalus Labs works as a legacy fallback provider)
@@ -104,7 +104,7 @@ The suite is fully offline — CI runs it against dummy provider credentials on 
 
 ## Deployment
 
-The backend ships as a Docker image to **Azure Container Apps**; the frontend auto-deploys to **Vercel** from `main`. See [docs/DEPLOY.md](docs/DEPLOY.md) for the full procedure, environment reference, and rollback steps.
+Both halves ship as Docker images to **Azure Container Apps** in the same environment: the FastAPI backend (`arxivisual-api`) and the Next.js server (`arxivisual-web`, SSR — no static export, no Vercel). Deploys are manual GitHub Actions runs (`deploy-backend.yml`, `deploy-frontend.yml`); infrastructure is Terraform in [infra/](infra/). See [docs/DEPLOY.md](docs/DEPLOY.md) for the full procedure, environment reference, DNS, and rollback steps.
 
 ## Creators
 

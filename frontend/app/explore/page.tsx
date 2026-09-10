@@ -189,8 +189,8 @@ function PaperCard({ paper, index }: { paper: PaperSummary; index: number }) {
       transition={{ duration: 0.4, delay: Math.min(index * 0.05, 0.4), ease: "easeOut" }}
     >
       {/* prefetch={false}: each card entering the viewport otherwise fires two
-          RSC prefetches of the server-rendered paper route — ~300-1,300 Vercel
-          edge requests per gallery visit (measured 313 for one scroll). */}
+          RSC prefetches of the server-rendered paper route — ~300-1,300 extra
+          server requests per gallery visit (measured 313 for one scroll). */}
       <Link
         href={`/abs/${encodeURIComponent(paper.paper_id)}`}
         prefetch={false}

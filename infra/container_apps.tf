@@ -228,6 +228,18 @@ resource "azurerm_container_app" "api" {
         }
       }
 
+      # Frontend hosts beyond the fixed production origins (api/cors.py) and
+      # Turnstile hostnames beyond the defaults (api/turnstile.py): the web
+      # app's own Container Apps FQDN, so it works before and after DNS moves.
+      env {
+        name  = "CORS_EXTRA_ORIGINS"
+        value = "https://${azurerm_container_app.web.ingress[0].fqdn}"
+      }
+      env {
+        name  = "TURNSTILE_ALLOWED_HOSTNAMES"
+        value = "arxivisual.org,www.arxivisual.org,${azurerm_container_app.web.ingress[0].fqdn}"
+      }
+
       env {
         name  = "USE_TEMPORAL"
         value = "1"

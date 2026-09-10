@@ -1,14 +1,16 @@
 # arXivisual Infrastructure (Terraform)
 
 Terraform codification of the **live, production** arXivisual Azure
-infrastructure. Everything here was created by hand (az CLI / portal / GitHub
-Actions) and is being adopted into Terraform via `import` blocks so that the
-infra is reproducible and reviewable.
+infrastructure. The original estate was created by hand (az CLI / portal /
+GitHub Actions) and adopted into Terraform via `import` blocks on 2026-08-26;
+new resources (e.g. the frontend in `frontend.tf`) are created by Terraform
+directly. Infra changes go through `plan`/`apply` here, not ad-hoc `az`.
 
 > **WARNING: `terraform apply` touches production.** The Container Apps serve
 > arxivisual.org right now. Always run `terraform plan` first, read every diff,
-> and only apply when the plan matches the "Known first-apply diffs" list below
-> (plus whatever change you intended).
+> and only apply when the plan contains nothing beyond the change you intended
+> (the estate is fully adopted; a clean plan is "No changes", and unexpected
+> diffs are drift from ad-hoc `az` commands — see "Drift" below).
 
 ## What this manages
 
@@ -18,13 +20,13 @@ infra is reproducible and reviewable.
 | `registry.tf` | ACR `ca82c08e2eadacr` (Basic, admin enabled) + AcrPull role for the API app's system identity |
 | `openai.tf` | Azure OpenAI account `arxivisual-openai` + deployments `gpt-5-mini` (2025-08-07, GlobalStandard 250), `gpt-4o-mini-tts` (2025-12-15, GlobalStandard 50), `gpt-5.6-sol` (2026-07-09, GlobalStandard 250) |
 | `database.tf` | Postgres flexible server `arxivisual-db` (**westus3**, B1ms, PG16, 32GB); databases `arxiviz`, `temporal`, `temporal_visibility`; `azure.extensions=BTREE_GIN`; allow-Azure-services firewall rule |
-| `container_apps.tf` | Log Analytics workspace, managed environment `arxivisual-api-env`, and the three apps: `arxivisual-api` (external HTTP :8000), `arxivisual-temporal` (internal TCP :7233), `arxivisual-worker` (no ingress) |
+| `container_apps.tf` | Log Analytics workspace, managed environment `arxivisual-api-env`, and the three backend apps: `arxivisual-api` (external HTTP :8000), `arxivisual-temporal` (internal TCP :7233), `arxivisual-worker` (no ingress) |
+| `frontend.tf` | The Next.js frontend `arxivisual-web` (external HTTP :3000, 0.25 vCPU / 0.5 Gi, 1–3 replicas, `/healthz` probes), its user-assigned identity + AcrPull role, and the `arxivisual.org` / `www.arxivisual.org` custom domains with managed certificates |
 | `budgets.tf` | Subscription budget `arxivisual-monthly` ($300, 50%/90%/forecast-100% alerts) and billing-account budget `MonthlyReset` ($5) via **azapi** (azurerm has no billing-account budget resource) |
 | `github_oidc.tf` | Entra app `arxivisual-github-deploy`, its service principal, the GitHub OIDC federated credential (`repo:rajshah6/arXivisual:ref:refs/heads/main`), and its Contributor role on the RG |
 | `state.tf` | The `arxivisualtfstate` storage account + `tfstate` container (the backend manages state *in* it and Terraform also *manages* it) |
-| `imports.tf` | One `import` block per resource above |
 
-Not managed here: Vercel (frontend), Cloudflare R2 (object storage), Langfuse.
+Not managed here: Cloudflare R2 (object storage), Cloudflare Turnstile, Langfuse, and DNS (Porkbun — the records `frontend.tf` needs are listed in [docs/DEPLOY.md](../docs/DEPLOY.md)).
 
 ## Bootstrap history
 
@@ -62,7 +64,7 @@ Provider auth is Azure CLI (`az login`) for azurerm, azuread, and azapi.
 cd infra
 terraform init                       # backend + providers
 terraform validate
-terraform plan                       # review! see "Known first-apply diffs"
+terraform plan                       # review! expect only the change you intended
 terraform apply                      # ONLY after the plan is fully understood
 ```
 
@@ -81,6 +83,12 @@ attribute reads a `sensitive = true` variable (see `variables.tf`):
 `langfuse_secret_key`, `acr_admin_password`, and optionally `turnstile_secret_key` (empty = Turnstile off) and `ip_hash_secret`
 (the HMAC key behind the IP fingerprints in admission logs; empty = `IP_HASH_SECRET` not set). Both are
 set on the live API app; leave either empty here and an apply removes it.
+
+`web_image_tag` (default `latest`) names the `arxivisual-web` image the
+frontend app is created or replaced with. Every deploy-frontend run tags its
+build `gh-<sha>` and `latest`, so the default always exists once the first
+build has run (`gh workflow run deploy-frontend.yml -f roll=false` on `main`);
+after creation Terraform ignores the image. Never prune the `latest` tag.
 
 Supply them either as environment variables:
 
@@ -101,24 +109,50 @@ DB password or the first apply will change it out from under the running apps.
 
 ## Import-block lifecycle
 
-`imports.tf` maps every existing Azure resource ID to its Terraform address.
-`terraform plan` shows them as "N to import"; the first successful
-`terraform apply` records them in state. After that first apply the import
-blocks are inert and `imports.tf` can be deleted in a follow-up commit.
+The original estate was adopted with one `import` block per resource
+(`imports.tf`); that first apply has happened and the file was deleted. New
+resources (e.g. `frontend.tf`) are created by Terraform directly.
 
-## Known first-apply diffs
+## Frontend bootstrap (two applies)
 
-The verified plan is: **26 to import, 0 to add, 5 to change, 0 to destroy**
-(see `PLAN_SNAPSHOT.txt`). No replacements, no destroys. The five in-place
-updates are benign:
+`frontend.tf` is created in two steps because Terraform cannot see Porkbun:
 
-| Resource | Diff | Why it's benign |
-|---|---|---|
-| all 3 container apps | `- secret` / `+ secret` blocks | The ACA API never returns secret values, so imported state has none; first apply rewrites the identical values from the vars. |
-| `arxivisual-temporal` | probe `timeout 0 -> 1`, `success_count_threshold 0 -> 1` | Platform probe defaults made explicit; ingress is declared as the live http2 transport (gRPC via envoy TLS on :443). |
-| `arxivisual-temporal` | probe `timeout 0 -> 1`, readiness `success_count_threshold 0 -> 1` | The live probes omit these fields; 1/1 are the platform defaults already in effect, now written explicitly. |
-| `workspace-arxivisualrg2OvU` | `+ local_authentication_enabled = true` | API does not return the field; `true` is the current live behavior (local auth was never disabled). |
-| `arxivisual-db` | `+ administrator_password` | ARM never returns the password; the first apply re-submits `var.postgres_admin_password`. Supply the current live password. |
+1. Build the image on `main` (`gh workflow run deploy-frontend.yml -f roll=false`),
+   then `terraform apply` with the default `web_image_tag = "latest"` (or a
+   `gh-<sha>`) and the default `web_custom_domains_enabled = false`. Expect:
+   `+ azurerm_user_assigned_identity.web`, `+ azurerm_role_assignment.web_acr_pull`,
+   `+ time_sleep.web_acr_pull` (90 s RBAC propagation wait), `+ azurerm_container_app.web`, and
+   two new env vars on `arxivisual-api` (`CORS_EXTRA_ORIGINS`,
+   `TURNSTILE_ALLOWED_HOSTNAMES`). Anything else in the plan is drift from
+   `az containerapp update --set-env-vars` runs on the API app — read it
+   before applying. If the app create fails with an ACR `UNAUTHORIZED` image
+   pull, RBAC had not propagated yet: wait a few minutes and re-run apply.
+2. Create the four records from `terraform output web_dns_records`, wait for
+   them to resolve, apply with `web_custom_domains_enabled = true`. Expect:
+   `+ azurerm_container_app_custom_domain.web["apex"|"www"]`,
+   `+ azurerm_container_app_environment_managed_certificate.web[...]`,
+   `+ azapi_update_resource.web_domain_binding[0]`. The certificate step waits
+   for issuance (minutes; 30-minute timeout).
+
+The cut-over order, DNS rules and verification live in
+[docs/DEPLOY.md](../docs/DEPLOY.md).
+
+## Drift and the (historical) first-apply diffs
+
+The estate was adopted on 2026-08-26 (`26 imported, 0 added, 4 changed, 0
+destroyed`; the post-apply plan was "No changes", see `PLAN_SNAPSHOT.txt`).
+Since then Terraform owns everything here, so the expected plan is "No
+changes" plus whatever you are deliberately changing.
+
+Known sources of drift: env vars set on the API app with `az containerapp
+update --set-env-vars` (admission-control caps, secrets) that were never
+mirrored into `container_apps.tf`. A plan will offer to revert them to the
+Terraform values — reconcile the `.tf` file first, then apply. The same
+benign diffs the first apply showed can reappear after manual edits: secret
+blocks re-submitted (the API never returns secret values), probe timeouts and
+`success_count_threshold` defaults made explicit, and `administrator_password`
+on `arxivisual-db` (ARM never returns it; supply the *current* password or the
+apply changes it out from under the running apps).
 
 Anything on a plan beyond this list (or beyond an intentional change) should
 be treated as a red flag - stop and investigate before applying.

@@ -14,7 +14,7 @@ Include steps to reproduce and the impact you believe the issue has. We'll ackno
 - The backend API (the arXivisual API deployed on Azure Container Apps)
 - The frontend at [arxivisual.org](https://www.arxivisual.org)
 
-Out of scope: denial of service via volume alone (processing papers is intentionally expensive), and issues in third-party services we depend on (arXiv, Azure, Vercel, Cloudflare, Langfuse) — report those upstream.
+Out of scope: denial of service via volume alone (processing papers is intentionally expensive), and issues in third-party services we depend on (arXiv, Azure, Cloudflare, Langfuse) — report those upstream.
 
 ## Notes for Researchers
 

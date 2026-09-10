@@ -31,6 +31,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
+from api.cors import allowed_origins
 from api.routes import router as api_router
 from db import init_db
 
@@ -57,17 +58,12 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Configure CORS for frontend development
+# CORS: the production hosts plus CORS_EXTRA_ORIGINS (see api/cors.py). The
+# frontend is a Container App in this environment, so there are no per-PR
+# preview hosts to admit any more.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://arxivisual.org",
-        "https://www.arxivisual.org",
-        "http://localhost:3000",  # local frontend dev
-    ],
-    # This project's Vercel preview deploys only — not every *.vercel.app site
-    # (which any Vercel user controls). Anchored end-to-end via fullmatch.
-    allow_origin_regex=r"https://ar-xivisual-[a-z0-9-]+\.vercel\.app",
+    allow_origins=allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

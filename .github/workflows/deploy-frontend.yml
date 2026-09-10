@@ -1,0 +1,114 @@
+# Manual frontend deploy: build the Next.js image in ACR, roll the Container
+# App, and wait until the NEW revision is the one answering.
+#
+# Same OIDC identity and conventions as deploy-backend.yml (see its header for
+# the one-time Entra setup); no on:push trigger on purpose.
+#
+# Build-time configuration lives in GitHub *repository variables* (Settings →
+# Secrets and variables → Actions → Variables, or `gh variable set NAME`):
+#
+#   NEXT_PUBLIC_API_URL             backend origin the browser calls
+#                                   (unset → frontend/lib/api.ts falls back to
+#                                   the Azure Container Apps API URL)
+#   NEXT_PUBLIC_TURNSTILE_SITE_KEY  Cloudflare Turnstile site key (public;
+#                                   unset → no widget, backend must then have
+#                                   no secret either — see docs/DEPLOY.md)
+#
+# Every build is tagged gh-<sha> (what gets rolled) AND latest (what Terraform
+# creates/replaces the app from — infra/frontend.tf); never prune `latest`.
+#
+# NEXT_PUBLIC_* values are inlined into the JS bundles by `next build`, which is
+# why they are build args here and not container env vars. They are public by
+# definition (every visitor's browser has them) and appear in ACR build logs —
+# never pass a secret through --build-arg.
+#
+# Do NOT add `environment:` to the job: that changes the OIDC subject to
+# repo:...:environment:<name>, which the federated credential (ref:refs/heads/main)
+# does not match.
+
+name: Deploy frontend
+
+on:
+  workflow_dispatch:
+    inputs:
+      roll:
+        description: "Roll the Container App to the new image (off = build only, e.g. before the app exists)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: deploy-frontend
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  ACR_NAME: ca82c08e2eadacr
+  IMAGE_NAME: arxivisual-web
+  APP_NAME: arxivisual-web
+  RESOURCE_GROUP: arxivisual-rg
+  HEALTH_URL: https://arxivisual-web.purplepond-ac9e2dc5.eastus2.azurecontainerapps.io/healthz
+
+jobs:
+  deploy:
+    name: Build, roll, verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Context = frontend/ (its .dockerignore is honored when the CLI packs
+      # the upload). Quick builds have no documented timeout default (on-demand
+      # tasks default to 600 s), so set one that covers a cold `next build`.
+      - name: Build image in ACR
+        env:
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+          NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ vars.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}
+        run: |
+          az acr build -r "$ACR_NAME" \
+            -t "$IMAGE_NAME:gh-${{ github.sha }}" \
+            -t "$IMAGE_NAME:latest" \
+            --platform linux/amd64 \
+            --timeout 1800 \
+            --build-arg "NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL" \
+            --build-arg "NEXT_PUBLIC_TURNSTILE_SITE_KEY=$NEXT_PUBLIC_TURNSTILE_SITE_KEY" \
+            --build-arg "APP_COMMIT_SHA=${{ github.sha }}" \
+            frontend
+
+      - name: Roll Container App to the new image
+        if: ${{ inputs.roll }}
+        run: |
+          az containerapp update \
+            -n "$APP_NAME" -g "$RESOURCE_GROUP" \
+            --image "$ACR_NAME.azurecr.io/$IMAGE_NAME:gh-${{ github.sha }}"
+
+      # In single-revision mode the previous revision keeps serving until the
+      # new one passes its probes, so a plain 200 proves nothing. /healthz
+      # reports the commit baked into the image; wait for it to flip.
+      - name: Verify the new revision is live
+        if: ${{ inputs.roll }}
+        run: |
+          echo "Polling $HEALTH_URL for commit ${{ github.sha }} ..."
+          for attempt in $(seq 1 30); do
+            body=$(curl -fsS --max-time 10 "$HEALTH_URL" || true)
+            if echo "$body" | grep -q "\"commit\":\"${{ github.sha }}\""; then
+              echo "$body"
+              echo "New revision live (attempt $attempt)."
+              exit 0
+            fi
+            echo "Attempt $attempt/30: got '${body:-<no response>}', retrying in 10s..."
+            sleep 10
+          done
+          echo "The new revision did not become live within ~5 minutes." >&2
+          echo "Traffic stays on the previous revision (single-revision mode). Revision states:" >&2
+          az containerapp revision list -n "$APP_NAME" -g "$RESOURCE_GROUP" \
+            --query "[].{name:name, active:properties.active, provisioning:properties.provisioningState, health:properties.healthState, running:properties.runningState, traffic:properties.trafficWeight}" -o table >&2 || true
+          exit 1

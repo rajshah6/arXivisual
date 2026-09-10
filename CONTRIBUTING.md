@@ -15,7 +15,7 @@ uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 Manim needs FFmpeg, Cairo, and Pango installed locally (plus LaTeX for `MathTex` scenes), but the unit tests never render — you can develop against the test suite without them.
 
-**Frontend** (Node 18+):
+**Frontend** (Node 20.9+):
 
 ```bash
 cd frontend
@@ -37,7 +37,7 @@ Frontend checks:
 ```bash
 cd frontend
 npx tsc --noEmit              # typecheck
-npm run lint                  # advisory (see below)
+npm run lint                  # hard CI gate
 npm run build
 ```
 
@@ -46,9 +46,8 @@ npm run build
 CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs on every PR. To merge:
 
 - **Backend tests must pass** on Python 3.11 and 3.13. The suite runs offline against dummy credentials — new tests must not hit real APIs.
-- **Frontend typecheck and build must pass** (`tsc --noEmit`, `next build`).
-- **Lint is advisory** for now (`continue-on-error`) while pre-existing violations on `main` are worked off — don't add new ones.
-- **The Docker image must build** when you touch `backend/Dockerfile`, `backend/pyproject.toml`, or `backend/uv.lock`. If you change dependencies, run `uv lock` and commit the lockfile; CI installs with `--frozen` and fails on a stale lock.
+- **Frontend typecheck, lint and build must pass** (`tsc --noEmit`, `eslint`, `next build`). Both lint steps (ruff, eslint) are hard gates; the trees are lint-clean.
+- **The Docker images must build.** Backend: when you touch `backend/Dockerfile`, `backend/pyproject.toml`, or `backend/uv.lock` (run `uv lock` after dependency changes; CI installs with `--frozen`). Frontend: when you touch `frontend/Dockerfile`, `.dockerignore`, `package*.json`, or `next.config.ts` (CI runs `npm ci`, which fails on a stale lockfile).
 
 ## Branches and Pull Requests
 

@@ -1,14 +1,16 @@
 # arXivisual Infrastructure (Terraform)
 
 Terraform codification of the **live, production** arXivisual Azure
-infrastructure. Everything here was created by hand (az CLI / portal / GitHub
-Actions) and is being adopted into Terraform via `import` blocks so that the
-infra is reproducible and reviewable.
+infrastructure. The original estate was created by hand (az CLI / portal /
+GitHub Actions) and adopted into Terraform via `import` blocks on 2026-08-26;
+new resources (e.g. the frontend in `frontend.tf`) are created by Terraform
+directly. Infra changes go through `plan`/`apply` here, not ad-hoc `az`.
 
 > **WARNING: `terraform apply` touches production.** The Container Apps serve
 > arxivisual.org right now. Always run `terraform plan` first, read every diff,
-> and only apply when the plan matches the "Known first-apply diffs" list below
-> (plus whatever change you intended).
+> and only apply when the plan contains nothing beyond the change you intended
+> (the estate is fully adopted; a clean plan is "No changes", and unexpected
+> diffs are drift from ad-hoc `az` commands — see "Drift" below).
 
 ## What this manages
 
@@ -62,7 +64,7 @@ Provider auth is Azure CLI (`az login`) for azurerm, azuread, and azapi.
 cd infra
 terraform init                       # backend + providers
 terraform validate
-terraform plan                       # review! see "Known first-apply diffs"
+terraform plan                       # review! expect only the change you intended
 terraform apply                      # ONLY after the plan is fully understood
 ```
 
@@ -132,19 +134,22 @@ resources (e.g. `frontend.tf`) are created by Terraform directly.
 The cut-over order, DNS rules and verification live in
 [docs/DEPLOY.md](../docs/DEPLOY.md).
 
-## Known first-apply diffs
+## Drift and the (historical) first-apply diffs
 
-The verified plan is: **26 to import, 0 to add, 5 to change, 0 to destroy**
-(see `PLAN_SNAPSHOT.txt`). No replacements, no destroys. The five in-place
-updates are benign:
+The estate was adopted on 2026-08-26 (`26 imported, 0 added, 4 changed, 0
+destroyed`; the post-apply plan was "No changes", see `PLAN_SNAPSHOT.txt`).
+Since then Terraform owns everything here, so the expected plan is "No
+changes" plus whatever you are deliberately changing.
 
-| Resource | Diff | Why it's benign |
-|---|---|---|
-| all 3 container apps | `- secret` / `+ secret` blocks | The ACA API never returns secret values, so imported state has none; first apply rewrites the identical values from the vars. |
-| `arxivisual-temporal` | probe `timeout 0 -> 1`, `success_count_threshold 0 -> 1` | Platform probe defaults made explicit; ingress is declared as the live http2 transport (gRPC via envoy TLS on :443). |
-| `arxivisual-temporal` | probe `timeout 0 -> 1`, readiness `success_count_threshold 0 -> 1` | The live probes omit these fields; 1/1 are the platform defaults already in effect, now written explicitly. |
-| `workspace-arxivisualrg2OvU` | `+ local_authentication_enabled = true` | API does not return the field; `true` is the current live behavior (local auth was never disabled). |
-| `arxivisual-db` | `+ administrator_password` | ARM never returns the password; the first apply re-submits `var.postgres_admin_password`. Supply the current live password. |
+Known sources of drift: env vars set on the API app with `az containerapp
+update --set-env-vars` (admission-control caps, secrets) that were never
+mirrored into `container_apps.tf`. A plan will offer to revert them to the
+Terraform values — reconcile the `.tf` file first, then apply. The same
+benign diffs the first apply showed can reappear after manual edits: secret
+blocks re-submitted (the API never returns secret values), probe timeouts and
+`success_count_threshold` defaults made explicit, and `administrator_password`
+on `arxivisual-db` (ARM never returns it; supply the *current* password or the
+apply changes it out from under the running apps).
 
 Anything on a plan beyond this list (or beyond an intentional change) should
 be treated as a red flag - stop and investigate before applying.

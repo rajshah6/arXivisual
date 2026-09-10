@@ -74,10 +74,11 @@ uv run python evals/run_evals.py --papers 2 --max-viz 2 --output report.json   #
 uv run python evals/check_regression.py report.json evals/baselines.json
 ```
 
-CI (`.github/workflows/`): `ci.yml` — backend pytest, frontend tsc + build, docker image build (hard gates;
-backend ruff and frontend eslint are both HARD gates). `security.yml` — gitleaks secret scan (blocking) + npm/pip audit
-(advisory). `evals.yml` — nightly 06:00 UTC golden-set evals, fails on baseline regression. `deploy-backend.yml`
-— Azure OIDC login, ACR build, Container App roll, health verify.
+CI (`.github/workflows/`): `ci.yml` — backend pytest, frontend tsc + build, backend AND frontend docker image builds
+(hard gates; backend ruff and frontend eslint are both HARD gates). `security.yml` — gitleaks secret scan (blocking) +
+npm/pip audit (advisory). `evals.yml` — nightly 06:00 UTC golden-set evals, fails on baseline regression.
+`deploy-backend.yml` / `deploy-frontend.yml` — Azure OIDC login, ACR build, Container App roll, health verify
+(the frontend one polls `/healthz` until the reported commit matches; both apps live in `infra/` Terraform).
 
 ## Env vars (\* = secret; template: `.env.example`)
 
@@ -89,6 +90,8 @@ backend ruff and frontend eslint are both HARD gates). `security.yml` — gitlea
 - `LANGFUSE_PUBLIC_KEY`\*, `LANGFUSE_SECRET_KEY`\*, `LANGFUSE_HOST`, `LANGFUSE_TRACING_ENVIRONMENT`.
 - `ENVIRONMENT=production` — disables `POST /api/render` (404) unless `RENDER_API_SECRET`\* matches the
   `X-Render-Secret` header. The endpoint executes caller-supplied Python; keep it locked.
+- `CORS_EXTRA_ORIGINS` — comma-separated browser origins admitted on top of arxivisual.org/www/localhost:3000
+  (`api/cors.py`; canonicalized, a non-origin fails startup). Production: the frontend Container App's own FQDN.
 - **Admission control on `POST /api/process`** (`api/throttle.py`, `api/turnstile.py`) — layered, each layer
   assumes the previous is gamed (the code is public; a crawler ran ~250 papers/day through the old limits by
   spoofing `X-Forwarded-For`): (1) `TURNSTILE_SECRET_KEY`\* — server-verified Cloudflare Turnstile, skipped

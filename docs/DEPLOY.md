@@ -134,7 +134,7 @@ az containerapp update -n arxivisual-web -g arxivisual-rg \
   --image ca82c08e2eadacr.azurecr.io/arxivisual-web:<previous-tag>
 ```
 
-or `az containerapp revision activate` as for the backend. Images are ~400 MB (the bundled demo media is most of it); prune old `arxivisual-web` tags with the same `az acr repository delete` housekeeping.
+or `az containerapp revision activate` as for the backend. Images are ~400 MB (the Node runtime plus the traced server; the bundled demo media in `public/` is ~36 MB of it); prune old `arxivisual-web` tags with the same `az acr repository delete` housekeeping.
 
 ### 4. Custom domain and DNS (Porkbun)
 

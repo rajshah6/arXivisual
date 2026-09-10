@@ -62,7 +62,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full walkthrough.
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 20.9+ (Next.js 16 minimum)
 - Python 3.11+ and [uv](https://docs.astral.sh/uv/getting-started/installation/)
 - FFmpeg, Cairo, Pango (for Manim); a LaTeX distribution for `MathTex` scenes
 - An Azure OpenAI resource with a GPT-5-family deployment (Dedalus Labs works as a legacy fallback provider)

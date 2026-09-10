@@ -7,6 +7,8 @@ static export and no Vercel.
 
 ## Develop
 
+Node 20.9+ (the image builds on Node 22).
+
 ```bash
 npm ci
 npm run dev        # http://localhost:3000, expects the backend on :8000

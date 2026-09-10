@@ -2,7 +2,8 @@
 # Next.js 16 server (SSR) for Azure Container Apps. Three stages:
 #   deps    — exact locked dependency set (npm ci)
 #   builder — `next build` with output: "standalone"
-#   runner  — only the traced server + static assets, non-root, ~150 MB
+#   runner  — only the traced server + static assets, non-root (~400 MB on
+#             disk, ~120 MB compressed in ACR; the Node base is most of it)
 #
 # NEXT_PUBLIC_* values are inlined into the JS bundles at BUILD time, so they
 # must arrive as build args (see .github/workflows/deploy-frontend.yml);

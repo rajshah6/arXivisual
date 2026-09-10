@@ -27,10 +27,20 @@ logging.getLogger("rendering").setLevel(logging.INFO)
 logging.getLogger("jobs").setLevel(logging.INFO)
 logging.getLogger("agents").setLevel(logging.INFO)
 
+# Application Insights (no-op without APPLICATIONINSIGHTS_CONNECTION_STRING).
+# Must run BEFORE `from fastapi import FastAPI`: the distro instruments by
+# swapping the FastAPI class, so an app built from a class imported earlier
+# would carry no request telemetry. It also binds Langfuse to its own
+# TracerProvider before any pipeline code can create a client (telemetry.py).
+import telemetry
+
+telemetry.configure()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
+import analytics
 from api.cors import allowed_origins
 from api.routes import router as api_router
 from db import init_db
@@ -44,8 +54,9 @@ async def lifespan(app: FastAPI):
     await init_db()
     print("Database ready!")
     yield
-    # Shutdown: cleanup if needed
+    # Shutdown: flush queued product events (no-op when PostHog is off).
     print("Shutting down...")
+    analytics.shutdown()
 
 
 # Create FastAPI app

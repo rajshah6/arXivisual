@@ -1,36 +1,58 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# arXivisual frontend
 
-## Getting Started
+Next.js 16 (App Router, React 19, Tailwind 4). In production it runs as a
+Node server — `output: "standalone"` — inside a Docker image on Azure
+Container Apps (`arxivisual-web`), next to the FastAPI backend. There is no
+static export and no Vercel.
 
-First, run the development server:
+## Develop
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm ci
+npm run dev        # http://localhost:3000, expects the backend on :8000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Environment (all optional, `.env.local` is git-ignored):
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| Variable | Purpose |
+|----------|---------|
+| `NEXT_PUBLIC_API_URL` | Backend origin. Unset: production builds fall back to the Azure API URL, dev builds to `http://localhost:8000` ([lib/api.ts](lib/api.ts)) |
+| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Cloudflare Turnstile site key; unset = no widget |
+| `NEXT_PUBLIC_USE_MOCK` | `true` to serve the bundled demo paper instead of calling the API |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+`NEXT_PUBLIC_*` values are inlined into the bundles by `next build`; changing
+one means rebuilding.
 
-## Learn More
+## Check
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npx tsc --noEmit && npm run lint && npm run build
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+All three are hard CI gates.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Build the production image
 
-## Deploy on Vercel
+```bash
+docker build -t arxivisual-web:local \
+  --build-arg NEXT_PUBLIC_API_URL=https://arxivisual-api.purplepond-ac9e2dc5.eastus2.azurecontainerapps.io \
+  --build-arg APP_COMMIT_SHA=$(git rev-parse HEAD) \
+  .
+docker run --rm -p 3000:3000 arxivisual-web:local
+curl -s localhost:3000/healthz     # {"status":"ok","commit":"<sha>",...}
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+[Dockerfile](Dockerfile) is a three-stage build (deps → `next build` →
+runtime) that ships only the traced standalone server, `.next/static` and
+`public/`, running as a non-root user on port 3000.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Routes worth knowing
+
+- `/abs/[...id]` — the reader. [`page.tsx`](app/abs/[...id]/page.tsx) is a
+  server component that resolves per-paper `<title>`/OpenGraph metadata from
+  the API ([lib/paper-metadata.ts](lib/paper-metadata.ts), fail-safe, cached
+  10 min) and renders the client reader in `PaperPage.tsx`.
+- `/healthz` — liveness/readiness for Container Apps; reports the image's
+  commit so a deploy can wait for the new revision.
+
+Deployment, DNS and rollback: [docs/DEPLOY.md](../docs/DEPLOY.md).

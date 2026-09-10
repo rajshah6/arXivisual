@@ -1,0 +1,18 @@
+# Build context for frontend/Dockerfile. Everything the image needs is
+# rebuilt inside the builder stage from package-lock.json, so local build
+# output and dependencies must not leak in (they are also huge).
+node_modules
+.next
+out
+build
+coverage
+.git
+.gitignore
+.vercel
+.env*
+!.env.example
+*.tsbuildinfo
+npm-debug.log*
+README.md
+Dockerfile
+.dockerignore

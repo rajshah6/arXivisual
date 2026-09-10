@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import analytics
 from db import queries
 from db.connection import get_db
 from db.queries import _utcnow_naive
@@ -153,7 +154,8 @@ async def start_processing(
     #      peeked together and recorded only once every layer passes
     ip = client_ip(http_request)
     # Fingerprint first (the log queries extract it), then request forensics.
-    client_tag = f"{ip_fingerprint(ip)} {request_context(http_request)}"
+    fingerprint = ip_fingerprint(ip)
+    client_tag = f"{fingerprint} {request_context(http_request)}"
 
     now = _utcnow_naive()
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -266,6 +268,14 @@ async def start_processing(
     if not started_durably:
         # Legacy path: in-process background task (does not survive restarts).
         background_tasks.add_task(process_paper_job, job_id, arxiv_id)
+
+    # Product event (no-op without POSTHOG_API_KEY). The pseudonymous
+    # fingerprint is the only client identity this service keeps, so it is
+    # the distinct_id; duplicate submissions returned above never get here.
+    analytics.capture(
+        "paper_accepted", fingerprint,
+        {"arxiv_id": arxiv_id, "job_id": job_id, "path": "temporal" if started_durably else "legacy"},
+    )
 
     return ProcessResponse(
         job_id=job_id,

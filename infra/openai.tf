@@ -50,7 +50,9 @@ resource "azurerm_cognitive_deployment" "gpt_4o_mini_tts" {
   version_upgrade_option = "OnceNewDefaultVersionAvailable"
 }
 
-# Visual QA model (VISUAL_QA_MODEL env var in the API/worker apps).
+# Idle standby deployment: no app references it. VISUAL_QA_MODEL and
+# VISUAL_QA_REPAIR_MODEL are both gpt-5-mini (container_apps.tf). GlobalStandard
+# is pay-per-token, so it costs nothing while unused; it only holds quota.
 resource "azurerm_cognitive_deployment" "gpt_5_6_sol" {
   name                 = "gpt-5.6-sol"
   cognitive_account_id = azurerm_cognitive_account.openai.id

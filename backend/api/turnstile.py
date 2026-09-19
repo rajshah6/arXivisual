@@ -94,8 +94,10 @@ async def verify_turnstile_detailed(
         logger.info("Turnstile rejected token: %s", body.get("error-codes"))
         return TurnstileVerdict(False, f"rejected {body.get('error-codes')}")
     # A token minted on another site is valid to Cloudflare but not to us.
+    # Fails CLOSED on a missing hostname: `if hostname and ...` skipped the
+    # allow-list whenever siteverify's answer carried none.
     hostname = body.get("hostname")
-    if hostname and hostname not in _allowed_hostnames():
+    if not hostname or hostname not in _allowed_hostnames():
         logger.warning("Turnstile token for unexpected hostname %r", hostname)
         return TurnstileVerdict(False, f"hostname {hostname!r}")
     if expected_cdata is not None:

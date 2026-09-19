@@ -143,59 +143,30 @@ jobs:
           fi
           echo "ok   both apps run ${api_image##*:}"
 
+      # check-drift.sh lists what landed on main under a path since the
+      # deployed commit (first-parent, so dated when it LANDED) and fails once
+      # the oldest is past DRIFT_GRACE_HOURS. It skips a short, explicit list
+      # of docs — not "*.md": backend/prompts/*.md are the pipeline's LLM
+      # prompts and ship in the image. Tests: .github/scripts/tests/.
       - name: Nothing old on main is waiting to be deployed
         if: ${{ !cancelled() }}
         run: |
           fail=0
-          now=$(date +%s)
-
-          check_drift() { # <label> <deployed sha> <path> <deploy workflow>
-            local label=$1 sha=$2 path=$3 workflow=$4 pending oldest age_hours count
-            local fix="Fix: gh workflow run $workflow --ref main"
-            if ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
-              echo "::error::$label: could not determine the deployed commit (got '${sha:-<nothing>}'), so drift cannot be checked. $fix"
-              fail=1
-              return
-            fi
-            if ! git cat-file -e "$sha^{commit}" 2>/dev/null \
-              || ! git merge-base --is-ancestor "$sha" origin/main; then
-              echo "::error::$label runs $sha, which is not a commit on main (deployed by hand from a branch?). $fix"
-              fail=1
-              return
-            fi
-            # --first-parent: one entry per merge INTO main, dated when it
-            # landed — a PR's own commits can be days older than its merge.
-            # Markdown never reaches a running process, so it is not drift.
-            pending=$(git log --first-parent --format='%ct %h %s' "$sha..origin/main" -- "$path" ':(exclude)*.md')
-            if [ -z "$pending" ]; then
-              echo "ok   $label: ${sha:0:7} is current — nothing under $path has landed on main since."
-              return
-            fi
-            oldest=$(tail -n 1 <<<"$pending" | cut -d' ' -f1)
-            age_hours=$(( (now - oldest) / 3600 ))
-            count=$(wc -l <<<"$pending" | tr -d ' ')
-            echo "$label: ${sha:0:7} is deployed; $count change(s) under $path landed on main since (oldest ${age_hours}h ago):"
-            cut -d' ' -f2- <<<"$pending" | sed 's/^/    /'
-            if [ "$age_hours" -ge "$DRIFT_GRACE_HOURS" ]; then
-              echo "::error::$label is stale: $count change(s) under $path merged to main are not deployed, the oldest for ${age_hours}h (grace ${DRIFT_GRACE_HOURS}h). $fix"
-              fail=1
-            else
-              echo "     within the ${DRIFT_GRACE_HOURS}h merge-then-deploy grace — not failing."
-            fi
-          }
 
           # Backend: the commit is in the image tag (gh-<sha>).
           api_sha=""
           if [[ "${API_IMAGE:-}" == *:gh-* ]]; then
             api_sha=${API_IMAGE##*:gh-}
           fi
-          check_drift "Backend (api + worker)" "$api_sha" backend/ deploy-backend.yml
+          bash .github/scripts/check-drift.sh "Backend (api + worker)" "$api_sha" \
+            backend/ deploy-backend.yml || fail=1
 
           # Frontend: the Container App reports the commit baked into its image.
           # (arxivisual.org itself is on Vercel until the DNS cut-over, and
           # Vercel deploys every merge by itself; this keeps the Container App
           # from rotting before it takes over.)
           web_sha=$(curl -fsS --max-time 30 --retry 2 --retry-delay 10 "$WEB_HEALTH_URL" | jq -r '.commit // empty' || true)
-          check_drift "Frontend (arxivisual-web)" "$web_sha" frontend/ deploy-frontend.yml
+          bash .github/scripts/check-drift.sh "Frontend (arxivisual-web)" "$web_sha" \
+            frontend/ deploy-frontend.yml || fail=1
 
           exit "$fail"

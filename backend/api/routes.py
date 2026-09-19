@@ -13,7 +13,6 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import analytics
@@ -24,6 +23,7 @@ from ingestion.text_normalize import normalize_display_text, tex_to_text
 from jobs import process_paper_job
 from rendering import extract_scene_name, get_video_path, get_video_url, process_visualization
 
+from . import health
 from .schemas import (
     FeedbackRequest,
     FeedbackResponse,
@@ -589,51 +589,15 @@ async def health_check(db: AsyncSession = Depends(get_db)):
     """
     Health check endpoint.
 
-    Returns status of the API and dependent services.
+    Returns status of the API and dependent services, plus the deployed
+    commit (the deploy workflow polls until ``commit`` matches the sha it
+    built). The checks live in api/health.py: nothing blocks the event loop,
+    results are cached (manim for the process, database/R2 for a short TTL)
+    and error strings are generic — details go to the server log.
     """
-    import os
-    import subprocess
-
-    # Test database connection
-    db_status = "connected"
-    try:
-        await db.execute(text("SELECT 1"))
-    except Exception as e:
-        db_status = f"error: {e!s}"
-
-    # Test Manim availability
-    manim_status = "not found"
-    try:
-        manim_exe = os.getenv("MANIM_EXECUTABLE", "manim")
-        result = subprocess.run(
-            [manim_exe, "--version"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        if result.returncode == 0:
-            version = result.stdout.strip().split("\n")[0]
-            manim_status = f"available ({version})"
-        else:
-            detail = (result.stderr.strip() or result.stdout.strip()).splitlines()
-            manim_status = f"error: {detail[-1][:200] if detail else 'command failed'}"
-    except FileNotFoundError:
-        manim_status = "not installed"
-    except Exception as e:
-        manim_status = f"error: {e!s}"
-
-    # Test storage connectivity
-    from rendering.storage import STORAGE_MODE, get_backend
-    storage_status = "local"
-    if STORAGE_MODE == "r2":
-        backend = get_backend()
-        if hasattr(backend, "check_connectivity"):
-            try:
-                storage_status = "r2: connected" if backend.check_connectivity() else "r2: unreachable"
-            except Exception as e:
-                storage_status = f"r2: error ({e})"
-        else:
-            storage_status = "r2: configured"
+    db_status = await health.database_status(db)
+    manim_status = await health.manim_status()
+    storage_status = await health.storage_status()
 
     # Check Modal configuration
     from rendering import RENDER_MODE
@@ -651,6 +615,8 @@ async def health_check(db: AsyncSession = Depends(get_db)):
     return HealthResponse(
         status="healthy" if all_healthy else "degraded",
         version="0.1.0",
+        commit=health.commit_sha(),
+        database_dialect=health.database_dialect(db),
         services={
             "database": db_status,
             "manim": manim_status if RENDER_MODE != "modal" else f"offloaded to modal ({manim_status})",

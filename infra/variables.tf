@@ -84,6 +84,46 @@ variable "posthog_host" {
   default     = "https://us.i.posthog.com"
 }
 
+# ---------------------------------------------------------------------------
+# Alerting (alerts.tf) and budget notifications (budgets.tf).
+# ---------------------------------------------------------------------------
+
+variable "contact_email" {
+  description = "Address that receives budget notifications (budgets.tf) and every Azure Monitor alert (the arxivisual-alerts action group in alerts.tf)."
+  type        = string
+  default     = "ajithbon05@gmail.com"
+}
+
+variable "alert_postgres_storage_percent" {
+  description = "Alert when arxivisual-db storage use (storage_percent, hourly average) exceeds this. Storage auto-grow is off, and a full disk puts the server in read-only mode."
+  type        = number
+  default     = 80
+}
+
+variable "alert_restart_count" {
+  description = "Alert when the container restarts of one backend app (RestartCount, summed over 15 minutes) exceed this, i.e. a crash loop rather than a single restart."
+  type        = number
+  default     = 3
+}
+
+variable "alert_temporal_fallback_count" {
+  description = "Alert when more than this many 'Temporal unavailable' lines (API fell back to the in-process pipeline) are logged in 15 minutes. 0 = any fallback; they ran at 2-11 a day in early Sept 2026 with nobody noticing."
+  type        = number
+  default     = 0
+}
+
+variable "alert_api_5xx_count" {
+  description = "Alert when the estimated number of API 5xx responses in 15 minutes exceeds this. Estimated = sum(ItemCount) over AppRequests, which undoes the 20% trace sampling (one sampled row counts as 5), so the value moves in steps of 5. Baseline is zero: the only window with any 5xx in the first 8 days of data was the 2026-09-14 Postgres restart (115)."
+  type        = number
+  default     = 5
+}
+
+variable "alert_worker_error_count" {
+  description = "Alert when arxivisual-worker logs more than this many 'Traceback' / 'Pipeline failed' lines in 15 minutes. Tracebacks are routine here (LLM-written Manim code failing a render is part of the loop): over 14 days in Sept 2026 the 15-minute count had p50 4, p90 10, p99 20, max 24, so the default sits just above everything seen."
+  type        = number
+  default     = 30
+}
+
 variable "web_image_tag" {
   description = "Tag of the arxivisual-web image the frontend Container App is created (or replaced) with. Every deploy-frontend.yml run tags its build both gh-<sha> and latest, so the default always names an existing image once the first build has run; the image is ignored by Terraform after creation (see infra/frontend.tf)."
   type        = string

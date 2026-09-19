@@ -17,7 +17,7 @@ resource "azurerm_consumption_budget_subscription" "monthly" {
     operator       = "GreaterThan"
     threshold      = 50
     threshold_type = "Actual"
-    contact_emails = ["ajithbon05@gmail.com"]
+    contact_emails = [var.contact_email]
   }
 
   notification {
@@ -25,7 +25,7 @@ resource "azurerm_consumption_budget_subscription" "monthly" {
     operator       = "GreaterThan"
     threshold      = 90
     threshold_type = "Actual"
-    contact_emails = ["ajithbon05@gmail.com"]
+    contact_emails = [var.contact_email]
   }
 
   notification {
@@ -33,7 +33,7 @@ resource "azurerm_consumption_budget_subscription" "monthly" {
     operator       = "GreaterThan"
     threshold      = 100
     threshold_type = "Forecasted"
-    contact_emails = ["ajithbon05@gmail.com"]
+    contact_emails = [var.contact_email]
   }
 }
 
@@ -58,21 +58,21 @@ resource "azapi_resource" "billing_monthly_reset_budget" {
 
       notifications = {
         actual_GreaterThan_50_Percent = {
-          contactEmails = ["ajithbon05@gmail.com"]
+          contactEmails = [var.contact_email]
           enabled       = true
           operator      = "GreaterThan"
           threshold     = 50
           thresholdType = "Actual"
         }
         actual_GreaterThan_80_Percent = {
-          contactEmails = ["ajithbon05@gmail.com"]
+          contactEmails = [var.contact_email]
           enabled       = true
           operator      = "GreaterThan"
           threshold     = 80
           thresholdType = "Actual"
         }
         forecasted_GreaterThan_100_Percent = {
-          contactEmails = ["ajithbon05@gmail.com"]
+          contactEmails = [var.contact_email]
           enabled       = true
           operator      = "GreaterThan"
           threshold     = 100

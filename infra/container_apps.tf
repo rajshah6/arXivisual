@@ -25,7 +25,12 @@ resource "azurerm_container_app_environment" "main" {
 }
 
 locals {
-  app_image = "ca82c08e2eadacr.azurecr.io/arxivisual-api:gh-d19c154f03c9b9d59a15510d932d9955d60da5ae"
+  # Only read when Terraform CREATES or REPLACES the api/worker app (the image
+  # is in ignore_changes; deploys own it day to day), so bumping it plans as
+  # "No changes". A recreate boots exactly this build on BOTH apps: keep it close
+  # to what is live and NEVER prune this tag from ACR (see README, "ACR
+  # housekeeping"). 2026-09-18: the live API image.
+  app_image = "ca82c08e2eadacr.azurecr.io/arxivisual-api:gh-e106349610ef6514bfc47e76b06d4c5fed58db73"
 }
 
 # ---------------------------------------------------------------------------
@@ -89,9 +94,10 @@ resource "azurerm_container_app" "api" {
     name  = "langfuse-secret-key"
     value = var.langfuse_secret_key
   }
-  # Only materialize the Turnstile secret when one is configured: the
-  # Container Apps API rejects empty secret values, and an absent env means
-  # the backend skips verification (inert until activated).
+  # Dynamic because the Container Apps API rejects empty secret values. An
+  # absent env means the backend SKIPS verification, so variables.tf now fails
+  # the plan when this (or ip_hash_secret below) is empty: both are live, and
+  # these blocks are effectively always materialized.
   dynamic "secret" {
     for_each = var.turnstile_secret_key != "" ? [1] : []
     content {
@@ -305,6 +311,13 @@ resource "azurerm_container_app" "api" {
           name  = "POSTHOG_HOST"
           value = var.posthog_host
         }
+      }
+      # Keep LAST (positional diffing, see above). The Azure Monitor distro maps
+      # the OTel service.name to the Application Insights cloud role name;
+      # without it every span arrives as role "unknown_service".
+      env {
+        name  = "OTEL_SERVICE_NAME"
+        value = "arxivisual-api"
       }
     }
   }
@@ -689,6 +702,12 @@ resource "azurerm_container_app" "worker" {
           name  = "POSTHOG_HOST"
           value = var.posthog_host
         }
+      }
+      # Keep LAST (positional diffing). Cloud role name for the worker's
+      # telemetry in Application Insights (see the same block on the API).
+      env {
+        name  = "OTEL_SERVICE_NAME"
+        value = "arxivisual-worker"
       }
     }
   }

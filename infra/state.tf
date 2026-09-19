@@ -13,6 +13,23 @@ resource "azurerm_storage_account" "tfstate" {
   min_tls_version                 = "TLS1_2"
   allow_nested_items_to_be_public = false
 
+  # arxivisual.tfstate in this account is the ONLY copy of the state. Blob
+  # versioning keeps every previous state write (roll back by promoting an
+  # older version); soft delete keeps a deleted blob or container recoverable
+  # for 14 days. State writes are small and infrequent, so old versions cost
+  # next to nothing; prune them by hand if that ever changes.
+  blob_properties {
+    versioning_enabled = true
+
+    delete_retention_policy {
+      days = 14
+    }
+
+    container_delete_retention_policy {
+      days = 14
+    }
+  }
+
   network_rules {
     default_action = "Allow"
     bypass         = ["None"]

@@ -22,6 +22,20 @@ resource "azurerm_postgresql_flexible_server" "main" {
     active_directory_auth_enabled = false
     password_auth_enabled         = true
   }
+
+  # Custom maintenance window: Sunday 21:00-22:00 UTC, inside the quietest
+  # stretch of the day (19:00-24:00 UTC). The default system-managed window
+  # falls between 23:00 and 07:00 server-region time (06:00-14:00 UTC for
+  # westus3), which is how a maintenance restart on 2026-09-14 07:34Z landed on
+  # live traffic: API 5xx and 46 minutes of Temporal errors. day_of_week 0 is
+  # Sunday and times are UTC. Azure applies a changed window from the NEXT
+  # maintenance cycle on, and custom-window servers are patched at least 7 days
+  # after system-managed ones in the region.
+  maintenance_window {
+    day_of_week  = 0
+    start_hour   = 21
+    start_minute = 0
+  }
 }
 
 # Application database.

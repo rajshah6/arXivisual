@@ -548,6 +548,15 @@ async def generate_single_visualization(
             break
         else:
             logger.error("  ✗ FAILED after %s attempts", max_attempts)
+            if validation and validation.security_issues:
+                # The fallbacks below hand the LAST attempt's code to the
+                # renderer even though it failed validation. Fine for a layout
+                # nit; never for code that failed the import/call gate.
+                logger.error(
+                    "  Dropping visualization: final attempt failed the import/call gate (%s)",
+                    "; ".join(validation.security_issues)[:300],
+                )
+                return None
             if VOICE_FAIL_BEHAVIOR == "hard_error":
                 raise RuntimeError(f"Strict quality checks failed for {candidate.concept_name}")
             if VOICE_FAIL_BEHAVIOR == "return_silent":

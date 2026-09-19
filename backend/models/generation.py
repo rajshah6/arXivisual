@@ -84,6 +84,10 @@ class ValidatorOutput(BaseModel):
     issues_found: list[str] = Field(default_factory=list, description="Issues that couldn't be auto-fixed")
     issues_fixed: list[str] = Field(default_factory=list, description="Issues that were auto-fixed")
     needs_regeneration: bool = Field(False, description="If True, code should be regenerated")
+    security_issues: list[str] = Field(
+        default_factory=list,
+        description="Subset of issues_found from the import/call gate; code carrying these must never be rendered",
+    )
 
 
 class Visualization(BaseModel):

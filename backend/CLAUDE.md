@@ -138,7 +138,10 @@ fewer than `papers_requested - 1` papers were evaluated (errored papers count as
 - `USE_TEMPORAL=1` — durable orchestration. The API's cached Temporal client is reset, reconnected and the start
   retried ONCE on a connect failure/`RPCError` (`api/temporal_client.py:call_with_reconnect`); any Temporal error
   that survives that falls back (fail-open) to the legacy in-process path and logs ONE `ERROR` line containing the
-  exact phrase `Temporal unavailable` — an alert keys on it, keep the wording.
+  exact phrase `Temporal unavailable` — an alert keys on it, keep the wording. Every start carries
+  `memo={"job_id": ...}`: a retried start answered "already started" is usually the job's OWN first call (it
+  landed, its response was lost), and only a different/missing memo job id retires the row as a duplicate
+  (`retried_start_is_ours`).
 - `ENABLE_VISUAL_QA=1` — vision judge on rendered frames (observe-only on legacy path; verdict feeds repair on Temporal path).
 - `VISUAL_QA_REPAIR=1` — one **vision-grounded** repair round for `major` defects (Temporal path only): the
   rendered video is read back through the storage backend (never the CDN URL — stable keys cache for a year),
@@ -153,8 +156,10 @@ fewer than `papers_requested - 1` papers were evaluated (errored papers count as
 - `RENDER_MODE` `local|modal` (default `local`; `modal` also disables the local RenderTester gate).
 - `RENDER_TEST_EXECUTE=1` (default) — RenderTester executes `construct()` in a dry-run subprocess with TTS
   stubbed (`agents/dry_run_driver.py`, ~0.2s/scene, no network): catches the runtime-error class import
-  testing can't (e.g. numpy truth-value `if` on `get_center()`). `0` = legacy import-only validation.
-  `RENDER_TEST_TIMEOUT_SECONDS` (120) bounds it; harness breakage AND timeouts fail open — under load the
+  testing can't (e.g. numpy truth-value `if` on `get_center()`). `0` = legacy import-only validation: the SAME
+  scrubbed subprocess loads the module but skips `construct()` (`--import-only`; it used to `exec_module()` the
+  file inside the worker process, secrets and all).
+  `RENDER_TEST_TIMEOUT_SECONDS` (120) bounds both; harness breakage AND timeouts fail open — under load the
   dry run starves for CPU, and treating that as bad code burned 1,405 paid regenerations in one week.
 
 ## Conventions — do not violate
@@ -201,7 +206,9 @@ fewer than `papers_requested - 1` papers were evaluated (errored papers count as
    the old revision keeps working), then deploy. New tables are fine. The guard covers the API only (the worker
    never calls `init_db`) and does not check indexes, types or constraints.
 12. **Generated Manim code is untrusted: it never sees the secret environment.** An LLM writes it from arbitrary
-   paper text and it is executed twice (dry-run gate, real render). Every subprocess that runs it takes its env
+   paper text and it is executed twice (dry-run gate, real render). It only ever runs in a subprocess — never
+   import, `exec_module()` or `exec()` it in the API/worker process (importing IS executing; both RenderTester
+   modes go through `agents/dry_run_driver.py`) — and every such subprocess takes its env
    from `rendering/sandbox_env.py:scrubbed_env()` — a DENY-list by prefix and name pattern, NOT an allow-list
    (LaTeX/ffmpeg/fontconfig need an unpredictable set of ordinary variables and CI never renders). The runner
    re-adds only the TTS credential (`_tts_subprocess_env`). A new secret whose name does not contain

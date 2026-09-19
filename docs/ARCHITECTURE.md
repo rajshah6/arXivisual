@@ -175,7 +175,7 @@ self.set_speech_service(OpenAIService(voice="nova", model="gpt-4o-mini-tts", tra
 | GET | `/api/video/{video_id}` | Serve or redirect to a rendered video |
 | POST | `/api/render` | Dev-only raw Manim render — in production, 404 unless `RENDER_API_SECRET` is configured and presented via `X-Render-Secret` (timing-safe compare) |
 | POST | `/api/feedback` | Store viewer feedback: per-video 👍/👎 (labeled QA ground truth) or site suggestion |
-| GET | `/api/health` | Database / Manim / storage health and the deployed commit (the only health path — there is no `/health`) |
+| GET | `/api/health` | Database / Manim / storage health (the only health path — there is no `/health`). It does not report which commit is deployed |
 
 CORS allows `arxivisual.org`, `www.arxivisual.org`, localhost dev, and whatever `CORS_EXTRA_ORIGINS` adds (in production: the frontend Container App's own FQDN) — see `backend/api/cors.py`.
 

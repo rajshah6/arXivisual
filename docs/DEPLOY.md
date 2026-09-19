@@ -28,8 +28,10 @@ gh run watch
 
 1. refuses to run unless CI is green for the commit;
 2. builds `backend/` in ACR as `arxivisual-api:gh-<sha>`, baking the commit in as `APP_COMMIT_SHA`;
-3. rolls `arxivisual-api` and polls `GET /api/health` until its `commit` equals the sha — in single-revision mode the old revision keeps answering until the new one passes its probes, so a plain 200 proves nothing;
+3. rolls `arxivisual-api` and waits until its newest revision carries the image and reads `Healthy` / `Running` — `az containerapp update` returns before the revision is provisioned, and in single-revision mode the old revision keeps answering until the new one passes its probes, so neither the CLI's exit code nor a plain 200 proves anything. It then polls `GET /api/health` for a `commit` equal to the sha (see the note below);
 4. only then rolls `arxivisual-worker` to the same image and checks that its new revision is `Healthy` / `Running` (the worker has no ingress, so there is no URL to poll).
+
+> **`/api/health` does not report a commit yet (2026-09-18).** The image carries `APP_COMMIT_SHA`, but nothing reads it: the response is `status`, `version` and `services`, nothing else ([backend/api/routes.py](../backend/api/routes.py)). The workflow's commit poll therefore ends in a warning, and the API roll is proven at the revision level only, exactly like the worker's. Once the API reports `commit`, delete this note and add the commit check to [Verify](#3-verify).
 
 **Roll in the quiet window (19:00–24:00 UTC), with no paper in flight.** Only generation heartbeats (and resumes from per-visualization checkpoints). Ingest, render, repair and the repair re-render have no heartbeat: when a roll replaces the worker under one of them, Temporal notices only when that activity's start-to-close timeout expires — 15 minutes for an ingest, 25 for a render, 18 for a repair — so every interrupted activity can stall its job for up to that long. Ingest and render are then retried once; an interrupted repair is not, and the original video stays ([backend/temporal_app/workflows.py](../backend/temporal_app/workflows.py)).
 
@@ -66,21 +68,24 @@ Then roll **both** apps, API first:
 ```bash
 IMAGE=ca82c08e2eadacr.azurecr.io/arxivisual-api:<tag>
 az containerapp update -n arxivisual-api    -g arxivisual-rg --image $IMAGE
-# wait until /api/health reports the new commit (step 3), then:
+# wait until the revision table from "3. Verify" shows ONE active arxivisual-api
+# revision, on $IMAGE, Healthy / Running (mid-roll it lists the old one too); then:
 az containerapp update -n arxivisual-worker -g arxivisual-rg --image $IMAGE
 ```
 
-Each update creates a new revision and shifts traffic to it. The API scales between 1 and 2 replicas (one is always warm); the worker between 1 and 3 on a KEDA rule that counts queued and processing jobs. Every replica is 2 vCPU / 4 Gi because Manim renders are CPU-bound ([infra/container_apps.tf](../infra/container_apps.tf)).
+Each update creates a new revision and shifts traffic to it. Do not time the worker roll off `curl $API/api/health`: the old revision answers it with the same 200 until the switch, and the body does not say which build replied. The API scales between 1 and 2 replicas (one is always warm); the worker between 1 and 3 on a KEDA rule that counts queued and processing jobs. Every replica is 2 vCPU / 4 Gi because Manim renders are CPU-bound ([infra/container_apps.tf](../infra/container_apps.tf)).
 
 ### 3. Verify
 
 ```bash
 curl -s $API/api/health
-az containerapp revision list -n arxivisual-worker -g arxivisual-rg \
-  --query "[?properties.active].{revision:name, image:properties.template.containers[0].image, health:properties.healthState, state:properties.runningState}" -o table
+for APP in arxivisual-api arxivisual-worker; do
+  az containerapp revision list -n $APP -g arxivisual-rg \
+    --query "[?properties.active].{revision:name, image:properties.template.containers[0].image, health:properties.healthState, state:properties.runningState}" -o table
+done
 ```
 
-The health path is `GET /api/health` — there is no `/health` (it answers 404). It reports the deployed `commit` plus database, Manim, and storage connectivity; expect `"status": "healthy"` with `"database": "connected"`, `"manim": "available (...)"`, and `"storage": "r2: connected"`. The worker's active revision must show the same image tag as the API, `Healthy` and `Running`. Also confirm `POST /api/render` returns 404 (see `RENDER_API_SECRET` below).
+The health path is `GET /api/health` — there is no `/health` (it answers 404). It reports database, Manim, and storage connectivity; expect `"status": "healthy"` with `"database": "connected"`, `"manim": "available (...)"`, and `"storage": "r2: connected"`. It does not say which build is answering (no `commit` key yet — see the note in [section 1](#1-deploy-with-the-workflow)), so the proof of the roll is the revision table: each app must show a single active revision, on the tag you deployed, `Healthy` and `Running` — and the same tag on both. Also confirm `POST /api/render` returns 404 (see `RENDER_API_SECRET` below).
 
 ### Environment variables and secrets
 

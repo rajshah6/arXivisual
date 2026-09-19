@@ -94,9 +94,10 @@ resource "azurerm_container_app" "api" {
     name  = "langfuse-secret-key"
     value = var.langfuse_secret_key
   }
-  # Only materialize the Turnstile secret when one is configured: the
-  # Container Apps API rejects empty secret values, and an absent env means
-  # the backend skips verification (inert until activated).
+  # Dynamic because the Container Apps API rejects empty secret values. An
+  # absent env means the backend SKIPS verification, so variables.tf now fails
+  # the plan when this (or ip_hash_secret below) is empty: both are live, and
+  # these blocks are effectively always materialized.
   dynamic "secret" {
     for_each = var.turnstile_secret_key != "" ? [1] : []
     content {

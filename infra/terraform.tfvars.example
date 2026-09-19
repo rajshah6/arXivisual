@@ -22,9 +22,14 @@ langfuse_secret_key = "sk-lf-REPLACE_ME"
 
 # az acr credential show -n ca82c08e2eadacr --query "passwords[0].value"
 acr_admin_password = "REPLACE_ME"
-turnstile_secret_key = "" # optional: Cloudflare Turnstile secret; empty = human verification off
-ip_hash_secret       = "" # optional: HMAC key for IP fingerprints in logs; empty = env not set (unkeyed hash)
-posthog_api_key      = "" # optional: PostHog project token (phc_...); empty = no product events
+
+# REQUIRED (variables.tf fails the plan when either is empty): both are set on
+# the live API, and an apply without them would silently remove Turnstile
+# verification / the keyed IP fingerprints. Use the live values.
+turnstile_secret_key = "REPLACE_ME" # Cloudflare Turnstile secret (dashboard > Turnstile > widget > settings)
+ip_hash_secret       = "REPLACE_ME" # HMAC key for the IP fingerprints in admission logs
+
+posthog_api_key = "" # optional: PostHog project token (phc_...); empty = no product events
 # posthog_host = "https://us.i.posthog.com"   # EU cloud: https://eu.i.posthog.com
 
 # Application Insights needs no value here: its connection string is read off

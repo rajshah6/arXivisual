@@ -57,18 +57,35 @@ variable "acr_admin_password" {
   sensitive   = true
 }
 
+# The next two are REQUIRED in practice. They keep a "" default only so that a
+# missing value reaches the validation below and fails the plan with an
+# explanation, instead of an interactive prompt. The secret/env blocks in
+# container_apps.tf are dynamic on non-empty, so without the validation an
+# apply from a machine that simply lacks these TF_VARs would quietly REMOVE
+# them from the live API.
+
 variable "ip_hash_secret" {
-  description = "HMAC key behind the pseudonymous client-IP fingerprints in admission logs (IP_HASH_SECRET). Set on the live API app; keep it here so an apply does not remove it."
+  description = "HMAC key behind the pseudonymous client-IP fingerprints in admission logs (IP_HASH_SECRET). Set on the live API app; must be supplied on every plan/apply."
   type        = string
   sensitive   = true
   default     = ""
+
+  validation {
+    condition     = trimspace(var.ip_hash_secret) != ""
+    error_message = "The ip_hash_secret variable is empty. It is set on the live arxivisual-api app, and an apply without it would remove IP_HASH_SECRET: the client-IP fingerprints in the admission logs would silently fall back to the public default key in the open-source code, i.e. become reversible by lookup. Supply the live value (TF_VAR_ip_hash_secret or terraform.tfvars)."
+  }
 }
 
 variable "turnstile_secret_key" {
-  description = "Cloudflare Turnstile secret for POST /api/process human verification. Empty = verification disabled."
+  description = "Cloudflare Turnstile secret for POST /api/process human verification (TURNSTILE_SECRET_KEY). Set on the live API app; must be supplied on every plan/apply. The backend SKIPS verification when the secret is absent."
   type        = string
   sensitive   = true
   default     = ""
+
+  validation {
+    condition     = trimspace(var.turnstile_secret_key) != ""
+    error_message = "The turnstile_secret_key variable is empty. It is set on the live arxivisual-api app, and an apply without it would remove TURNSTILE_SECRET_KEY: the backend skips Turnstile verification when the secret is unset, so proof-of-humanity on POST /api/process would silently turn off. Supply the live value (TF_VAR_turnstile_secret_key or terraform.tfvars)."
+  }
 }
 
 variable "posthog_api_key" {

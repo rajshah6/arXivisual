@@ -220,9 +220,10 @@ async def start_processing(
     # Durable path (USE_TEMPORAL=1): start a Temporal workflow. Execution
     # happens on the worker app and survives restarts/redeploys; the workflow
     # ID makes duplicate submissions structurally impossible at the
-    # orchestrator. Fail-open: any Temporal error falls back to the legacy
-    # in-process BackgroundTasks path so paper processing never breaks on
-    # orchestrator trouble.
+    # orchestrator. A dead cached client is replaced and the start retried
+    # once (temporal_client.call_with_reconnect). Fail-open: any Temporal error
+    # that survives that falls back to the legacy in-process BackgroundTasks
+    # path so paper processing never breaks on orchestrator trouble.
     started_durably = False
     from .temporal_client import temporal_enabled
 
@@ -233,15 +234,16 @@ async def start_processing(
             from temporal_app.activities import PipelineInput
             from temporal_app.workflows import TASK_QUEUE, PaperPipelineWorkflow
 
-            from .temporal_client import get_temporal_client
+            from .temporal_client import call_with_reconnect
 
-            temporal = await get_temporal_client()
             try:
-                await temporal.start_workflow(
-                    PaperPipelineWorkflow.run,
-                    PipelineInput(job_id=job_id, arxiv_id=arxiv_id),
-                    id=f"paper-{arxiv_id}",
-                    task_queue=TASK_QUEUE,
+                await call_with_reconnect(
+                    lambda temporal: temporal.start_workflow(
+                        PaperPipelineWorkflow.run,
+                        PipelineInput(job_id=job_id, arxiv_id=arxiv_id),
+                        id=f"paper-{arxiv_id}",
+                        task_queue=TASK_QUEUE,
+                    )
                 )
                 started_durably = True
             except WorkflowAlreadyStartedError:
@@ -260,9 +262,15 @@ async def start_processing(
                     status=JobStatus(active.status) if active else JobStatus.queued,
                     message="This paper is already being processed. Poll /api/status/{job_id} for updates.",
                 )
-        except Exception:
-            logger.exception(
-                "Temporal unavailable — falling back to in-process pipeline"
+        except Exception as exc:
+            # ONE line, on purpose: an alert keys on the exact phrase "Temporal
+            # unavailable", and log pipelines split multi-line tracebacks into
+            # separate rows. The in-process path does not survive a restart, so
+            # every one of these is a job running without durability.
+            logger.error(
+                "Temporal unavailable — falling back to in-process pipeline "
+                "(job=%s paper=%s error=%r)",
+                job_id, arxiv_id, exc,
             )
 
     if not started_durably:

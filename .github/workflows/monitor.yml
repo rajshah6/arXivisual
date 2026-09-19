@@ -1,0 +1,201 @@
+# Production monitor: is the site up, are its certificates about to lapse, and
+# does production still run what main says it should?
+#
+# Every failure this catches was silent before:
+#   - arxivisual-worker sat 7 merged PRs behind arxivisual-api for 9 days (the
+#     deploy workflow only rolled the API; Terraform ignores the image on both)
+#   - merged backend/frontend work that nobody deployed
+#   - a managed certificate whose renewal failed (Container Apps renews only
+#     while the DNS records still validate, and says nothing when they do not)
+#
+# A red run emails whoever last edited the schedule below (GitHub's rule for
+# scheduled workflows); every ::error:: names the command that fixes it.
+#
+# Scheduled runs execute on the default branch, so the drift job's OIDC subject
+# is still repo:rajshah6/arXivisual:ref:refs/heads/main — the same federated
+# credential the deploy workflows use (see deploy-backend.yml). Do NOT add
+# `environment:` to it. A manual dispatch must be from main for the same reason.
+# The job only reads (`az containerapp show`).
+
+name: Production monitor
+
+on:
+  schedule:
+    - cron: "23 */6 * * *" # every 6 hours; off the hour, when scheduled runs queue
+  workflow_dispatch:
+
+concurrency:
+  group: monitor
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  SITE_HOSTS: arxivisual.org www.arxivisual.org
+  API_HEALTH_URL: https://arxivisual-api.purplepond-ac9e2dc5.eastus2.azurecontainerapps.io/api/health
+  WEB_HEALTH_URL: https://arxivisual-web.purplepond-ac9e2dc5.eastus2.azurecontainerapps.io/healthz
+  RESOURCE_GROUP: arxivisual-rg
+  API_APP_NAME: arxivisual-api
+  WORKER_APP_NAME: arxivisual-worker
+  CERT_MIN_DAYS: "21"
+  # A normal merge-then-deploy gap is not drift; only changes that have sat on
+  # main longer than this fail the run.
+  DRIFT_GRACE_HOURS: "24"
+
+jobs:
+  # No Azure credentials: everything here is what a visitor's browser sees.
+  site:
+    name: Site, API and certificates
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Site and API answer 200
+        run: |
+          fail=0
+          check() {
+            local url=$1 hint=$2 code
+            # -L: the apex redirects to www. 000 = no HTTP answer at all (DNS,
+            # TLS or timeout). Retried, so one dropped connection is not an alert.
+            code=$(curl -sS -L -o /dev/null -w '%{http_code}' --max-time 30 \
+              --retry 2 --retry-delay 10 --retry-all-errors "$url" || true)
+            code=${code: -3}
+            if [ "$code" = "200" ]; then
+              echo "ok   $code  $url"
+            else
+              echo "::error::$url answered HTTP ${code:-000}, expected 200. $hint"
+              fail=1
+            fi
+          }
+          site_hint="Until the DNS cut-over arxivisual.org is served by Vercel: check the latest production deployment there. After it: az containerapp revision list -n arxivisual-web -g $RESOURCE_GROUP -o table"
+          api_hint="Inspect: az containerapp revision list -n $API_APP_NAME -g $RESOURCE_GROUP -o table ; az containerapp logs show -n $API_APP_NAME -g $RESOURCE_GROUP --tail 100"
+          for host in $SITE_HOSTS; do
+            check "https://$host/healthz" "$site_hint"
+          done
+          check "$API_HEALTH_URL" "$api_hint"
+          exit "$fail"
+
+      # Works against Vercel's certificates today and against the Container
+      # Apps managed certificates after the cut-over. Both renew roughly 30
+      # days out, so less than CERT_MIN_DAYS left means renewal already failed.
+      - name: TLS certificates are not about to expire
+        if: ${{ !cancelled() }}
+        run: |
+          fail=0
+          min_seconds=$(( CERT_MIN_DAYS * 86400 ))
+          for host in $SITE_HOSTS; do
+            cert=$(timeout 30 openssl s_client -servername "$host" -connect "$host:443" </dev/null 2>/dev/null \
+              | openssl x509 2>/dev/null || true)
+            if [ -z "$cert" ]; then
+              echo "::error::Could not read the TLS certificate of $host:443 (no handshake). Check DNS for $host and the custom-domain binding."
+              fail=1
+              continue
+            fi
+            enddate=$(openssl x509 -noout -enddate <<<"$cert" | cut -d= -f2)
+            if openssl x509 -noout -checkend "$min_seconds" <<<"$cert" >/dev/null; then
+              echo "ok   $host  certificate valid until $enddate"
+            else
+              echo "::error::The TLS certificate of $host expires $enddate — under $CERT_MIN_DAYS days, so automatic renewal has failed. On Vercel: re-verify the domain in the project's Domains settings. On Container Apps: az containerapp env certificate list -g $RESOURCE_GROUP -n arxivisual-api-env --managed-certificates-only -o table — then restore the CNAME/A and asuid TXT records the managed certificate validates against (docs/DEPLOY.md)."
+              fail=1
+            fi
+          done
+          exit "$fail"
+
+  drift:
+    name: Deployed versions vs main
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      id-token: write # mint the OIDC token azure/login exchanges
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the staleness check walks main's history
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # One image, two apps (the worker is the same image with another
+      # command). They must never differ: a half-deployed backend has the API
+      # admitting jobs for a pipeline the worker does not have yet.
+      - name: API and worker run the same image
+        run: |
+          api_image=$(az containerapp show -n "$API_APP_NAME" -g "$RESOURCE_GROUP" \
+            --query "properties.template.containers[0].image" -o tsv || true)
+          worker_image=$(az containerapp show -n "$WORKER_APP_NAME" -g "$RESOURCE_GROUP" \
+            --query "properties.template.containers[0].image" -o tsv || true)
+          echo "$API_APP_NAME:    ${api_image:-<unreadable>}"
+          echo "$WORKER_APP_NAME: ${worker_image:-<unreadable>}"
+          # Exported before any verdict so the staleness step still runs on it.
+          echo "API_IMAGE=$api_image" >> "$GITHUB_ENV"
+          if [ -z "$api_image" ] || [ -z "$worker_image" ]; then
+            echo "::error::Could not read the deployed images (az containerapp show returned nothing). Check the Azure login step and the deploy principal's role on $RESOURCE_GROUP."
+            exit 1
+          fi
+          if [ "$api_image" != "$worker_image" ]; then
+            echo "::error::$WORKER_APP_NAME runs ${worker_image##*:} but $API_APP_NAME runs ${api_image##*:} — the backend is half-deployed. Fix (rolls both to main): gh workflow run deploy-backend.yml --ref main"
+            exit 1
+          fi
+          echo "ok   both apps run ${api_image##*:}"
+
+      - name: Nothing old on main is waiting to be deployed
+        if: ${{ !cancelled() }}
+        run: |
+          fail=0
+          now=$(date +%s)
+
+          check_drift() { # <label> <deployed sha> <path> <deploy workflow>
+            local label=$1 sha=$2 path=$3 workflow=$4 pending oldest age_hours count
+            local fix="Fix: gh workflow run $workflow --ref main"
+            if ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::$label: could not determine the deployed commit (got '${sha:-<nothing>}'), so drift cannot be checked. $fix"
+              fail=1
+              return
+            fi
+            if ! git cat-file -e "$sha^{commit}" 2>/dev/null \
+              || ! git merge-base --is-ancestor "$sha" origin/main; then
+              echo "::error::$label runs $sha, which is not a commit on main (deployed by hand from a branch?). $fix"
+              fail=1
+              return
+            fi
+            # --first-parent: one entry per merge INTO main, dated when it
+            # landed — a PR's own commits can be days older than its merge.
+            # Markdown never reaches a running process, so it is not drift.
+            pending=$(git log --first-parent --format='%ct %h %s' "$sha..origin/main" -- "$path" ':(exclude)*.md')
+            if [ -z "$pending" ]; then
+              echo "ok   $label: ${sha:0:7} is current — nothing under $path has landed on main since."
+              return
+            fi
+            oldest=$(tail -n 1 <<<"$pending" | cut -d' ' -f1)
+            age_hours=$(( (now - oldest) / 3600 ))
+            count=$(wc -l <<<"$pending" | tr -d ' ')
+            echo "$label: ${sha:0:7} is deployed; $count change(s) under $path landed on main since (oldest ${age_hours}h ago):"
+            cut -d' ' -f2- <<<"$pending" | sed 's/^/    /'
+            if [ "$age_hours" -ge "$DRIFT_GRACE_HOURS" ]; then
+              echo "::error::$label is stale: $count change(s) under $path merged to main are not deployed, the oldest for ${age_hours}h (grace ${DRIFT_GRACE_HOURS}h). $fix"
+              fail=1
+            else
+              echo "     within the ${DRIFT_GRACE_HOURS}h merge-then-deploy grace — not failing."
+            fi
+          }
+
+          # Backend: the commit is in the image tag (gh-<sha>).
+          api_sha=""
+          if [[ "${API_IMAGE:-}" == *:gh-* ]]; then
+            api_sha=${API_IMAGE##*:gh-}
+          fi
+          check_drift "Backend (api + worker)" "$api_sha" backend/ deploy-backend.yml
+
+          # Frontend: the Container App reports the commit baked into its image.
+          # (arxivisual.org itself is on Vercel until the DNS cut-over, and
+          # Vercel deploys every merge by itself; this keeps the Container App
+          # from rotting before it takes over.)
+          web_sha=$(curl -fsS --max-time 30 --retry 2 --retry-delay 10 "$WEB_HEALTH_URL" | jq -r '.commit // empty' || true)
+          check_drift "Frontend (arxivisual-web)" "$web_sha" frontend/ deploy-frontend.yml
+
+          exit "$fail"

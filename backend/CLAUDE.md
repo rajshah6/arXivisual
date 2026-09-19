@@ -23,9 +23,10 @@ POST /api/process  (api/routes.py: rate-limit + dedupe [api/throttle.py] + stale
   OpenAI-compatible endpoint at render time by `rendering/local_runner.py:_tts_subprocess_env`.
 - **Rendering**: local subprocess (`RENDER_MODE=local`, the default and what prod runs). Modal exists
   (`rendering/modal_runner.py`) only as an unused optional mode. **There is no Redis anywhere.**
-- **DB**: Postgres (asyncpg) when `DATABASE_URL` set, SQLite `./arxiviz.db` locally. No alembic — schema is
-  `Base.metadata.create_all` in `db/connection.py:init_db()` at startup.
-- **Observability**: Langfuse v3 (OTel-based) — `langfuse.openai` drop-in client wraps every LLM call, plus
+- **DB**: Postgres (asyncpg) when `DATABASE_URL` set, SQLite `./arxiviz.db` locally (`ENVIRONMENT=production`
+  without a Postgres URL refuses to start). No alembic — schema is `Base.metadata.create_all` in
+  `db/connection.py:init_db()` at startup, followed by a schema guard (see convention 11).
+- **Observability**: Langfuse 4.x SDK (OTel-based) — `langfuse.openai` drop-in client wraps every LLM call, plus
   `@observe` spans; active iff both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set. Azure Application
   Insights (`telemetry.py`, Azure Monitor OTel distro; iff `APPLICATIONINSIGHTS_CONNECTION_STRING`) is configured
   first thing in `main.py` / `temporal_app/worker.py` and pins Langfuse to its own never-global TracerProvider —
@@ -89,7 +90,9 @@ npm/pip audit (advisory). `evals.yml` — nightly 06:00 UTC golden-set evals, fa
 - `AZURE_OPENAI_API_KEY`\*, `AZURE_OPENAI_ENDPOINT` — primary provider (auto-detected; `LLM_PROVIDER=azure|dedalus` forces).
 - `AZURE_OPENAI_DEPLOYMENT` (default `gpt-5`), `AZURE_OPENAI_REASONING_EFFORT` (default `low`).
 - `DEDALUS_API_KEY`\* — legacy fallback provider (also powers optional Context7 docs via `agents/context7_docs.py`).
-- `DATABASE_URL`\* — Postgres; `postgres://` is auto-rewritten to `postgresql+asyncpg://`. Unset = SQLite.
+- `DATABASE_URL`\* — Postgres; `postgres://` / `postgresql://` are auto-rewritten to `postgresql+asyncpg://`
+  (which also passes through as-is). Unset = SQLite, except under `ENVIRONMENT=production`, where an unset or
+  non-Postgres URL fails at import (`db/connection.py:resolve_database_url`).
 - `STORAGE_MODE` `local|r2`; for r2: `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`\*, `S3_SECRET_KEY`\*, `S3_PUBLIC_URL`.
 - `LANGFUSE_PUBLIC_KEY`\*, `LANGFUSE_SECRET_KEY`\*, `LANGFUSE_HOST`, `LANGFUSE_TRACING_ENVIRONMENT`.
 - `APPLICATIONINSIGHTS_CONNECTION_STRING`\* — Azure Application Insights (requests, outbound HTTP, exceptions,
@@ -180,3 +183,10 @@ npm/pip audit (advisory). `evals.yml` — nightly 06:00 UTC golden-set evals, fa
    row exists.
 10. **Keep `pytest` hermetic.** `testpaths=["tests"]` exists because scripts under `tools/` fire real API calls
    on collection; new tests must not need network or real keys.
+11. **Never add a `Column` or `Index` to an EXISTING model without a migration path.** `create_all` only creates
+   missing tables — it never alters one that exists — and there is no Alembic. `init_db()` therefore compares
+   every model column with the live table after `create_all` and RAISES on a missing one, so the new revision
+   fails its startup probe and the old one keeps serving (instead of `UndefinedColumn` 500s at query time). To
+   ship a column: run the `ALTER TABLE ... ADD COLUMN` against production first (nullable or with a default, so
+   the old revision keeps working), then deploy. New tables are fine. The guard covers the API only (the worker
+   never calls `init_db`) and does not check indexes, types or constraints.

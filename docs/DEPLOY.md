@@ -31,12 +31,24 @@ gh run watch
 3. rolls `arxivisual-api` and polls `GET /api/health` until its `commit` equals the sha — in single-revision mode the old revision keeps answering until the new one passes its probes, so a plain 200 proves nothing;
 4. only then rolls `arxivisual-worker` to the same image and checks that its new revision is `Healthy` / `Running` (the worker has no ingress, so there is no URL to poll).
 
-**Roll in the quiet window (19:00–24:00 UTC), with no paper in flight.** Generation heartbeats and resumes from per-visualization checkpoints, but the render activity has no heartbeat: when a roll replaces the worker mid-render, Temporal only notices once the 25-minute start-to-close timeout expires and retries then, so every interrupted render can stall its job for up to 25 minutes ([backend/temporal_app/workflows.py](../backend/temporal_app/workflows.py)). Check first:
+**Roll in the quiet window (19:00–24:00 UTC), with no paper in flight.** Only generation heartbeats (and resumes from per-visualization checkpoints). Ingest, render, repair and the repair re-render have no heartbeat: when a roll replaces the worker under one of them, Temporal notices only when that activity's start-to-close timeout expires — 15 minutes for an ingest, 25 for a render, 18 for a repair — so every interrupted activity can stall its job for up to that long. Ingest and render are then retried once; an interrupted repair is not, and the original video stays ([backend/temporal_app/workflows.py](../backend/temporal_app/workflows.py)).
+
+The count that matters is job rows still `queued` or `processing` — the query the worker's KEDA scale rule already runs ([infra/container_apps.tf](../infra/container_apps.tf)), against the `arxiviz` database:
+
+```sql
+SELECT COUNT(*) FROM processing_jobs WHERE status IN ('queued','processing');   -- want 0
+```
+
+The Postgres firewall admits Azure-hosted clients only ([infra/database.tf](../infra/database.tf)), so it has to be run from inside Azure (Cloud Shell, for one) — a laptop is refused. It errs on the safe side: a job stranded by an earlier interruption keeps counting until the reaper fails it (two hours old, on the next `POST /api/process`).
+
+From a laptop there is only a lower bound:
 
 ```bash
 API=https://arxivisual-api.purplepond-ac9e2dc5.eastus2.azurecontainerapps.io
-curl -s $API/api/papers | jq '[.papers[] | select(.status == "processing")] | length'   # want 0
+curl -s $API/api/papers | jq '[.papers[] | select(.status == "processing")] | length'
 ```
+
+Anything above 0 means wait. **0 is not a green light:** a paper reads `ready` as soon as it has one finished video (from this run or an earlier one), while its other renders and the whole repair pass are still running, and a job whose ingest has not stored the paper yet is not in the list at all.
 
 ### 2. Deploy by hand (what the workflow automates)
 

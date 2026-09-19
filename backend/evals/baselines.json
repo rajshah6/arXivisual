@@ -5,8 +5,15 @@
     "These carry generous initial slack. Once 3+ real nightly runs establish",
     "variance, tighten them toward the observed floor — procedure in",
     "backend/evals/README.md. render_tester has no threshold: evals run with",
-    "RENDER_MODE=modal, so that gate is disabled by design."
+    "RENDER_MODE=modal, so that gate is disabled by design.",
+    "'coverage' is the floor on papers actually evaluated: at least",
+    "papers_requested - max_papers_not_evaluated (never less than 1). A paper",
+    "that errors (arXiv 503, ingest crash) also counts as a failure in",
+    "viz_yield_rate: it owed max_viz visualizations and delivered none."
   ],
+  "coverage": {
+    "max_papers_not_evaluated": 1
+  },
   "metrics": {
     "viz_yield_rate": { "min": 0.5 },
     "gates.code_validator.first_attempt_rate": { "min": 0.4 },

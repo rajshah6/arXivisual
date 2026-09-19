@@ -6,7 +6,9 @@ baseline threshold against the report's aggregate metrics, prints a verdict
 table, and exits 1 if any metric regresses below its floor (or above its cap).
 
 A metric that is missing from the report (e.g. a gate that never ran) counts as
-a failure: silently losing a gate IS a regression.
+a failure: silently losing a gate IS a regression. So does losing the PAPERS:
+the baselines' ``coverage`` rule puts a floor on papers_evaluated (requested
+minus an allowance), because rates over one surviving paper prove nothing.
 
 Usage (from backend/):
     uv run python evals/check_regression.py report.json evals/baselines.json
@@ -73,6 +75,33 @@ def evaluate_thresholds(aggregate: dict, thresholds: dict) -> list[dict]:
     return rows
 
 
+def evaluate_coverage(report: dict, coverage: dict) -> dict | None:
+    """Floor on how many of the requested papers were actually evaluated.
+
+    Rates say nothing about coverage: a perfect score over the one paper that
+    survived ingestion passed every threshold while four of five papers had
+    errored. ``max_papers_not_evaluated`` (baselines ``coverage``) allows that
+    many casualties — arXiv does flake — and never lets a run evaluate nothing.
+    Returns a row shaped like evaluate_thresholds', or None when the baselines
+    configure no coverage rule.
+    """
+    allowed = coverage.get("max_papers_not_evaluated")
+    if allowed is None:
+        return None
+    requested = report.get("config", {}).get("papers_requested")
+    evaluated = report.get("aggregate", {}).get("papers_evaluated")
+    row = {"metric": "papers_evaluated", "constraint": "-", "actual": evaluated, "ok": False, "detail": ""}
+    if not isinstance(requested, int) or not isinstance(evaluated, int):
+        row["detail"] = "papers_requested / papers_evaluated missing from report"
+        return row
+    floor = max(1, requested - allowed)
+    row["constraint"] = f">= {floor}"
+    row["ok"] = evaluated >= floor
+    if not row["ok"]:
+        row["detail"] = f"below minimum {floor} ({requested} requested, at most {allowed} may fail)"
+    return row
+
+
 def print_table(rows: list[dict]) -> None:
     width = max([len(r["metric"]) for r in rows] + [len("metric")]) + 2
     print(f"{'metric':<{width}}{'required':>12}{'actual':>10}  status")
@@ -105,6 +134,9 @@ def main(argv: list[str] | None = None) -> int:
 
     aggregate = report.get("aggregate", {})
     rows = evaluate_thresholds(aggregate, thresholds)
+    coverage_row = evaluate_coverage(report, baselines.get("coverage", {}))
+    if coverage_row is not None:
+        rows.insert(0, coverage_row)
 
     papers = aggregate.get("papers_evaluated")
     print(

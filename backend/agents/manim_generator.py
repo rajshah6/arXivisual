@@ -261,6 +261,13 @@ class ManimGenerator(BaseAgent):
 
         try:
             live_docs = await get_manim_docs(topic=topic, max_tokens=5000, use_dedalus=True)
+            if live_docs and live_docs.strip() == self.system_prompt.strip():
+                # get_manim_docs hands back the static manim_reference.md when
+                # every live source fails — the exact text already loaded as the
+                # system prompt. Appending it sent the reference twice on every
+                # generator call in production (~4.4k tokens/call).
+                logger.info("  Live docs unavailable; static reference already in system prompt")
+                return self.system_prompt
             if live_docs and len(live_docs) > 100:
                 logger.info(
                     "  Enriched prompt with %d chars of live Manim docs "

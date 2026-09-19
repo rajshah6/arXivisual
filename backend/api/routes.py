@@ -221,7 +221,8 @@ async def start_processing(
     # happens on the worker app and survives restarts/redeploys; the workflow
     # ID makes duplicate submissions structurally impossible at the
     # orchestrator. A dead cached client is replaced and the start retried
-    # once (temporal_client.call_with_reconnect). Fail-open: any Temporal error
+    # once (temporal_client.call_with_reconnect); the job_id memo lets that
+    # retry recognise its own first attempt. Fail-open: any Temporal error
     # that survives that falls back to the legacy in-process BackgroundTasks
     # path so paper processing never breaks on orchestrator trouble.
     started_durably = False
@@ -234,34 +235,54 @@ async def start_processing(
             from temporal_app.activities import PipelineInput
             from temporal_app.workflows import TASK_QUEUE, PaperPipelineWorkflow
 
-            from .temporal_client import call_with_reconnect
+            from .temporal_client import JOB_ID_MEMO_KEY, call_with_reconnect, retried_start_is_ours
+
+            workflow_id = f"paper-{arxiv_id}"
+            start_calls = 0
+
+            async def _start(temporal):
+                nonlocal start_calls
+                start_calls += 1
+                await temporal.start_workflow(
+                    PaperPipelineWorkflow.run,
+                    PipelineInput(job_id=job_id, arxiv_id=arxiv_id),
+                    id=workflow_id,
+                    task_queue=TASK_QUEUE,
+                    # Names the job this run belongs to; read back below.
+                    memo={JOB_ID_MEMO_KEY: job_id},
+                )
 
             try:
-                await call_with_reconnect(
-                    lambda temporal: temporal.start_workflow(
-                        PaperPipelineWorkflow.run,
-                        PipelineInput(job_id=job_id, arxiv_id=arxiv_id),
-                        id=f"paper-{arxiv_id}",
-                        task_queue=TASK_QUEUE,
-                    )
-                )
+                await call_with_reconnect(_start)
                 started_durably = True
             except WorkflowAlreadyStartedError:
-                # A workflow for this paper is already running (race past the
-                # cheap dedupe). Retire the row we just created and point the
-                # caller at the active job.
-                await queries.update_job_status(
-                    db, job_id, status="failed",
-                    error="Duplicate submission; another run was already in flight.",
-                )
-                recent_jobs.clear(arxiv_id)
-                active = await queries.get_active_job_for_paper(db, arxiv_id)
-                return ProcessResponse(
-                    job_id=active.id if active else job_id,
-                    arxiv_id=arxiv_id,
-                    status=JobStatus(active.status) if active else JobStatus.queued,
-                    message="This paper is already being processed. Poll /api/status/{job_id} for updates.",
-                )
+                # On a RETRIED start this is usually our own first call: it
+                # reached the server, only its response was lost, and the retry
+                # (a new request id) is rejected because of the workflow this
+                # job owns. The memo tells that apart from a real duplicate. On
+                # the first call it can only be someone else's — no lookup.
+                if start_calls > 1 and await retried_start_is_ours(workflow_id, job_id):
+                    started_durably = True
+                    logger.info(
+                        "Temporal start for job %s had already landed — the retry found its own workflow %s",
+                        job_id, workflow_id,
+                    )
+                else:
+                    # A workflow for this paper is already running (race past the
+                    # cheap dedupe). Retire the row we just created and point the
+                    # caller at the active job.
+                    await queries.update_job_status(
+                        db, job_id, status="failed",
+                        error="Duplicate submission; another run was already in flight.",
+                    )
+                    recent_jobs.clear(arxiv_id)
+                    active = await queries.get_active_job_for_paper(db, arxiv_id)
+                    return ProcessResponse(
+                        job_id=active.id if active else job_id,
+                        arxiv_id=arxiv_id,
+                        status=JobStatus(active.status) if active else JobStatus.queued,
+                        message="This paper is already being processed. Poll /api/status/{job_id} for updates.",
+                    )
         except Exception as exc:
             # ONE line, on purpose: an alert keys on the exact phrase "Temporal
             # unavailable", and log pipelines split multi-line tracebacks into

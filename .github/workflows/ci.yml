@@ -71,9 +71,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Same major as the image that ships (frontend/Dockerfile: node:22-alpine).
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -99,6 +100,7 @@ jobs:
     outputs:
       docker: ${{ steps.filter.outputs.docker }}
       frontend-docker: ${{ steps.filter.outputs.frontend-docker }}
+      terraform: ${{ steps.filter.outputs.terraform }}
     steps:
       - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v3
@@ -116,6 +118,9 @@ jobs:
               - 'frontend/package.json'
               - 'frontend/package-lock.json'
               - 'frontend/next.config.ts'
+              - '.github/workflows/ci.yml'
+            terraform:
+              - 'infra/**'
               - '.github/workflows/ci.yml'
 
   docker:
@@ -163,6 +168,11 @@ jobs:
 
       - uses: docker/setup-buildx-action@v4
 
+      # Dummy PUBLIC values, same arg names as deploy-frontend.yml and
+      # frontend/Dockerfile: with the analytics args unset, next.config.ts
+      # returns no rewrites and the PostHog/Clarity code is compiled out, so
+      # the build production actually ships was never compiled in CI. Nothing
+      # is pushed and nothing is contacted at build time.
       - name: Build frontend image
         id: build
         continue-on-error: true
@@ -172,6 +182,10 @@ jobs:
           push: false
           build-args: |
             APP_COMMIT_SHA=${{ github.sha }}
+            NEXT_PUBLIC_API_URL=https://example.invalid
+            NEXT_PUBLIC_POSTHOG_KEY=phc_ci_dummy
+            NEXT_PUBLIC_POSTHOG_HOST=https://us.posthog.com
+            NEXT_PUBLIC_CLARITY_PROJECT_ID=ci
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
 
@@ -183,4 +197,35 @@ jobs:
           push: false
           build-args: |
             APP_COMMIT_SHA=${{ github.sha }}
+            NEXT_PUBLIC_API_URL=https://example.invalid
+            NEXT_PUBLIC_POSTHOG_KEY=phc_ci_dummy
+            NEXT_PUBLIC_POSTHOG_HOST=https://us.posthog.com
+            NEXT_PUBLIC_CLARITY_PROJECT_ID=ci
           no-cache: true
+
+  # infra/ manages live production and had no gate at all: a formatting slip
+  # or an invalid reference surfaced at `terraform plan` time, on a laptop,
+  # mid-change. No Azure credentials needed — init skips the backend and
+  # validate never calls the providers' APIs. Version: what infra/ was built
+  # and verified with (infra/README.md; versions.tf requires >= 1.9).
+  terraform:
+    name: Terraform fmt & validate
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.terraform == 'true'
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.15.9"
+          terraform_wrapper: false
+
+      - name: Format check
+        run: terraform -chdir=infra fmt -check -recursive -diff
+
+      - name: Init (providers only, no backend)
+        run: terraform -chdir=infra init -backend=false -input=false
+
+      - name: Validate
+        run: terraform -chdir=infra validate

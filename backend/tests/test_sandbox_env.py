@@ -7,6 +7,7 @@ allow-list would break LaTeX/ffmpeg/fontconfig, which CI cannot catch), after
 which the runner re-adds only the OpenAI-compatible TTS credentials.
 """
 
+import asyncio
 import subprocess
 import sys
 
@@ -142,20 +143,29 @@ class TestRenderSubprocessEnv:
 
 
 class TestDryRunGateEnv:
-    def test_dry_run_child_gets_the_shared_scrub_and_a_placeholder_key(self, full_env, monkeypatch):
-        seen = {}
+    # Both gate modes: RENDER_TEST_EXECUTE=0 (import-only) once imported the
+    # generated module inside the worker process, bypassing the scrub entirely.
+    @pytest.mark.parametrize("execute_flag, import_only", [("1", False), ("0", True)])
+    def test_dry_run_child_gets_the_shared_scrub_and_a_placeholder_key(
+        self, full_env, monkeypatch, execute_flag, import_only,
+    ):
+        seen, cmds = {}, []
 
         def fake_run(cmd, **kwargs):
+            cmds.append(cmd)
             seen.update(kwargs["env"])
             return subprocess.CompletedProcess(cmd, 0, stdout=rt_module.SENTINEL_OK, stderr="")
 
         monkeypatch.setenv("OPENAI_API_KEY", "real-openai-key")
+        monkeypatch.setenv("RENDER_TEST_EXECUTE", execute_flag)
         monkeypatch.setattr(rt_module.subprocess, "run", fake_run)
-        result = RenderTester(timeout_seconds=5)._validate_by_execution(
+        result = asyncio.run(RenderTester(timeout_seconds=5).test_render(
             "from manim import *\nclass S(Scene):\n    def construct(self):\n        pass\n"
-        )
+        ))
 
         assert result.success
+        # One subprocess per check, in either mode — never an in-process import.
+        assert len(cmds) == 1 and (rt_module.IMPORT_ONLY_FLAG in cmds[0]) is import_only
         for name in SECRET_ENV:
             assert name not in seen, name
         # No real credential reaches the dry run — not even the TTS one.

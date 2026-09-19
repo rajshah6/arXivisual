@@ -201,7 +201,8 @@ jobs:
 
       # The worker has no ingress, so there is no endpoint to poll: the app
       # must name the image and its newest revision must carry it, Healthy and
-      # Running, without restarting.
+      # Running, without crash-looping (a startup restart that stops is only
+      # a warning — see wait-for-revision.sh).
       - name: Verify the worker revision
         run: bash .github/scripts/wait-for-revision.sh "$WORKER_APP_NAME" "$IMAGE"
 

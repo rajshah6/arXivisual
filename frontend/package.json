@@ -10,19 +10,19 @@
   },
   "dependencies": {
     "@microsoft/clarity": "^1.0.2",
-    "@tanstack/react-query": "^5.90.20",
+    "@tanstack/react-query": "^5.102.8",
     "clsx": "^2.1.1",
     "framer-motion": "^12.31.0",
-    "katex": "^0.16.28",
+    "katex": "^0.18.7",
     "mini-svg-data-uri": "^1.4.4",
     "next": "16.3.5",
-    "posthog-js": "^1.429.1",
-    "react": "19.2.3",
-    "react-dom": "19.2.3",
+    "posthog-js": "^1.433.5",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
     "react-markdown": "^10.1.0",
     "rehype-katex": "^7.0.1",
     "remark-math": "^6.0.0",
-    "tailwind-merge": "^3.4.0"
+    "tailwind-merge": "^3.7.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

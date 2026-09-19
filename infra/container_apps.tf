@@ -306,6 +306,13 @@ resource "azurerm_container_app" "api" {
           value = var.posthog_host
         }
       }
+      # Keep LAST (positional diffing, see above). The Azure Monitor distro maps
+      # the OTel service.name to the Application Insights cloud role name;
+      # without it every span arrives as role "unknown_service".
+      env {
+        name  = "OTEL_SERVICE_NAME"
+        value = "arxivisual-api"
+      }
     }
   }
 }
@@ -689,6 +696,12 @@ resource "azurerm_container_app" "worker" {
           name  = "POSTHOG_HOST"
           value = var.posthog_host
         }
+      }
+      # Keep LAST (positional diffing). Cloud role name for the worker's
+      # telemetry in Application Insights (see the same block on the API).
+      env {
+        name  = "OTEL_SERVICE_NAME"
+        value = "arxivisual-worker"
       }
     }
   }

@@ -1,9 +1,19 @@
 # arXivisual frontend
 
-Next.js 16 (App Router, React 19, Tailwind 4). In production it runs as a
+Next.js 16 (App Router, React 19, Tailwind 4). The production target is a
 Node server — `output: "standalone"` — inside a Docker image on Azure
 Container Apps (`arxivisual-web`), next to the FastAPI backend. There is no
-static export and no Vercel.
+static export.
+
+> **Status as of 2026-09-18 — the move off Vercel is not finished.**
+> `arxivisual-web` is live only at its `azurecontainerapps.io` address.
+> `arxivisual.org` and `www` still resolve to the old Vercel project, which
+> builds and deploys every push to `main` on its own and reads its **own**
+> environment variables: the `NEXT_PUBLIC_*` GitHub repository variables
+> that `deploy-frontend.yml` builds with never reach it, which is why the
+> public site has had no PostHog since 2026-09-10.
+> Until the [cut-over](../docs/DEPLOY.md#5-cut-over-vercel--azure) is done,
+> merging to `main` is a production deploy. Delete this note afterwards.
 
 ## Develop
 

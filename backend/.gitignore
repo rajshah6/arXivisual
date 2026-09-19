@@ -43,6 +43,8 @@ htmlcov/
 media/
 generated_output/
 
-# Local DB
+# Local DB (and SQLite's WAL-mode sidecars)
 *.db
+*.db-shm
+*.db-wal
 *.sqlite3

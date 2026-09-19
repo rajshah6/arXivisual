@@ -90,8 +90,9 @@ def extract_scene_name(code: str) -> str:
 
     Looks for patterns like: class MyScene(Scene), class TestScene(ThreeDScene), etc.
     """
-    # Match class definitions that inherit from Scene or any *Scene class
-    pattern = r'class\s+(\w+)\s*\(\s*\w*Scene\s*\)'
+    # Match class definitions that inherit from Scene or any *Scene class,
+    # anywhere in the base list (`class X(ThreeDScene, VoiceoverScene)`).
+    pattern = r'class\s+(\w+)\s*\([^)]*\b\w*Scene\b[^)]*\)'
     match = re.search(pattern, code)
     if match:
         return match.group(1)

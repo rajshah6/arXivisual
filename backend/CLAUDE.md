@@ -40,7 +40,7 @@ POST /api/process  (api/routes.py: rate-limit + dedupe [api/throttle.py] + stale
 | 1 | SectionAnalyzer | `agents/section_analyzer.py` | LLM: pick concepts worth animating |
 | 2 | VisualizationPlanner | `agents/visualization_planner.py` | LLM: scene-by-scene storyboard |
 | 3 | ManimGenerator (voice-aware) | `agents/manim_generator.py` | LLM: full `VoiceoverScene` code, few-shot by viz type |
-| 4 | CodeValidator | `agents/code_validator.py` | gate: AST/structure/auto-fixes + static rules (MathTex splitting, `camera.frame` outside MovingCameraScene), no LLM |
+| 4 | CodeValidator | `agents/code_validator.py` | gate: AST/structure/auto-fixes + static rules (MathTex splitting, `camera.frame` outside MovingCameraScene, forbidden imports/builtins), no LLM |
 | 5 | SpatialValidator | `agents/spatial_validator.py` | gate: bounds/overlap regex, no LLM |
 | 6 | VoiceoverScriptValidator | `agents/voiceover_script_validator.py` | gate: narration quality, heuristics + LLM judge |
 | 7 | RenderTester | `agents/render_tester.py` | gate: dry-run construct() execution in a stubbed subprocess (auto-skipped when `RENDER_MODE=modal`) |
@@ -70,7 +70,7 @@ closed-loop layout repair + re-render (`temporal_app/activities.py:repair_visual
 
 ```bash
 uv sync --extra dev                          # install (dev extra = pytest)
-uv run pytest tests/                         # unit suite (~89 tests, hermetic; CI hard gate on py3.11+3.13)
+uv run pytest tests/                         # unit suite (~490 tests, hermetic; CI hard gate on py3.11+3.13)
 TEMPORAL_TESTS=1 uv run pytest tests/test_temporal_pipeline.py   # integration (downloads Temporal dev server)
 uvx ruff check .                             # lint — HARD CI gate; the tree is ruff-clean (policy in pyproject)
 uv run uvicorn main:app --reload             # API on :8000, docs at /docs
@@ -81,7 +81,8 @@ uv run python evals/check_regression.py report.json evals/baselines.json
 
 CI (`.github/workflows/`): `ci.yml` — backend pytest, frontend tsc + build, backend AND frontend docker image builds
 (hard gates; backend ruff and frontend eslint are both HARD gates). `security.yml` — gitleaks secret scan (blocking) +
-npm/pip audit (advisory). `evals.yml` — nightly 06:00 UTC golden-set evals, fails on baseline regression.
+npm/pip audit (advisory). `evals.yml` — nightly 06:00 UTC golden-set evals, fails on baseline regression OR when
+fewer than `papers_requested - 1` papers were evaluated (errored papers count as failures; `evals/README.md`).
 `deploy-backend.yml` / `deploy-frontend.yml` — Azure OIDC login, ACR build, Container App roll, health verify
 (the frontend one polls `/healthz` until the reported commit matches; both apps live in `infra/` Terraform).
 
@@ -103,7 +104,13 @@ npm/pip audit (advisory). `evals.yml` — nightly 06:00 UTC golden-set evals, fa
   (`analytics.py`): `paper_accepted` (distinct_id = client fingerprint), `paper_completed` /
   `paper_failed_server` (distinct_id = job id, emitted on both pipeline paths). Unset key = no-op.
 - `ENVIRONMENT=production` — disables `POST /api/render` (404) unless `RENDER_API_SECRET`\* matches the
-  `X-Render-Secret` header. The endpoint executes caller-supplied Python; keep it locked.
+  `X-Render-Secret` header. The endpoint executes caller-supplied Python; keep it locked. Also requires a
+  Postgres `DATABASE_URL` (above) and drops `localhost` from the default Turnstile hostname allow-list.
+- `APP_COMMIT_SHA` — commit baked into the image by the deploy workflow (default `unknown`). `GET /api/health`
+  returns it as top-level `commit` (the deploy polls until it matches the sha it built — do not rename the key)
+  and the worker logs it at startup. `/api/health` also reports `database_dialect`, never blocks the event loop
+  (`api/health.py`: manim probed once per process in a thread; DB/R2 cached for `HEALTH_CACHE_TTL_SECONDS`=20)
+  and returns generic error strings — the detail is in the server log.
 - `CORS_EXTRA_ORIGINS` — comma-separated browser origins admitted on top of arxivisual.org/www/localhost:3000
   (`api/cors.py`; canonicalized, a non-origin fails startup). Production: the frontend Container App's own FQDN.
 - **Admission control on `POST /api/process`** (`api/throttle.py`, `api/turnstile.py`) — layered, each layer
@@ -128,7 +135,10 @@ npm/pip audit (advisory). `evals.yml` — nightly 06:00 UTC golden-set evals, fa
 
 ## Feature flags
 
-- `USE_TEMPORAL=1` — durable orchestration; any Temporal error falls back (fail-open) to the legacy in-process path.
+- `USE_TEMPORAL=1` — durable orchestration. The API's cached Temporal client is reset, reconnected and the start
+  retried ONCE on a connect failure/`RPCError` (`api/temporal_client.py:call_with_reconnect`); any Temporal error
+  that survives that falls back (fail-open) to the legacy in-process path and logs ONE `ERROR` line containing the
+  exact phrase `Temporal unavailable` — an alert keys on it, keep the wording.
 - `ENABLE_VISUAL_QA=1` — vision judge on rendered frames (observe-only on legacy path; verdict feeds repair on Temporal path).
 - `VISUAL_QA_REPAIR=1` — one **vision-grounded** repair round for `major` defects (Temporal path only): the
   rendered video is read back through the storage backend (never the CDN URL — stable keys cache for a year),
@@ -190,3 +200,12 @@ npm/pip audit (advisory). `evals.yml` — nightly 06:00 UTC golden-set evals, fa
    ship a column: run the `ALTER TABLE ... ADD COLUMN` against production first (nullable or with a default, so
    the old revision keeps working), then deploy. New tables are fine. The guard covers the API only (the worker
    never calls `init_db`) and does not check indexes, types or constraints.
+12. **Generated Manim code is untrusted: it never sees the secret environment.** An LLM writes it from arbitrary
+   paper text and it is executed twice (dry-run gate, real render). Every subprocess that runs it takes its env
+   from `rendering/sandbox_env.py:scrubbed_env()` — a DENY-list by prefix and name pattern, NOT an allow-list
+   (LaTeX/ffmpeg/fontconfig need an unpredictable set of ordinary variables and CI never renders). The runner
+   re-adds only the TTS credential (`_tts_subprocess_env`). A new secret whose name does not contain
+   KEY/SECRET/TOKEN/PASSWORD/CONNECTION_STRING needs a prefix entry there. `CodeValidator` also rejects
+   `os`/`sys`/`subprocess`/network/`importlib`/`pickle` imports and `eval`/`exec`/`compile`/`__import__`/`open()`
+   (a tripwire, not a sandbox); the exhausted-retries fallback drops a viz whose last attempt failed that gate
+   instead of shipping it. Never teach a forbidden name in `prompts/` or `examples/` — a test enforces it.

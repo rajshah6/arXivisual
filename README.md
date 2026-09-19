@@ -8,7 +8,7 @@
    Transform research papers into visual stories
 </p>
 
-[![arXivisual Video](frontend/public/arXivisual.mp4)](https://github.com/user-attachments/assets/5453760b-5f82-4fd1-9a77-fe8818fea059)
+https://github.com/user-attachments/assets/5453760b-5f82-4fd1-9a77-fe8818fea059
 
 ![arXivisual Landing Page](frontend/public/landing.jpeg)
 
@@ -41,7 +41,7 @@ flowchart LR
     H --> I[Scrollytelling reader]
 ```
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full walkthrough.
+In production the stages run as a durable [Temporal](https://temporal.io/) workflow: the API only admits the job, and a separate worker app ingests, generates, renders, judges and repairs. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full walkthrough.
 
 ## Tech Stack
 
@@ -54,8 +54,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full walkthrough.
 | Text-to-speech | Azure OpenAI `gpt-4o-mini-tts` (gTTS fallback) |
 | Database | PostgreSQL in production, SQLite locally (SQLAlchemy async) |
 | Video storage | Cloudflare R2 (S3-compatible), local filesystem in dev |
-| Observability | Langfuse |
-| Hosting | Azure Container Apps (backend and frontend, one environment, Terraform-managed) |
+| Orchestration | Temporal (self-hosted; FastAPI background task as the fail-open fallback) |
+| Observability | Langfuse (LLM traces and cost), Azure Application Insights, PostHog product events |
+| Hosting | Azure Container Apps — API, Temporal worker and the Next.js server in one Terraform-managed environment (see [Deployment](#deployment)) |
 | CI | GitHub Actions |
 
 ## Quick Start
@@ -100,11 +101,13 @@ uv sync --extra dev
 uv run pytest tests/
 ```
 
-The suite is fully offline — CI runs it against dummy provider credentials on Python 3.11 and 3.13. Frontend checks are `npx tsc --noEmit` and `npm run build`.
+The suite is fully offline — CI runs it against dummy provider credentials on Python 3.11 and 3.13. Frontend checks are `npx tsc --noEmit`, `npm run lint` and `npm run build`.
 
 ## Deployment
 
-Both halves ship as Docker images to **Azure Container Apps** in the same environment: the FastAPI backend (`arxivisual-api`) and the Next.js server (`arxivisual-web`, SSR — no static export, no Vercel). Deploys are manual GitHub Actions runs (`deploy-backend.yml`, `deploy-frontend.yml`); infrastructure is Terraform in [infra/](infra/). See [docs/DEPLOY.md](docs/DEPLOY.md) for the full procedure, environment reference, DNS, and rollback steps.
+> **Status as of 2026-09-18 — the move off Vercel is not finished.** `arxivisual.org` and `www.arxivisual.org` still resolve to the old Vercel project, which builds and deploys **every push to `main`** by itself, with its own environment variables (GitHub repository variables never reach it). `arxivisual-web` on Azure is live only at its `azurecontainerapps.io` address. Until the DNS cut-over in [docs/DEPLOY.md](docs/DEPLOY.md#5-cut-over-vercel--azure) is done, a merge to `main` **is** a production frontend deploy. Delete this note once the cut-over and its soak period are over; everything below already describes the end state.
+
+Both halves ship as Docker images to **Azure Container Apps** in the same environment: the FastAPI backend (`arxivisual-api`, plus the Temporal worker `arxivisual-worker` on the same image) and the Next.js server (`arxivisual-web`, SSR — no static export). Azure deploys are manual GitHub Actions runs: `deploy-backend.yml` waits for green CI, rolls the API, then rolls the worker to the same image; `deploy-frontend.yml` rolls the web app and waits until `/healthz` reports the new commit. A scheduled production monitor watches health, certificate expiry and deploy drift. Infrastructure is Terraform in [infra/](infra/). See [docs/DEPLOY.md](docs/DEPLOY.md) for the full procedure, environment reference, DNS, and rollback steps.
 
 ## Creators
 

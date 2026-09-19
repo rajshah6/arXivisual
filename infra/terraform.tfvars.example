@@ -7,7 +7,9 @@
 postgres_admin_password = "REPLACE_ME"
 
 # postgresql+asyncpg style connection string used by the API/worker apps.
-database_url = "postgresql://user:REPLACE_ME@arxivisual-db.postgres.database.azure.com:5432/arxiviz?sslmode=require"
+# NOTE: asyncpg takes ?ssl=require and crashes on libpq's ?sslmode=require
+# (only the worker's KEDA scaler secret in container_apps.tf uses sslmode).
+database_url = "postgresql://user:REPLACE_ME@arxivisual-db.postgres.database.azure.com:5432/arxiviz?ssl=require"
 
 # az cognitiveservices account keys list -n arxivisual-openai -g arxivisual-rg
 azure_openai_api_key = "REPLACE_ME"

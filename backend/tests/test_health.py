@@ -168,7 +168,7 @@ class TestNoLeaks:
                 raise RuntimeError("no bind")
 
             async def execute(self, _stmt):
-                raise ConnectionError("could not connect to db.internal:5432 as user rabidcheese9 password=hunter2")
+                raise ConnectionError("could not connect to db.internal:5432 as user dbadmin_example password=hunter2")
 
         with caplog.at_level("WARNING"):
             async with _client(_Broken()) as client:
@@ -179,7 +179,7 @@ class TestNoLeaks:
         assert body["status"] == "degraded"
         assert body["services"]["database"] == "error"
         assert body["database_dialect"] == "unknown"
-        for secret in ("hunter2", "db.internal", "rabidcheese9"):
+        for secret in ("hunter2", "db.internal", "dbadmin_example"):
             assert secret not in response.text
         assert "db.internal" in caplog.text  # operators still get the detail
 

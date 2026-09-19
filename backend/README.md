@@ -40,7 +40,7 @@ All configuration lives in `.env` — copy [`.env.example`](.env.example) and fi
 | `DATABASE_URL` | Postgres in production; unset = local SQLite (`./arxiviz.db`), zero setup. |
 | `STORAGE_MODE` | `local` (default, videos in `./media/videos/`) or `r2` (Cloudflare R2, needs `S3_*` vars). |
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | Optional — enables LLM tracing/cost tracking in Langfuse. |
-| `USE_TEMPORAL` | Optional — `1` routes jobs through a Temporal workflow for durable, restart-safe execution. |
+| `USE_TEMPORAL` | `1` in production: jobs run as a Temporal workflow on the worker (durable, restart-safe). Unset locally = in-process background task, no Temporal server needed. |
 
 ## Tests and lint
 
@@ -62,17 +62,21 @@ frontend, and builds the backend Docker image. A blocking secret scan and a nigh
 3. **Generate** (`agents/manim_generator.py`) — write complete Manim `VoiceoverScene` code, narration included,
    guided by few-shot examples per visualization type.
 4. **Validate** — four gates with a feedback-and-regenerate loop: code structure (`code_validator`), on-screen
-   layout (`spatial_validator`), narration quality (`voiceover_script_validator`), and a real import/compile
-   test (`render_tester`).
+   layout (`spatial_validator`), narration quality (`voiceover_script_validator`), and a dry run
+   (`render_tester`): the scene's `construct()` is executed in a subprocess with frames, TTS and audio
+   stubbed out, which catches the runtime errors an import test cannot.
 5. **Render** (`rendering/local_runner.py`) — Manim subprocess renders each scene; narration is synthesized via
    Azure OpenAI TTS and cached across retries. Videos upload to Cloudflare R2 (or local disk in dev).
 6. **Visual QA** (`agents/visual_qa.py`) — a vision model inspects sampled frames for overlaps/cut-offs; on the
    Temporal path, badly defective videos get one targeted repair-and-re-render pass.
 
-Orchestration is either a durable Temporal workflow (`temporal_app/`, `USE_TEMPORAL=1` — survives restarts,
-dedupes by paper, checkpoints the LLM spend) or a plain FastAPI background task (`jobs/worker.py`, the
-default). The public `/api/process` endpoint is protected by per-IP and global rate limits plus duplicate-job
-detection (`api/throttle.py`).
+Orchestration in production is a durable Temporal workflow (`temporal_app/`, `USE_TEMPORAL=1` — survives
+restarts, dedupes by paper, checkpoints the LLM spend): the API only admits the job and a separate worker
+process (`python -m temporal_app.worker`) runs it. A plain FastAPI background task (`jobs/worker.py`) is the
+fallback — it is what runs locally when `USE_TEMPORAL` is unset, and what the API fails open to whenever
+Temporal cannot be reached. The public `/api/process` endpoint is protected by server-verified Turnstile, a
+durable daily cap, per-IP and global rate limits, and duplicate-job detection (`api/throttle.py`,
+`api/turnstile.py`).
 
 ## API surface
 
@@ -84,4 +88,5 @@ detection (`api/throttle.py`).
 | GET | `/api/papers` | List processed papers |
 | GET | `/api/video/{video_id}` | Serve/redirect to a rendered video |
 | POST | `/api/render` | Render raw Manim code — dev only; disabled in production without a secret |
-| GET | `/api/health` | Health of DB, Manim, and storage |
+| POST | `/api/feedback` | Viewer feedback: a per-video up/down vote or a site suggestion (rate-limited) |
+| GET | `/api/health` | Health of DB, Manim, and storage (there is no `/health`) |

@@ -14,11 +14,64 @@ You give the system an arXiv paper ID. It gives you back narrated, animated expl
 
 ## Job Lifecycle
 
-`POST /api/process` first passes admission control (server-verified Turnstile → durable daily cap from the jobs table → per-IP hourly/daily and global sliding windows; see `SECURITY.md`), then creates a `ProcessingJob` row (status `queued`) and schedules `jobs/worker.py:process_paper_job` as a FastAPI background task, returning the job ID immediately. The frontend polls `GET /api/status/{job_id}`; the worker writes progress milestones as it moves through three phases:
+Two Container Apps run the same backend image. **`arxivisual-api`** (FastAPI, `main.py`) admits jobs and serves reads; **`arxivisual-worker`** (`temporal_app/worker.py`) executes them. A self-hosted Temporal server (`arxivisual-temporal`) sits between the two. Production sets `USE_TEMPORAL=1`; with the flag off, or whenever Temporal cannot be reached, the API runs the whole pipeline itself as a FastAPI background task (see [Fallback](#fallback-the-in-process-path-jobsworkerpy)).
 
-1. **Ingest** (progress 0.10 → 0.30) — fetch and parse the paper, store paper + sections in the database. Skipped if the paper was processed before; a pre-fix abstract-only ingest (`queries.is_stale`) is re-ingested instead.
-2. **Generate** (0.50) — run the agent pipeline to produce validated Manim code for up to 5 concepts.
-3. **Render** (0.75 → 0.95) — render each visualization to MP4 and upload it, at most 3 concurrently (`asyncio.Semaphore(3)`). Each render task commits through its own DB session; a lock serializes progress updates.
+```
+POST /api/process ─ admission ─ ProcessingJob row (queued) ─ start workflow  paper-{arxiv_id}
+                                                              └ any Temporal error: in-process fallback
+arxivisual-worker
+  task queue paper-pipeline   ingest_paper → generate_visualizations_for_paper → (repair) → finalize_job
+  task queue paper-render     render_visualization × N      at most RENDER_CONCURRENCY per replica
+
+GET /api/status/{job_id}  ←  the job row, written by the activities
+```
+
+### Admission (`api/routes.py`)
+
+`POST /api/process`, in order:
+
+1. **Reap.** Jobs stranded at `queued`/`processing` for more than two hours are marked failed (`queries.reap_stale_jobs`), so a zombie can never satisfy the dedupe below.
+2. **Dedupe.** An in-flight job for the same paper is returned as-is: an in-memory `recent_jobs` map covers the seconds before the job row is linked to its paper, the jobs table covers everything after.
+3. **Admission control**, each layer assuming the previous one is being gamed: the durable daily cap and the global rolling window (both counted from the jobs table, and checked first so a capped day does not burn a human's single-use Turnstile token) → server-verified Turnstile, bound to this paper → per-IP hourly and daily windows (in memory). See `SECURITY.md`.
+4. **Start.** A `ProcessingJob` row is created (`queued`) and `PaperPipelineWorkflow` is started on task queue `paper-pipeline` with workflow id `paper-{arxiv_id}`. The id is the orchestrator-level dedupe: a second start for a paper that is still running raises `WorkflowAlreadyStartedError`, and the API retires the row it just created and answers with the active job.
+
+The job id is returned immediately and the frontend polls `GET /api/status/{job_id}`, which only reads the job row — the polling contract is identical on both paths.
+
+### The workflow (`temporal_app/workflows.py`)
+
+`PaperPipelineWorkflow` is orchestration only: no I/O, no env reads, no heavy imports, so it stays deterministic on replay. Every side effect is an activity in `temporal_app/activities.py`, and every activity opens its own DB session.
+
+| Step | Activity | Task queue | Start-to-close, attempts | Job progress |
+|------|----------|------------|--------------------------|--------------|
+| Ingest | `ingest_paper` | `paper-pipeline` | 15 min, 2 | 0.10 → 0.30 |
+| Generate | `generate_visualizations_for_paper` | `paper-pipeline` | 40 min, 2, heartbeat timeout 8 min | 0.50 → 0.75 |
+| Render | `render_visualization` × N, then `update_render_progress` | `paper-render` | 25 min, 2, no heartbeat | 0.75 → 0.95 |
+| Repair | `repair_visualization_code`, then `render_visualization` again | `paper-pipeline`, `paper-render` | 18 min and 25 min, 1 each | — |
+| Finalize | `finalize_job` | `paper-pipeline` | 1 min, 2 | 1.0 |
+
+- **Ingest** fetches and parses the paper and stores paper + sections. It is skipped if the paper was processed before; a pre-fix abstract-only ingest (`queries.is_stale`) is re-ingested instead. Deterministic failures (`SourceTooShortError`, a formatting failure after its own retry) are raised non-retryable and reach the job row verbatim.
+- **Generate** runs the agent pipeline for up to 5 concepts and returns one render input (viz id + Manim code) per visualization.
+- **Render**: all renders are started at once. The render worker's `max_concurrent_activities` (`RENDER_CONCURRENCY`, 3 in production) throttles per replica and Temporal queues the surplus — no semaphore. Each render is wrapped so that one failed activity becomes a failed result (its row marked by `record_render_failure`) instead of aborting the workflow. The workflow owns the completion counters and issues the progress writes as results arrive, so concurrent renders share no mutable state.
+- **Any exception** escaping the workflow runs `mark_job_failed` — the real reason goes on the job row, rows still `pending` are failed — and then the workflow itself fails, leaving its full history in Temporal.
+
+**Checkpoints.** Each completed activity is a durable checkpoint in workflow history: a worker killed mid-run (a redeploy did this twice) resumes after the last completed activity. Generation's return value is stored in history, so the LLM spend is never paid twice. Inside generation the checkpoints are finer: each finished visualization is INSERTed into `visualizations` the moment it is ready (`queries.insert_visualization_with_next_index` — the id is minted at write time and never upserted, so two overlapping attempts cannot overwrite each other) and the activity heartbeats, on top of a 30-second heartbeat timer. A retried attempt reloads this run's rows (those created since the job began), skips their concepts, and fills only the remaining slots. The render activity has no heartbeat, which is why backend rolls belong in a quiet window (`docs/DEPLOY.md`).
+
+**Finalize.** `finalize_job` writes the honest terminal status (below), fails any row of this run still `pending`, and — only if the run produced at least one video — marks previous runs' rows `superseded`. Old rows are never deleted (feedback references them) and superseded rows never reach the API, so a re-run does not blank an already-visualized paper while it is in progress.
+
+**The worker process** (`temporal_app/worker.py`) runs two Temporal workers on one event loop: `paper-pipeline` (the workflow plus every light activity, `PIPELINE_CONCURRENCY` = 2 concurrent activities) and `paper-render` (the render activity only). It retries its Temporal connection six times with backoff, because a revision rollover used to fail the first attempt. The worker app scales from 1 to 3 replicas on a KEDA rule that counts queued and processing jobs (`infra/container_apps.tf`).
+
+### Fallback: the in-process path (`jobs/worker.py`)
+
+If `USE_TEMPORAL` is off, or **anything** raises while the workflow is being started (import, connect, start), the API logs `Temporal unavailable — falling back to in-process pipeline` and schedules `process_paper_job` as a FastAPI background task. Fail-open on purpose: orchestrator trouble must never stop papers from processing. The path reuses the same building blocks (`_ingest_and_store_paper`, `generate_visualizations`, `process_visualization`) and reports progress on the same job row, but:
+
+- it runs inside the API container and does not survive a restart — the stale-job reaper is what eventually fails such a job;
+- renders are bounded by an `asyncio.Semaphore(RENDER_CONCURRENCY)`, each committing through its own DB session, with a lock serializing the progress writes;
+- rows are upserted as `viz_{id}_{n}` only after all generation has finished: no per-visualization checkpoints, no superseding;
+- visual QA is observe-only — there is no repair pass.
+
+The `paper_accepted` product event records which path took the job (`path: temporal | legacy`).
+
+### After a render: QA, feedback, terminal status
 
 **Visual QA + self-repair** (`agents/visual_qa.py`, `temporal_app/activities.py`): after each render, a vision model samples 3 frames and judges layout defects (overlap / cutoff / collisions), scoring every verdict into Langfuse (`visual_qa_defect`). On the Temporal path, a `major` verdict triggers one **vision-grounded repair**: the video is read back through the storage backend (never the CDN — stable keys cache for a year), the defect frames plus the judge's issues go to a multimodal model, and the repaired code is re-rendered and re-judged. Every vision-failure mode falls back to a text-only repair; an unusable repair keeps the original video. Measured in production: text-only repair fixed 0/6 flagged videos; vision-grounded fixed 2/4 in its first run — the pixels carry information the text descriptions provably don't.
 
@@ -88,7 +141,7 @@ Every agent call routes through `call_llm` / `call_llm_sync`, which resolve a pr
 - GPT-5 reasoning tokens count against `max_completion_tokens`, so each request adds 4096 tokens of headroom above the agent's visible-answer budget; `AZURE_OPENAI_REASONING_EFFORT` (default `low`) trades depth for speed and cost.
 - Prompt templates are formatted with `str.replace`, not `str.format` — paper text is full of LaTeX braces.
 
-A Dedalus Labs provider remains selectable as a legacy fallback (`DEDALUS_API_KEY`). Historical footnote: `agents/dedalus_base.py` (multi-model handoff chains) and `agents/voiceover_generator.py` (a post-hoc voiceover transform, superseded by unified generation and disabled by default) are legacy code from that era, slated for removal.
+A Dedalus Labs provider remains selectable as a legacy fallback (`DEDALUS_API_KEY`, or `LLM_PROVIDER=dedalus`); it lives in the same `agents/base.py`. The separate modules from that era — `agents/dedalus_base.py` (multi-model handoff chains) and `agents/voiceover_generator.py` (a post-hoc voiceover transform, superseded by unified generation) — have been deleted.
 
 ## Voiceover / TTS
 
@@ -102,7 +155,7 @@ self.set_speech_service(OpenAIService(voice="nova", model="gpt-4o-mini-tts", tra
 
 ## Rendering (`backend/rendering/`)
 
-`RENDER_MODE=local` (the production setting) renders in-process on the API container: the code is written to a temp directory and `manim render <file> <SceneName> -ql --format=mp4` runs via `subprocess.run` with a 300 s timeout, wrapped in `asyncio.to_thread`. Quality maps to Manim's `-ql`/`-qm`/`-qh`; the pipeline renders at `low_quality`. The worker's `Semaphore(3)` bounds concurrent renders. A `RENDER_MODE=modal` path (serverless rendering on Modal.com via `modal_runner.py`) exists and also disables the local RenderTester gate, but is not used in production.
+`RENDER_MODE=local` (the production setting) renders in a subprocess of whichever process runs the pipeline. In production that is the `arxivisual-worker` container (the `render_visualization` activity on the `paper-render` queue); the API container renders only on the in-process fallback, or for the dev-only `POST /api/render`. The code is written to a temp directory and `manim render <file> <SceneName> -ql --format=mp4` runs via `subprocess.run` with a 300 s timeout, wrapped in `asyncio.to_thread`. Quality maps to Manim's `-ql`/`-qm`/`-qh`; the pipeline renders at `low_quality`. `RENDER_CONCURRENCY` (default 3) bounds concurrent renders per host: as the render worker's `max_concurrent_activities` on the Temporal path, as a semaphore on the fallback. A `RENDER_MODE=modal` path (serverless rendering on Modal.com via `modal_runner.py`) exists and also disables the local RenderTester gate, but is not used in production.
 
 ## Storage (`rendering/storage.py`)
 
@@ -122,37 +175,63 @@ self.set_speech_service(OpenAIService(voice="nova", model="gpt-4o-mini-tts", tra
 | GET | `/api/video/{video_id}` | Serve or redirect to a rendered video |
 | POST | `/api/render` | Dev-only raw Manim render — in production, 404 unless `RENDER_API_SECRET` is configured and presented via `X-Render-Secret` (timing-safe compare) |
 | POST | `/api/feedback` | Store viewer feedback: per-video 👍/👎 (labeled QA ground truth) or site suggestion |
-| GET | `/api/health` | Database / Manim / storage health |
+| GET | `/api/health` | Database / Manim / storage health and the deployed commit (the only health path — there is no `/health`) |
 
 CORS allows `arxivisual.org`, `www.arxivisual.org`, localhost dev, and whatever `CORS_EXTRA_ORIGINS` adds (in production: the frontend Container App's own FQDN) — see `backend/api/cors.py`.
 
 ## Persistence (`backend/db/`)
 
-SQLAlchemy async ORM, four tables keyed off the arXiv ID: `papers`, `sections` (content, summary, equations/figures/tables as JSON), `visualizations` (concept, storyboard, Manim code, video URL, status), and `processing_jobs`. `DATABASE_URL` selects Postgres (asyncpg, used in production); unset falls back to local SQLite (aiosqlite).
+SQLAlchemy async ORM, five tables keyed off the arXiv ID: `papers`, `sections` (content, summary, equations/figures/tables as JSON), `visualizations` (concept, storyboard, Manim code, video URL, status — `pending`, `complete`, `failed` or `superseded`), `feedback` (per-video votes and site suggestions), and `processing_jobs`. There are no migrations: `init_db()` runs `Base.metadata.create_all` at API startup. `DATABASE_URL` selects Postgres (asyncpg, used in production); unset falls back to local SQLite (aiosqlite). Temporal keeps its own two databases on the same Postgres server.
 
-## Observability (Langfuse)
+## Observability
 
-Tracing activates when `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are both set, and degrades to no-ops otherwise:
+Four sinks, each answering a different question and each off unless its own configuration is present — local dev and CI run with none of them.
+
+**Langfuse — what did the LLM do, and what did it cost?** Active when `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are both set, no-ops otherwise:
 
 - `base.py` swaps the OpenAI SDK for the `langfuse.openai` drop-in, so every LLM call is captured with model, tokens, cost, and latency; each generation is named after its agent's prompt file (e.g. `manim_generator`).
-- `@observe` spans build the trace hierarchy: `process-paper` → `generate-visualizations` → `generate-single-visualization`, with `session_id = job_id` grouping everything for one paper run.
-- The worker flushes traces before the background task exits, since it runs off-request.
+- `@observe` spans build the hierarchy `generate-visualizations` → `generate-single-visualization` under a trace named `process-paper`, with `session_id = job_id` grouping everything for one paper run. The Temporal generation activity sets those attributes with `propagate_attributes` (tags `pipeline`, `temporal`); the in-process path wraps the whole job in an `@observe` span and flushes before the background task exits, since it runs off-request.
+- The visual-QA judge scores each trace (`visual_qa_defect`), so defect rates can be charted.
+- `LANGFUSE_TRACING_ENVIRONMENT` separates production traces from development.
 
-`LANGFUSE_TRACING_ENVIRONMENT` separates production traces from development.
+**Application Insights — is the service healthy?** (`telemetry.py`) When `APPLICATIONINSIGHTS_CONNECTION_STRING` is set, `telemetry.configure()` loads the Azure Monitor OpenTelemetry distro (`azure-monitor-opentelemetry`): request telemetry from the API, outbound HTTP dependencies and exceptions from both the API and the worker. It must be the first thing `main.py` and `temporal_app/worker.py` do — the distro instruments by swapping the FastAPI class, and Langfuse has to be bound to its own tracer provider before any client exists. Production samples request traces at a fixed 20% (`OTEL_TRACES_SAMPLER=microsoft.fixed_percentage` with `OTEL_TRACES_SAMPLER_ARG=0.2`; the argument alone would mean 0.2 traces *per second*) and sets `OTEL_LOGS_EXPORTER=none`, because console logs already reach the workspace.
+
+Both integrations are OpenTelemetry-based and both want the global tracer provider. Left alone, Langfuse would adopt Azure's: every LLM span, prompts included, would also be exported to Application Insights, and Azure's sampler would drop 80% of LLM traces before Langfuse saw them. So `telemetry.py` starts Langfuse on an isolated, never-global, always-on provider, forces its scores in-sample, and gives the in-process pipeline a detached trace context so its Langfuse trace is not parented to the request span.
+
+**PostHog — is the product being used?** (`analytics.py`, no-op without `POSTHOG_API_KEY`) Three server-side events: `paper_accepted` from the API (distinct id = the hashed client fingerprint the admission logs already use) and `paper_completed` / `paper_failed_server` from whichever process finalizes the job (distinct id = the job id — no client identity reaches the pipeline). Person profiles and GeoIP are off, capture never raises and never blocks, and the queue is flushed on shutdown. The browser-side events are described in [DEPLOY.md → Analytics](DEPLOY.md#analytics).
+
+**Log Analytics — what did the containers print?** The Container Apps environment ships every app's console output to one Log Analytics workspace (30-day retention), which also backs the workspace-based Application Insights resource (1 GB/day cap) — [infra/container_apps.tf](../infra/container_apps.tf), [infra/insights.tf](../infra/insights.tf). Admission decisions are logged with the client fingerprint first, which is what the log queries key on.
 
 ## File Map
 
 ```
 backend/
-  main.py                    FastAPI app: CORS, lifespan DB init
+  main.py                    FastAPI app: telemetry first, CORS, lifespan DB init
+  telemetry.py               Application Insights bootstrap; isolates Langfuse on
+                             its own tracer provider
+  analytics.py               PostHog server-side product events (no-op without a key)
   api/
-    routes.py                All endpoints; /api/render auth gate
-    throttle.py              Sliding-window limiters, daily-cap verdict, client fingerprint
-    turnstile.py             Server-side Cloudflare Turnstile verification (fails closed when configured)
+    routes.py                All endpoints; admission; workflow start with
+                             in-process fallback; /api/render auth gate
+    temporal_client.py       USE_TEMPORAL switch + lazy cached Temporal client
+                             (the API only ever starts workflows)
+    cors.py                  Allowed browser origins: fixed hosts + CORS_EXTRA_ORIGINS
+    throttle.py              Sliding-window limiters, daily-cap and global-window
+                             verdicts, client IP + hashed fingerprint, recent-jobs map
+    turnstile.py             Server-side Cloudflare Turnstile verification: action +
+                             cData bound to the paper, hostname allow-list, fails
+                             closed when configured
     schemas.py               Request/response models
+  temporal_app/
+    workflows.py             PaperPipelineWorkflow: deterministic orchestration,
+                             timeouts and retry policies, task-queue names
+    activities.py            Every side effect: ingest, generate (checkpointed),
+                             render + visual QA, repair, progress, finalize, failure
+    worker.py                Worker entrypoint: paper-pipeline + paper-render workers
   jobs/
-    worker.py                Background job: ingest -> generate -> render;
-                             honest terminal status
+    worker.py                In-process fallback pipeline (FastAPI background task);
+                             shared helpers: ingest-and-store, honest terminal
+                             status, RENDER_CONCURRENCY parsing
   agents/
     pipeline.py              Orchestration, gate sequence, retry loop
     base.py                  Provider routing (Azure OpenAI / Dedalus),
@@ -166,9 +245,9 @@ backend/
     render_tester.py         Gate 4: dry-run construct() execution (subprocess)
     dry_run_driver.py        subprocess harness for the gate: dry_run config + TTS/add_sound stubs
     context7_docs.py         Live Manim docs fetch with static fallback
-    dedalus_base.py          LEGACY (slated for removal)
-    voiceover_generator.py   LEGACY post-transform voiceover (disabled)
-  ingestion/                 arXiv fetch, HTML/PDF parse, section extraction
+    visual_qa.py             Vision judge on sampled frames; vision-grounded repair
+  ingestion/                 arXiv fetch, HTML/PDF parse, section extraction,
+                             text_normalize.py (the one owner of display text)
   rendering/
     __init__.py              RENDER_MODE routing, process_visualization()
     local_runner.py          Manim subprocess + TTS env mapping
@@ -179,4 +258,8 @@ backend/
   prompts/                   Agent prompt templates + Manim reference
   examples/                  Few-shot Manim examples (incl. voiceover_*)
   tests/                     Offline unit suite (run: uv run pytest tests/)
+  evals/                     Golden-set LLM-quality evals + baseline regression check
+  tools/                     Manual CLI scripts (real API calls; never collected by pytest)
 ```
+
+`tests/`, `evals/` and `tools/` are excluded from the production image (`backend/.dockerignore`).

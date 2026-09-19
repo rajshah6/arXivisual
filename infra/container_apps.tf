@@ -26,8 +26,8 @@ resource "azurerm_container_app_environment" "main" {
 
 locals {
   # Only read when Terraform CREATES or REPLACES the api/worker app (the image
-  # is in ignore_changes; deploy-backend.yml owns it day to day), so bumping it
-  # plans as "No changes". A recreate boots exactly this build: keep it close
+  # is in ignore_changes; deploys own it day to day), so bumping it plans as
+  # "No changes". A recreate boots exactly this build on BOTH apps: keep it close
   # to what is live and NEVER prune this tag from ACR (see README, "ACR
   # housekeeping"). 2026-09-18: the live API image.
   app_image = "ca82c08e2eadacr.azurecr.io/arxivisual-api:gh-e106349610ef6514bfc47e76b06d4c5fed58db73"

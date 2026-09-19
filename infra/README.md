@@ -244,6 +244,9 @@ Known gaps, so nobody trusts these further than they go:
 - Log alerts need the data to arrive: Container Apps console logs usually land
   within a few minutes, and Azure retries a late evaluation, but these are
   15-minute signals, not pages.
+- Expected noise: the monthly Postgres maintenance restart (Sunday 21:00 UTC
+  window, `database.tf`) will usually trip `arxivisual-api-5xx` and/or
+  `arxivisual-temporal-fallback` once. That is the alerts working.
 
 The first apply makes Azure mail the receiver a "you have been added to an
 action group" notice; if it does not arrive, check spam before trusting any of

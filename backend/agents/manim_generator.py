@@ -152,7 +152,11 @@ class ManimGenerator(BaseAgent):
 
     def _extract_scene_class_name(self, code: str) -> str:
         """Extract the scene class name from generated code."""
-        match = re.search(r"class\s+(\w+)\s*\(\s*(Scene|ThreeDScene|VoiceoverScene)\s*\)", code)
+        # Any base list that includes a scene base (ThreeDScene, VoiceoverScene
+        # together is the narrated-3D case); must agree with CodeValidator.
+        match = re.search(
+            r"class\s+(\w+)\s*\([^)]*\b(?:Scene|ThreeDScene|VoiceoverScene)\b[^)]*\)", code
+        )
         if match:
             return match.group(1)
         return "GeneratedScene"

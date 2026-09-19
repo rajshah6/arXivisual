@@ -14,6 +14,11 @@ written) with all external effects stubbed out:
   ``Path("").with_suffix(".srt")`` raises at finish(). Observed empirically
   against manim 0.19.
 
+With ``--import-only`` (RENDER_TEST_EXECUTE=0) the module is loaded and its
+Scene class located, but construct() is not run. That mode lives HERE, not in
+the caller's process, because loading the module already executes generated
+code — it must happen in this scrubbed subprocess like everything else.
+
 Protocol: prints DRY_RUN_OK and exits 0 on success; prints the traceback to
 stderr, then DRY_RUN_FAIL, and exits 1 on a scene failure. Any exit without a
 sentinel means the harness itself broke — the caller treats that as
@@ -37,6 +42,7 @@ _SILENT_MP3 = base64.b64decode(
 
 SENTINEL_OK = "DRY_RUN_OK"
 SENTINEL_FAIL = "DRY_RUN_FAIL"
+IMPORT_ONLY_FLAG = "--import-only"
 
 
 def _prepare_manim() -> None:
@@ -86,8 +92,10 @@ def _load_scene_classes(scene_path: str) -> list[type]:
 
 
 def main() -> int:
-    scene_path = sys.argv[1]
-    scene_name = sys.argv[2] if len(sys.argv) > 2 else None
+    import_only = IMPORT_ONLY_FLAG in sys.argv[1:]
+    args = [arg for arg in sys.argv[1:] if arg != IMPORT_ONLY_FLAG]
+    scene_path = args[0]
+    scene_name = args[1] if len(args) > 1 else None
     _prepare_manim()
     # BaseException, not Exception: generated code calling sys.exit() must be a
     # scene failure (fail closed), not a missing-sentinel harness fault (which
@@ -101,7 +109,8 @@ def main() -> int:
             print("MissingSceneError: No Scene class with construct() found", file=sys.stderr)
             print(SENTINEL_FAIL)
             return 1
-        scene_classes[0]().render()
+        if not import_only:
+            scene_classes[0]().render()
     except BaseException:
         traceback.print_exc()
         print(SENTINEL_FAIL)

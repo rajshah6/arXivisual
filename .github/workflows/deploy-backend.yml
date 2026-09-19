@@ -223,12 +223,21 @@ jobs:
             exit 0
           fi
           echo "::error::Backend deploy of gh-$DEPLOY_SHA failed part-way — the API and the worker may now run different images."
-          for app in "$APP_NAME" "$WORKER_APP_NAME"; do
-            current=$(az containerapp show -n "$app" -g "$RESOURCE_GROUP" \
-              --query "properties.template.containers[0].image" -o tsv 2>/dev/null || true)
-            echo "$app is configured with: ${current:-<unreadable>}"
-          done
-          echo "Roll back whichever app changed:"
+          api_now=$(az containerapp show -n "$APP_NAME" -g "$RESOURCE_GROUP" \
+            --query "properties.template.containers[0].image" -o tsv 2>/dev/null || true)
+          worker_now=$(az containerapp show -n "$WORKER_APP_NAME" -g "$RESOURCE_GROUP" \
+            --query "properties.template.containers[0].image" -o tsv 2>/dev/null || true)
+          echo "$APP_NAME is configured with: ${api_now:-<unreadable>}"
+          echo "$WORKER_APP_NAME is configured with: ${worker_now:-<unreadable>}"
+          # Every step after the API roll is skipped once one fails, so a
+          # failure there leaves the worker on the old image until someone acts.
+          if [ "$api_now" = "$IMAGE" ] && [ "$worker_now" != "$IMAGE" ]; then
+            echo "::error::$APP_NAME is on the new image and $WORKER_APP_NAME is not: the backend is half-deployed (the API admits jobs for a pipeline the worker does not have yet) and stays so until you go back or forward."
+          fi
+          echo "Back — roll back whichever app changed:"
           echo "  az containerapp update -n $APP_NAME -g $RESOURCE_GROUP --image $PREVIOUS_API_IMAGE"
           echo "  az containerapp update -n $WORKER_APP_NAME -g $RESOURCE_GROUP --image $PREVIOUS_WORKER_IMAGE"
-          echo "Or retry the deploy: gh workflow run deploy-backend.yml --ref main"
+          echo "Forward — once the failure above is understood, retry the deploy (it re-verifies the API, then rolls the worker):"
+          echo "  gh workflow run deploy-backend.yml --ref main"
+          echo "or, if the API is known to be fine, roll just the worker by hand (unverified — the monitor only checks that the images match):"
+          echo "  az containerapp update -n $WORKER_APP_NAME -g $RESOURCE_GROUP --image $IMAGE"

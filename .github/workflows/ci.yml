@@ -101,6 +101,7 @@ jobs:
       docker: ${{ steps.filter.outputs.docker }}
       frontend-docker: ${{ steps.filter.outputs.frontend-docker }}
       terraform: ${{ steps.filter.outputs.terraform }}
+      scripts: ${{ steps.filter.outputs.scripts }}
     steps:
       - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v3
@@ -121,6 +122,9 @@ jobs:
               - '.github/workflows/ci.yml'
             terraform:
               - 'infra/**'
+              - '.github/workflows/ci.yml'
+            scripts:
+              - '.github/scripts/**'
               - '.github/workflows/ci.yml'
 
   docker:
@@ -229,3 +233,17 @@ jobs:
 
       - name: Validate
         run: terraform -chdir=infra validate
+
+  # The deploy and monitor logic in .github/scripts otherwise runs only against
+  # production — a bug there is found mid-deploy. The tests drive it with a
+  # stub `az` and throwaway git repositories: no credentials, a few seconds.
+  scripts:
+    name: Deploy & monitor script tests
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.scripts == 'true'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run script tests
+        run: bash .github/scripts/tests/run.sh

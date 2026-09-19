@@ -223,8 +223,12 @@ class PaperListResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     """Response for GET /api/health."""
-    status: str = Field(..., description="'healthy' or 'unhealthy'")
+    status: str = Field(..., description="'healthy' or 'degraded'")
     version: str
+    # The deploy workflow polls for `commit == <built sha>`: keep this key's
+    # name and its top-level position.
+    commit: str = Field("unknown", description="Git commit baked into the image (APP_COMMIT_SHA)")
+    database_dialect: str = Field("unknown", description="SQLAlchemy dialect in use: 'postgresql' or 'sqlite'")
     services: dict[str, str] = Field(
         ...,
         description="Status of dependent services",

@@ -112,8 +112,34 @@ async def run_all(entries: list[dict], max_viz: int) -> list[dict]:
     return results
 
 
+def _as_failure(paper: dict, max_viz: int) -> dict:
+    """Aggregate view of a paper that errored: it owed ``max_viz``
+    visualizations and delivered none.
+
+    Its gate counts are left out on purpose — an arXiv 503 or an ingest crash
+    is not a code_validator failure, and a run cut short leaves truncated
+    traces that would be misread as one. The failure lands where it belongs:
+    in viz_yield_rate and in the papers_evaluated floor.
+    """
+    return {
+        "candidates_run": max(paper.get("candidates_run", 0), max_viz),
+        "visualizations_validated": 0,
+        "gates": {},
+    }
+
+
 def build_report(paper_results: list[dict], max_viz: int) -> dict:
-    ok = [p for p in paper_results if p.get("error") is None]
+    # Errored papers used to be dropped before aggregating, so the aggregate
+    # described only the papers that happened to work: one night passed the
+    # gate with 1 of 5 evaluated. They now count as failures, and
+    # check_regression enforces a floor on papers_evaluated.
+    errored = [p for p in paper_results if p.get("error") is not None]
+    aggregate = aggregate_summaries(
+        [_as_failure(p, max_viz) if p.get("error") is not None else p for p in paper_results]
+    )
+    aggregate["papers_requested"] = len(paper_results)
+    aggregate["papers_evaluated"] = len(paper_results) - len(errored)
+    aggregate["papers_errored"] = len(errored)
     return {
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "config": {
@@ -122,7 +148,7 @@ def build_report(paper_results: list[dict], max_viz: int) -> dict:
             "papers_requested": len(paper_results),
         },
         "papers": paper_results,
-        "aggregate": aggregate_summaries(ok),
+        "aggregate": aggregate,
     }
 
 
@@ -141,7 +167,8 @@ def print_summary(report: dict) -> None:
     agg = report["aggregate"]
     print("-" * 72)
     print(
-        f"Aggregate: {agg['papers_evaluated']} papers, "
+        f"Aggregate: {agg['papers_evaluated']}/{agg['papers_requested']} papers evaluated "
+        f"({agg['papers_errored']} errored, counted as failures), "
         f"{agg['visualizations_validated']}/{agg['candidates_run']} visualizations "
         f"validated (viz_yield_rate={agg['viz_yield_rate']})"
     )
@@ -196,9 +223,19 @@ def main(argv: list[str] | None = None) -> int:
     print_summary(report)
     print(f"\nReport written to {output}")
 
-    if all(p["error"] for p in results):
+    errored = [p["arxiv_id"] for p in results if p["error"]]
+    if len(errored) == len(results):
         print("ERROR: every paper failed to evaluate.", file=sys.stderr)
         return 1
+    if errored:
+        # Not fatal here — this script reports; check_regression.py gates (the
+        # errored papers are already failures in the aggregate it reads, and it
+        # enforces the papers_evaluated floor from baselines.json).
+        print(
+            f"WARNING: {len(errored)}/{len(results)} paper(s) failed to evaluate and count "
+            f"as failures: {', '.join(errored)}",
+            file=sys.stderr,
+        )
     return 0
 
 

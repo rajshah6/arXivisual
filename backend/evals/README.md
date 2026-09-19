@@ -73,6 +73,18 @@ defaults to 3.
 A metric *missing* from a report (a gate that never ran) fails the check on
 purpose — silently losing a gate is a regression.
 
+**Coverage floor.** `baselines.json` → `coverage.max_papers_not_evaluated` (1):
+`check_regression.py` requires `papers_evaluated >= papers_requested - 1`
+(never less than 1). Rates alone prove nothing about coverage — one nightly run
+passed every threshold with 1 of 5 papers evaluated, because the four that died
+on arXiv 503s were dropped before aggregating. Errored papers now also count as
+**failures in the aggregate**: each owes `--max-viz` visualizations and delivers
+none, which pulls `viz_yield_rate` down (`papers_requested` / `papers_evaluated`
+/ `papers_errored` are reported). Gate rates still cover completed runs only —
+an ingest failure is not a `code_validator` failure. `run_evals.py` only
+reports (it exits 1 just when *every* paper errored); the gate is
+`check_regression.py`.
+
 ## Layout
 
 ```

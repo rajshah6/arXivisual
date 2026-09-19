@@ -26,6 +26,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Logging FIRST (same order as main.py): telemetry.configure() reports what it
+# did with logger.info, and with the root logger still unconfigured its
+# "Application Insights telemetry on" / "Langfuse tracing isolated"
+# confirmation lines were silently dropped on the worker.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+
 # Application Insights (no-op without APPLICATIONINSIGHTS_CONNECTION_STRING).
 # Before the activity/agent imports so Langfuse is bound to its own
 # TracerProvider before any client exists (see telemetry.py).
@@ -64,14 +73,17 @@ PIPELINE_ACTIVITIES = [
 ]
 RENDER_ACTIVITIES = [render_visualization]
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 
+def log_startup() -> None:
+    """Which build is this? The worker has no HTTP endpoint to ask (the API
+    reports the same value as ``commit`` on /api/health)."""
+    logger.info("arXivisual worker starting (commit=%s)", os.getenv("APP_COMMIT_SHA", "").strip() or "unknown")
+
+
 async def main() -> None:
+    log_startup()
     address = os.getenv("TEMPORAL_ADDRESS", "localhost:7233")
     namespace = os.getenv("TEMPORAL_NAMESPACE", "default")
     render_concurrency = parse_render_concurrency()

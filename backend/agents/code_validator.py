@@ -93,16 +93,25 @@ class CodeValidator:
         if camera_issues:
             issues_found.extend(camera_issues)
 
+        # Step 8: imports/builtins a scene has no business using. The code is
+        # LLM-written from arbitrary paper text and gets executed — twice.
+        security_issues = self._check_forbidden_imports_and_calls(fixed_code)
+        if security_issues:
+            issues_found.extend(security_issues)
+
         # Determine if regeneration is needed
-        # More than 1 unfixed issue OR MathTex/camera issues = regenerate
-        needs_regeneration = len(issues_found) > 1 or bool(mathtex_issues) or bool(camera_issues)
-        
+        # More than 1 unfixed issue OR MathTex/camera/security issues = regenerate
+        needs_regeneration = (
+            len(issues_found) > 1 or bool(mathtex_issues) or bool(camera_issues) or bool(security_issues)
+        )
+
         return ValidatorOutput(
             is_valid=len(issues_found) == 0,
             code=fixed_code,
             issues_found=issues_found,
             issues_fixed=issues_fixed,
             needs_regeneration=needs_regeneration,
+            security_issues=security_issues,
         )
     
     def _check_syntax(self, code: str) -> str | None:
@@ -119,8 +128,11 @@ class CodeValidator:
     
     def _has_scene_class(self, code: str) -> bool:
         """Check if code has a Scene class definition."""
-        # Match: class SomeName(Scene|ThreeDScene|VoiceoverScene):
-        pattern = r"class\s+\w+\s*\(\s*(Scene|ThreeDScene|VoiceoverScene)\s*\)\s*:"
+        # Match: class SomeName(Scene|ThreeDScene|VoiceoverScene): — with any
+        # number of bases, since a narrated 3D scene is
+        # `class X(ThreeDScene, VoiceoverScene):` and a single-base regex
+        # rejected it on every attempt (a paid regeneration each time).
+        pattern = r"class\s+\w+\s*\([^)]*\b(Scene|ThreeDScene|VoiceoverScene)\b[^)]*\)\s*:"
         return bool(re.search(pattern, code))
     
     def _has_construct_method(self, code: str) -> bool:
@@ -224,6 +236,61 @@ class CodeValidator:
                 "instead: self.play(group.animate.scale(1.5).shift(...))."
             ]
         return []
+
+    # Top-level packages a generated scene may not import, and builtins it may
+    # not call. Checked against prompts/, examples/ and the static reference:
+    # none of them teaches any of these (the reference uses only `random`). A
+    # tripwire, not a sandbox — getattr tricks get past any static check; the
+    # secret-scrubbed render env (rendering/sandbox_env.py) is what holds then.
+    FORBIDDEN_MODULES = frozenset({
+        "os", "sys", "subprocess", "socket", "requests", "httpx", "urllib",
+        "http", "ctypes", "importlib", "shutil", "pickle",
+    })
+    FORBIDDEN_CALLS = frozenset({"eval", "exec", "compile", "__import__", "open"})
+
+    def _check_forbidden_imports_and_calls(self, code: str) -> list[str]:
+        """AST gate: forbidden imports and builtin calls, one issue per name.
+
+        AST rather than regex so narration strings and attribute calls
+        (``re.compile``) never trip it. Unparseable code returns nothing —
+        the syntax step already owns that failure.
+        """
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            return []
+
+        first_line: dict[tuple[str, str], int] = {}
+        for node in ast.walk(tree):
+            names: list[tuple[str, str]] = []
+            if isinstance(node, ast.Import):
+                names = [("import", alias.name.split(".")[0]) for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                names = [("import", node.module.split(".")[0])]
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                names = [("call", node.func.id)]
+            for kind, name in names:
+                forbidden = self.FORBIDDEN_MODULES if kind == "import" else self.FORBIDDEN_CALLS
+                if name in forbidden:
+                    key = (kind, name)
+                    first_line[key] = min(first_line.get(key, node.lineno), node.lineno)
+
+        issues = []
+        for (kind, name), line in sorted(first_line.items(), key=lambda item: item[1]):
+            if kind == "import":
+                issues.append(
+                    f"CRITICAL: line {line} imports `{name}` — not allowed in a generated scene. "
+                    f"Remove the import and everything that uses it. A scene may import only manim, "
+                    f"manim_voiceover, numpy and pure-math stdlib modules (math, random, itertools); "
+                    f"it needs no file, process, network or interpreter access."
+                )
+            else:
+                issues.append(
+                    f"CRITICAL: line {line} calls `{name}()` — not allowed in a generated scene. "
+                    f"Remove the call: build everything from Manim primitives and literal values "
+                    f"in the code; never read files or execute/compile/import code dynamically."
+                )
+        return issues
 
     def _check_mathtex_splitting(self, code: str) -> list[str]:
         """

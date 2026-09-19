@@ -23,9 +23,10 @@ POST /api/process  (api/routes.py: rate-limit + dedupe [api/throttle.py] + stale
   OpenAI-compatible endpoint at render time by `rendering/local_runner.py:_tts_subprocess_env`.
 - **Rendering**: local subprocess (`RENDER_MODE=local`, the default and what prod runs). Modal exists
   (`rendering/modal_runner.py`) only as an unused optional mode. **There is no Redis anywhere.**
-- **DB**: Postgres (asyncpg) when `DATABASE_URL` set, SQLite `./arxiviz.db` locally. No alembic — schema is
-  `Base.metadata.create_all` in `db/connection.py:init_db()` at startup.
-- **Observability**: Langfuse v3 (OTel-based) — `langfuse.openai` drop-in client wraps every LLM call, plus
+- **DB**: Postgres (asyncpg) when `DATABASE_URL` set, SQLite `./arxiviz.db` locally (`ENVIRONMENT=production`
+  without a Postgres URL refuses to start). No alembic — schema is `Base.metadata.create_all` in
+  `db/connection.py:init_db()` at startup, followed by a schema guard (see convention 11).
+- **Observability**: Langfuse 4.x SDK (OTel-based) — `langfuse.openai` drop-in client wraps every LLM call, plus
   `@observe` spans; active iff both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set. Azure Application
   Insights (`telemetry.py`, Azure Monitor OTel distro; iff `APPLICATIONINSIGHTS_CONNECTION_STRING`) is configured
   first thing in `main.py` / `temporal_app/worker.py` and pins Langfuse to its own never-global TracerProvider —
@@ -39,7 +40,7 @@ POST /api/process  (api/routes.py: rate-limit + dedupe [api/throttle.py] + stale
 | 1 | SectionAnalyzer | `agents/section_analyzer.py` | LLM: pick concepts worth animating |
 | 2 | VisualizationPlanner | `agents/visualization_planner.py` | LLM: scene-by-scene storyboard |
 | 3 | ManimGenerator (voice-aware) | `agents/manim_generator.py` | LLM: full `VoiceoverScene` code, few-shot by viz type |
-| 4 | CodeValidator | `agents/code_validator.py` | gate: AST/structure/auto-fixes + static rules (MathTex splitting, `camera.frame` outside MovingCameraScene), no LLM |
+| 4 | CodeValidator | `agents/code_validator.py` | gate: AST/structure/auto-fixes + static rules (MathTex splitting, `camera.frame` outside MovingCameraScene, forbidden imports/builtins), no LLM |
 | 5 | SpatialValidator | `agents/spatial_validator.py` | gate: bounds/overlap regex, no LLM |
 | 6 | VoiceoverScriptValidator | `agents/voiceover_script_validator.py` | gate: narration quality, heuristics + LLM judge |
 | 7 | RenderTester | `agents/render_tester.py` | gate: dry-run construct() execution in a stubbed subprocess (auto-skipped when `RENDER_MODE=modal`) |
@@ -69,7 +70,7 @@ closed-loop layout repair + re-render (`temporal_app/activities.py:repair_visual
 
 ```bash
 uv sync --extra dev                          # install (dev extra = pytest)
-uv run pytest tests/                         # unit suite (~89 tests, hermetic; CI hard gate on py3.11+3.13)
+uv run pytest tests/                         # unit suite (~490 tests, hermetic; CI hard gate on py3.11+3.13)
 TEMPORAL_TESTS=1 uv run pytest tests/test_temporal_pipeline.py   # integration (downloads Temporal dev server)
 uvx ruff check .                             # lint — HARD CI gate; the tree is ruff-clean (policy in pyproject)
 uv run uvicorn main:app --reload             # API on :8000, docs at /docs
@@ -80,7 +81,8 @@ uv run python evals/check_regression.py report.json evals/baselines.json
 
 CI (`.github/workflows/`): `ci.yml` — backend pytest, frontend tsc + build, backend AND frontend docker image builds
 (hard gates; backend ruff and frontend eslint are both HARD gates). `security.yml` — gitleaks secret scan (blocking) +
-npm/pip audit (advisory). `evals.yml` — nightly 06:00 UTC golden-set evals, fails on baseline regression.
+npm/pip audit (advisory). `evals.yml` — nightly 06:00 UTC golden-set evals, fails on baseline regression OR when
+fewer than `papers_requested - 1` papers were evaluated (errored papers count as failures; `evals/README.md`).
 `deploy-backend.yml` / `deploy-frontend.yml` — Azure OIDC login, ACR build, Container App roll, health verify
 (the frontend one polls `/healthz` until the reported commit matches; both apps live in `infra/` Terraform).
 
@@ -89,7 +91,9 @@ npm/pip audit (advisory). `evals.yml` — nightly 06:00 UTC golden-set evals, fa
 - `AZURE_OPENAI_API_KEY`\*, `AZURE_OPENAI_ENDPOINT` — primary provider (auto-detected; `LLM_PROVIDER=azure|dedalus` forces).
 - `AZURE_OPENAI_DEPLOYMENT` (default `gpt-5`), `AZURE_OPENAI_REASONING_EFFORT` (default `low`).
 - `DEDALUS_API_KEY`\* — legacy fallback provider (also powers optional Context7 docs via `agents/context7_docs.py`).
-- `DATABASE_URL`\* — Postgres; `postgres://` is auto-rewritten to `postgresql+asyncpg://`. Unset = SQLite.
+- `DATABASE_URL`\* — Postgres; `postgres://` / `postgresql://` are auto-rewritten to `postgresql+asyncpg://`
+  (which also passes through as-is). Unset = SQLite, except under `ENVIRONMENT=production`, where an unset or
+  non-Postgres URL fails at import (`db/connection.py:resolve_database_url`).
 - `STORAGE_MODE` `local|r2`; for r2: `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`\*, `S3_SECRET_KEY`\*, `S3_PUBLIC_URL`.
 - `LANGFUSE_PUBLIC_KEY`\*, `LANGFUSE_SECRET_KEY`\*, `LANGFUSE_HOST`, `LANGFUSE_TRACING_ENVIRONMENT`.
 - `APPLICATIONINSIGHTS_CONNECTION_STRING`\* — Azure Application Insights (requests, outbound HTTP, exceptions,
@@ -100,7 +104,13 @@ npm/pip audit (advisory). `evals.yml` — nightly 06:00 UTC golden-set evals, fa
   (`analytics.py`): `paper_accepted` (distinct_id = client fingerprint), `paper_completed` /
   `paper_failed_server` (distinct_id = job id, emitted on both pipeline paths). Unset key = no-op.
 - `ENVIRONMENT=production` — disables `POST /api/render` (404) unless `RENDER_API_SECRET`\* matches the
-  `X-Render-Secret` header. The endpoint executes caller-supplied Python; keep it locked.
+  `X-Render-Secret` header. The endpoint executes caller-supplied Python; keep it locked. Also requires a
+  Postgres `DATABASE_URL` (above) and drops `localhost` from the default Turnstile hostname allow-list.
+- `APP_COMMIT_SHA` — commit baked into the image by the deploy workflow (default `unknown`). `GET /api/health`
+  returns it as top-level `commit` (the deploy polls until it matches the sha it built — do not rename the key)
+  and the worker logs it at startup. `/api/health` also reports `database_dialect`, never blocks the event loop
+  (`api/health.py`: manim probed once per process in a thread; DB/R2 cached for `HEALTH_CACHE_TTL_SECONDS`=20)
+  and returns generic error strings — the detail is in the server log.
 - `CORS_EXTRA_ORIGINS` — comma-separated browser origins admitted on top of arxivisual.org/www/localhost:3000
   (`api/cors.py`; canonicalized, a non-origin fails startup). Production: the frontend Container App's own FQDN.
 - **Admission control on `POST /api/process`** (`api/throttle.py`, `api/turnstile.py`) — layered, each layer
@@ -125,7 +135,13 @@ npm/pip audit (advisory). `evals.yml` — nightly 06:00 UTC golden-set evals, fa
 
 ## Feature flags
 
-- `USE_TEMPORAL=1` — durable orchestration; any Temporal error falls back (fail-open) to the legacy in-process path.
+- `USE_TEMPORAL=1` — durable orchestration. The API's cached Temporal client is reset, reconnected and the start
+  retried ONCE on a connect failure/`RPCError` (`api/temporal_client.py:call_with_reconnect`); any Temporal error
+  that survives that falls back (fail-open) to the legacy in-process path and logs ONE `ERROR` line containing the
+  exact phrase `Temporal unavailable` — an alert keys on it, keep the wording. Every start carries
+  `memo={"job_id": ...}`: a retried start answered "already started" is usually the job's OWN first call (it
+  landed, its response was lost), and only a different/missing memo job id retires the row as a duplicate
+  (`retried_start_is_ours`).
 - `ENABLE_VISUAL_QA=1` — vision judge on rendered frames (observe-only on legacy path; verdict feeds repair on Temporal path).
 - `VISUAL_QA_REPAIR=1` — one **vision-grounded** repair round for `major` defects (Temporal path only): the
   rendered video is read back through the storage backend (never the CDN URL — stable keys cache for a year),
@@ -140,8 +156,10 @@ npm/pip audit (advisory). `evals.yml` — nightly 06:00 UTC golden-set evals, fa
 - `RENDER_MODE` `local|modal` (default `local`; `modal` also disables the local RenderTester gate).
 - `RENDER_TEST_EXECUTE=1` (default) — RenderTester executes `construct()` in a dry-run subprocess with TTS
   stubbed (`agents/dry_run_driver.py`, ~0.2s/scene, no network): catches the runtime-error class import
-  testing can't (e.g. numpy truth-value `if` on `get_center()`). `0` = legacy import-only validation.
-  `RENDER_TEST_TIMEOUT_SECONDS` (120) bounds it; harness breakage AND timeouts fail open — under load the
+  testing can't (e.g. numpy truth-value `if` on `get_center()`). `0` = legacy import-only validation: the SAME
+  scrubbed subprocess loads the module but skips `construct()` (`--import-only`; it used to `exec_module()` the
+  file inside the worker process, secrets and all).
+  `RENDER_TEST_TIMEOUT_SECONDS` (120) bounds both; harness breakage AND timeouts fail open — under load the
   dry run starves for CPU, and treating that as bad code burned 1,405 paid regenerations in one week.
 
 ## Conventions — do not violate
@@ -180,3 +198,21 @@ npm/pip audit (advisory). `evals.yml` — nightly 06:00 UTC golden-set evals, fa
    row exists.
 10. **Keep `pytest` hermetic.** `testpaths=["tests"]` exists because scripts under `tools/` fire real API calls
    on collection; new tests must not need network or real keys.
+11. **Never add a `Column` or `Index` to an EXISTING model without a migration path.** `create_all` only creates
+   missing tables — it never alters one that exists — and there is no Alembic. `init_db()` therefore compares
+   every model column with the live table after `create_all` and RAISES on a missing one, so the new revision
+   fails its startup probe and the old one keeps serving (instead of `UndefinedColumn` 500s at query time). To
+   ship a column: run the `ALTER TABLE ... ADD COLUMN` against production first (nullable or with a default, so
+   the old revision keeps working), then deploy. New tables are fine. The guard covers the API only (the worker
+   never calls `init_db`) and does not check indexes, types or constraints.
+12. **Generated Manim code is untrusted: it never sees the secret environment.** An LLM writes it from arbitrary
+   paper text and it is executed twice (dry-run gate, real render). It only ever runs in a subprocess — never
+   import, `exec_module()` or `exec()` it in the API/worker process (importing IS executing; both RenderTester
+   modes go through `agents/dry_run_driver.py`) — and every such subprocess takes its env
+   from `rendering/sandbox_env.py:scrubbed_env()` — a DENY-list by prefix and name pattern, NOT an allow-list
+   (LaTeX/ffmpeg/fontconfig need an unpredictable set of ordinary variables and CI never renders). The runner
+   re-adds only the TTS credential (`_tts_subprocess_env`). A new secret whose name does not contain
+   KEY/SECRET/TOKEN/PASSWORD/CONNECTION_STRING needs a prefix entry there. `CodeValidator` also rejects
+   `os`/`sys`/`subprocess`/network/`importlib`/`pickle` imports and `eval`/`exec`/`compile`/`__import__`/`open()`
+   (a tripwire, not a sandbox); the exhausted-retries fallback drops a viz whose last attempt failed that gate
+   instead of shipping it. Never teach a forbidden name in `prompts/` or `examples/` — a test enforces it.

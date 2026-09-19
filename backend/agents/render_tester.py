@@ -9,39 +9,40 @@ Two validation modes (RENDER_TEST_EXECUTE env, default on):
   catches the runtime-error class that import testing structurally cannot:
   a production render died on ``if a.get_center() == b.get_center():`` (numpy
   truth-value ValueError) that only fires when construct() executes.
-- Import mode (legacy fallback): compile + import the module in-process.
+- Import mode (legacy fallback, RENDER_TEST_EXECUTE=0): the same subprocess
+  loads the module and locates its Scene class but never calls construct().
 
-Execution mode fails OPEN on harness trouble (driver crash without a verdict
+BOTH modes run the generated code in the driver subprocess with the secret
+scrub (rendering/sandbox_env.py). Import mode used to exec_module() the file
+inside the worker process — importing IS executing, so module-level generated
+code saw the full os.environ, the live DB engine and the storage client, and
+a hung import could not be killed. Never load generated code in-process.
+
+Both modes fail OPEN on harness trouble (driver crash without a verdict
 sentinel, or a TIMEOUT — under load the dry run starves for CPU, which says
 nothing about the code): the real render still guards, and a gate must never
 block all videos because of its own infrastructure.
 """
 
 import asyncio
-import contextlib
-import importlib.util
 import logging
 import os
 import re
 import subprocess
 import sys
 import tempfile
-import traceback
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-from agents.dry_run_driver import SENTINEL_FAIL, SENTINEL_OK
+from agents.dry_run_driver import IMPORT_ONLY_FLAG, SENTINEL_FAIL, SENTINEL_OK
+from rendering.sandbox_env import scrubbed_env
 
 logger = logging.getLogger(__name__)
 
 _DRIVER_PATH = Path(__file__).with_name("dry_run_driver.py")
 _TMPDIR_PREFIX = "dry-run-gate-"
-# The dry run needs no real credentials (TTS is stubbed, nothing uploads) and
-# it executes LLM-generated code — scrub secrets from the child environment.
-_SECRET_ENV_PREFIXES = ("AZURE_", "S3_", "LANGFUSE_", "DEDALUS_")
-_SECRET_ENV_KEYS = ("DATABASE_URL", "RENDER_API_SECRET", "OPENAI_API_KEY")
 
 
 class RenderTestOutput(BaseModel):
@@ -73,8 +74,8 @@ class RenderTestOutput(BaseModel):
 
 class RenderTester:
     """
-    Tests Manim code by attempting to import and validate it.
-    
+    Tests Manim code by running it in a scrubbed subprocess (never in-process).
+
     This catches runtime errors that static analysis cannot detect:
     - Missing imports
     - Invalid method calls
@@ -151,7 +152,7 @@ class RenderTester:
     async def test_render(self, code: str, scene_class: str | None = None) -> RenderTestOutput:
         """
         Test Manim code by executing construct() in a dry-run subprocess
-        (or, with RENDER_TEST_EXECUTE=0, by importing it in-process).
+        (or, with RENDER_TEST_EXECUTE=0, by only importing it there).
 
         Args:
             code: The Manim Python code to test
@@ -161,26 +162,17 @@ class RenderTester:
             RenderTestOutput with success status and error details
         """
         validate = self._validate_by_execution if self.execute_mode else self._validate_by_import
-        # Execution mode: the subprocess enforces the real timeout, so the
-        # outer wait only guards the wrapper and gets a margin. Import mode has
-        # no inner timeout — the outer wait IS its documented 60s bound.
-        outer_timeout = self.timeout_seconds + 15 if self.execute_mode else self.timeout_seconds
+        # The subprocess enforces the real timeout (both modes), so the outer
+        # wait only guards the wrapper and gets a margin.
         try:
             result = await asyncio.wait_for(
                 asyncio.to_thread(validate, code, scene_class),
-                timeout=outer_timeout,
+                timeout=self.timeout_seconds + 15,
             )
             return result
         except TimeoutError:
-            if self.execute_mode:
-                logger.warning("Dry-run gate wrapper timed out — failing open")
-                return RenderTestOutput(success=True)
-            return RenderTestOutput(
-                success=False,
-                error_type="TimeoutError",
-                error_message=f"Code validation timed out after {self.timeout_seconds}s",
-                fix_suggestion="Check for infinite loops or very complex computations in the Scene class definition"
-            )
+            logger.warning("Dry-run gate wrapper timed out — failing open")
+            return RenderTestOutput(success=True)
         except Exception as e:
             return RenderTestOutput(
                 success=False,
@@ -190,7 +182,19 @@ class RenderTester:
             )
 
     def _validate_by_execution(self, code: str, scene_class: str | None = None) -> RenderTestOutput:
-        """Execute construct() in a dry-run subprocess (see dry_run_driver.py).
+        """Execute construct() in a dry-run subprocess (see dry_run_driver.py)."""
+        return self._run_driver(code, scene_class, import_only=False)
+
+    def _validate_by_import(self, code: str, scene_class: str | None = None) -> RenderTestOutput:
+        """Import the module and find its Scene class — construct() is not run.
+
+        Same scrubbed subprocess as execution mode: importing generated code
+        executes its module level, which must never happen in this process.
+        """
+        return self._run_driver(code, scene_class, import_only=True)
+
+    def _run_driver(self, code: str, scene_class: str | None, *, import_only: bool) -> RenderTestOutput:
+        """Run dry_run_driver.py on ``code`` in a subprocess without secrets.
 
         Verdicts come from the driver's sentinels; a missing sentinel means
         the harness itself broke, which fails OPEN — the real render is still
@@ -203,16 +207,18 @@ class RenderTester:
         with tempfile.TemporaryDirectory(prefix=_TMPDIR_PREFIX) as tmpdir:
             scene_path = Path(tmpdir) / "scene.py"
             scene_path.write_text(code, encoding="utf-8")
-            env = {
-                k: v for k, v in os.environ.items()
-                if not k.startswith(_SECRET_ENV_PREFIXES) and k not in _SECRET_ENV_KEYS
-            }
+            # The dry run needs no real credentials (TTS is stubbed, nothing
+            # uploads) and it executes LLM-generated code — same secret scrub
+            # as the real render (rendering/sandbox_env.py).
+            env = scrubbed_env()
             # The generated code instantiates OpenAIService before the driver
             # swaps it out; its __init__ only needs a key to exist.
             env["OPENAI_API_KEY"] = "dry-run-placeholder"
             cmd = [sys.executable, str(_DRIVER_PATH), str(scene_path)]
             if scene_class:
                 cmd.append(scene_class)
+            if import_only:
+                cmd.append(IMPORT_ONLY_FLAG)
             try:
                 result = subprocess.run(
                     cmd,
@@ -294,99 +300,6 @@ class RenderTester:
             fix_suggestion=info["suggestion"],
         )
     
-    def _validate_by_import(self, code: str, scene_class: str | None = None) -> RenderTestOutput:
-        """
-        Validate code by attempting to import it as a Python module.
-        
-        This catches most runtime errors without actually rendering video.
-        """
-        syntax_error = self._check_syntax(code)
-        if syntax_error is not None:
-            return syntax_error
-
-        # Create a temporary file
-        with tempfile.NamedTemporaryFile(
-            mode='w',
-            suffix='.py',
-            delete=False,
-            encoding='utf-8'
-        ) as f:
-            f.write(code)
-            temp_path = Path(f.name)
-        
-        try:
-            # Try to import the module
-            spec = importlib.util.spec_from_file_location(
-                "test_manim_scene",
-                temp_path
-            )
-            if spec is None or spec.loader is None:
-                return RenderTestOutput(
-                    success=False,
-                    error_type="ImportError",
-                    error_message="Could not create module spec",
-                    fix_suggestion="Check that the code is valid Python"
-                )
-            
-            module = importlib.util.module_from_spec(spec)
-            
-            # Add to sys.modules temporarily to allow relative imports
-            sys.modules["test_manim_scene"] = module
-            
-            try:
-                spec.loader.exec_module(module)
-            except Exception as e:
-                # Parse the error for useful info
-                error_info = self._parse_error(e, code)
-                return RenderTestOutput(
-                    success=False,
-                    error_type=error_info["type"],
-                    error_message=error_info["message"],
-                    line_number=error_info.get("line"),
-                    fix_suggestion=error_info["suggestion"]
-                )
-            finally:
-                # Clean up sys.modules
-                sys.modules.pop("test_manim_scene", None)
-            
-            # Check if Scene class exists and has construct method
-            scene_classes = [
-                obj for name, obj in module.__dict__.items()
-                if isinstance(obj, type) and 
-                hasattr(obj, 'construct') and
-                name not in ('Scene', 'ThreeDScene', 'VoiceoverScene')
-            ]
-            
-            if not scene_classes:
-                return RenderTestOutput(
-                    success=False,
-                    error_type="MissingScene",
-                    error_message="No Scene class with construct() method found",
-                    fix_suggestion="Ensure code has a class that inherits from Scene with a construct(self) method"
-                )
-            
-            # Success!
-            return RenderTestOutput(success=True)
-            
-        finally:
-            # Clean up temp file
-            with contextlib.suppress(Exception):
-                temp_path.unlink()
-    
-    def _parse_error(self, error: Exception, code: str) -> dict[str, Any]:
-        """Parse an exception to extract useful error information."""
-        # Try to get line number from traceback
-        line_number = None
-        tb = traceback.extract_tb(error.__traceback__)
-        for frame in reversed(tb):
-            if "test_manim_scene" in frame.filename:
-                line_number = frame.lineno
-                break
-
-        info = self._refine_error(type(error).__name__, str(error))
-        info["line"] = line_number
-        return info
-
     def _refine_error(self, error_type: str, error_msg: str) -> dict[str, Any]:
         """Map an error type/message onto a targeted fix suggestion."""
         # Get suggestion based on error type

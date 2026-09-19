@@ -482,9 +482,19 @@ def test_report_writing_and_regression_check_end_to_end(tmp_path):
         ],
         max_viz=2,
     )
-    # Errored papers are excluded from the aggregate.
-    assert report["aggregate"]["papers_evaluated"] == 1
-    assert report["aggregate"]["viz_yield_rate"] == 1.0
+    # Errored papers COUNT, as failures: the paper owed max_viz visualizations
+    # and delivered none. (They used to be dropped, so the aggregate described
+    # only the papers that happened to work.)
+    aggregate = report["aggregate"]
+    assert aggregate["papers_requested"] == 2
+    assert aggregate["papers_evaluated"] == 1
+    assert aggregate["papers_errored"] == 1
+    assert aggregate["candidates_run"] == 4  # 2 real + 2 owed by the errored paper
+    assert aggregate["visualizations_validated"] == 2
+    assert aggregate["viz_yield_rate"] == 0.5
+    # Gate rates stay a measure of LLM quality over runs that completed: an
+    # arXiv 503 is not a code_validator failure.
+    assert aggregate["gates"]["code_validator"]["eventual_rate"] == 1.0
 
     report_path = tmp_path / "report.json"
     report_path.write_text(json.dumps(report, indent=2))
@@ -500,6 +510,78 @@ def test_report_writing_and_regression_check_end_to_end(tmp_path):
     bad_path = tmp_path / "bad_report.json"
     bad_path.write_text(json.dumps(bad_report))
     assert check_regression.main([str(bad_path), str(BASELINES_PATH)]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Coverage floor: the nightly gate once passed with 1 of 5 papers evaluated
+# ---------------------------------------------------------------------------
+
+
+def _healthy_metrics(vizzes: int = 2) -> GateMetrics:
+    gm = GateMetrics()
+    for _ in range(vizzes):
+        gm.hook("code_validator", 0, True)
+        gm.hook("spatial_validator", 0, True)
+        gm.hook("voiceover_script_validator", 0, True)
+    return gm
+
+
+def _report(tmp_path, evaluated: int, errored: int) -> str:
+    papers = [_paper_result(f"2301.0000{i}", _healthy_metrics()) for i in range(evaluated)]
+    papers += [
+        _paper_result(f"2302.0000{i}", GateMetrics(), error="ValueError: arXiv HTTP 503")
+        for i in range(errored)
+    ]
+    path = tmp_path / f"report_{evaluated}_{errored}.json"
+    path.write_text(json.dumps(build_report(papers, max_viz=2)))
+    return str(path)
+
+
+def test_real_baselines_carry_the_coverage_floor():
+    coverage = json.loads(BASELINES_PATH.read_text())["coverage"]
+    assert coverage["max_papers_not_evaluated"] == 1
+
+
+def test_one_of_five_papers_evaluated_fails_the_gate(tmp_path, capsys):
+    # The exact night that passed: four ingests died on arXiv 503s, the one
+    # survivor scored perfectly, and a perfect score over one paper was green.
+    assert check_regression.main([_report(tmp_path, 1, 4), str(BASELINES_PATH)]) == 1
+    out = capsys.readouterr()
+    assert "papers_evaluated" in out.out
+    assert "REGRESSION" in out.err
+
+
+def test_the_floor_alone_fails_the_gate_even_when_every_metric_passes(tmp_path):
+    # Isolate the floor from the yield penalty: only the coverage rule is set.
+    baselines = _write(tmp_path, "b.json", {
+        "coverage": {"max_papers_not_evaluated": 1},
+        "metrics": {"gates.code_validator.eventual_rate": {"min": 0.7}},
+    })
+    assert check_regression.main([_report(tmp_path, 3, 2), baselines]) == 1
+    assert check_regression.main([_report(tmp_path, 4, 1), baselines]) == 0
+
+
+def test_one_flaky_paper_is_tolerated(tmp_path):
+    # 4 of 5: inside the floor, and the yield (8 of 10 owed) clears its 0.5 minimum.
+    assert check_regression.main([_report(tmp_path, 4, 1), str(BASELINES_PATH)]) == 0
+    assert check_regression.main([_report(tmp_path, 5, 0), str(BASELINES_PATH)]) == 0
+
+
+def test_coverage_rows():
+    def row(requested, evaluated, allowed=1):
+        report = {"config": {"papers_requested": requested}, "aggregate": {"papers_evaluated": evaluated}}
+        return check_regression.evaluate_coverage(report, {"max_papers_not_evaluated": allowed})
+
+    assert row(5, 4)["ok"] and row(5, 5)["ok"]
+    assert not row(5, 3)["ok"] and "below minimum 4" in row(5, 3)["detail"]
+    # A single-paper run cannot be allowed to evaluate nothing.
+    assert row(1, 1)["ok"] and not row(1, 0)["ok"]
+    assert row(3, 1, allowed=2)["ok"]
+    # No coverage rule configured: no row, older baselines keep working.
+    assert check_regression.evaluate_coverage({"aggregate": {}}, {}) is None
+    # Rule configured but the report cannot answer it: that IS a failure.
+    missing = check_regression.evaluate_coverage({"aggregate": {"papers_evaluated": 3}}, {"max_papers_not_evaluated": 1})
+    assert not missing["ok"] and "missing" in missing["detail"]
 
 
 def test_golden_set_shape_and_limit():

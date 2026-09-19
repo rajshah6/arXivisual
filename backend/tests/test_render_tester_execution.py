@@ -109,6 +109,55 @@ class TestDryRunExecution:
         assert "inherits from Scene" in result.fix_suggestion
 
 
+class TestImportOnlyMode:
+    """RENDER_TEST_EXECUTE=0 used to exec_module() the generated file INSIDE the
+    worker process — full os.environ, live DB engine, storage client — so one
+    env flip voided the secret scrub. It is the same scrubbed subprocess now,
+    minus the construct() call."""
+
+    @pytest.fixture()
+    def importer(self, monkeypatch):
+        monkeypatch.setenv("RENDER_TEST_EXECUTE", "0")
+        return RenderTester(timeout_seconds=120)
+
+    def test_valid_scene_passes(self, importer):
+        result = asyncio.run(importer.test_render(VALID_SCENE))
+        assert result.success, f"{result.error_type}: {result.error_message}"
+
+    def test_construct_is_not_executed(self, importer):
+        # Import-only by definition: the construct()-time bug stays invisible.
+        assert asyncio.run(importer.test_render(NUMPY_BUG_SCENE)).success
+
+    def test_module_level_error_is_reported_with_its_line(self, importer):
+        code = "from manim import *\nx = UndefinedThing()\n" + VALID_SCENE
+        result = asyncio.run(importer.test_render(code))
+        assert not result.success
+        assert result.error_type == "NameError"
+        assert result.line_number == 2
+
+    def test_missing_scene_keeps_typed_feedback(self, importer):
+        result = asyncio.run(importer.test_render("from manim import *\nx = 1\n"))
+        assert not result.success
+        assert result.error_type == "MissingSceneError"
+
+    def test_generated_module_runs_in_another_process_without_the_secrets(self, importer, monkeypatch):
+        import os
+
+        monkeypatch.setenv("S3_SECRET_KEY", "s3-secret")
+        monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://app:pw@db/arxiviz")
+        probe = (
+            "import os\n"
+            "raise RuntimeError('pid=%d s3=%s db=%s' % ("
+            "os.getpid(), os.environ.get('S3_SECRET_KEY'), os.environ.get('DATABASE_URL')))\n"
+        )
+        result = asyncio.run(importer.test_render(probe))
+
+        assert not result.success and result.error_type == "RuntimeError"
+        assert "s3=None db=None" in result.error_message
+        assert "pid=" in result.error_message
+        assert f"pid={os.getpid()} " not in result.error_message
+
+
 class TestSubprocessErrorParsing:
     def test_extracts_type_message_and_line(self):
         stderr = (

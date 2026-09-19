@@ -13,7 +13,6 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import analytics
@@ -24,6 +23,7 @@ from ingestion.text_normalize import normalize_display_text, tex_to_text
 from jobs import process_paper_job
 from rendering import extract_scene_name, get_video_path, get_video_url, process_visualization
 
+from . import health
 from .schemas import (
     FeedbackRequest,
     FeedbackResponse,
@@ -220,9 +220,11 @@ async def start_processing(
     # Durable path (USE_TEMPORAL=1): start a Temporal workflow. Execution
     # happens on the worker app and survives restarts/redeploys; the workflow
     # ID makes duplicate submissions structurally impossible at the
-    # orchestrator. Fail-open: any Temporal error falls back to the legacy
-    # in-process BackgroundTasks path so paper processing never breaks on
-    # orchestrator trouble.
+    # orchestrator. A dead cached client is replaced and the start retried
+    # once (temporal_client.call_with_reconnect); the job_id memo lets that
+    # retry recognise its own first attempt. Fail-open: any Temporal error
+    # that survives that falls back to the legacy in-process BackgroundTasks
+    # path so paper processing never breaks on orchestrator trouble.
     started_durably = False
     from .temporal_client import temporal_enabled
 
@@ -233,36 +235,63 @@ async def start_processing(
             from temporal_app.activities import PipelineInput
             from temporal_app.workflows import TASK_QUEUE, PaperPipelineWorkflow
 
-            from .temporal_client import get_temporal_client
+            from .temporal_client import JOB_ID_MEMO_KEY, call_with_reconnect, retried_start_is_ours
 
-            temporal = await get_temporal_client()
-            try:
+            workflow_id = f"paper-{arxiv_id}"
+            start_calls = 0
+
+            async def _start(temporal):
+                nonlocal start_calls
+                start_calls += 1
                 await temporal.start_workflow(
                     PaperPipelineWorkflow.run,
                     PipelineInput(job_id=job_id, arxiv_id=arxiv_id),
-                    id=f"paper-{arxiv_id}",
+                    id=workflow_id,
                     task_queue=TASK_QUEUE,
+                    # Names the job this run belongs to; read back below.
+                    memo={JOB_ID_MEMO_KEY: job_id},
                 )
+
+            try:
+                await call_with_reconnect(_start)
                 started_durably = True
             except WorkflowAlreadyStartedError:
-                # A workflow for this paper is already running (race past the
-                # cheap dedupe). Retire the row we just created and point the
-                # caller at the active job.
-                await queries.update_job_status(
-                    db, job_id, status="failed",
-                    error="Duplicate submission; another run was already in flight.",
-                )
-                recent_jobs.clear(arxiv_id)
-                active = await queries.get_active_job_for_paper(db, arxiv_id)
-                return ProcessResponse(
-                    job_id=active.id if active else job_id,
-                    arxiv_id=arxiv_id,
-                    status=JobStatus(active.status) if active else JobStatus.queued,
-                    message="This paper is already being processed. Poll /api/status/{job_id} for updates.",
-                )
-        except Exception:
-            logger.exception(
-                "Temporal unavailable — falling back to in-process pipeline"
+                # On a RETRIED start this is usually our own first call: it
+                # reached the server, only its response was lost, and the retry
+                # (a new request id) is rejected because of the workflow this
+                # job owns. The memo tells that apart from a real duplicate. On
+                # the first call it can only be someone else's — no lookup.
+                if start_calls > 1 and await retried_start_is_ours(workflow_id, job_id):
+                    started_durably = True
+                    logger.info(
+                        "Temporal start for job %s had already landed — the retry found its own workflow %s",
+                        job_id, workflow_id,
+                    )
+                else:
+                    # A workflow for this paper is already running (race past the
+                    # cheap dedupe). Retire the row we just created and point the
+                    # caller at the active job.
+                    await queries.update_job_status(
+                        db, job_id, status="failed",
+                        error="Duplicate submission; another run was already in flight.",
+                    )
+                    recent_jobs.clear(arxiv_id)
+                    active = await queries.get_active_job_for_paper(db, arxiv_id)
+                    return ProcessResponse(
+                        job_id=active.id if active else job_id,
+                        arxiv_id=arxiv_id,
+                        status=JobStatus(active.status) if active else JobStatus.queued,
+                        message="This paper is already being processed. Poll /api/status/{job_id} for updates.",
+                    )
+        except Exception as exc:
+            # ONE line, on purpose: an alert keys on the exact phrase "Temporal
+            # unavailable", and log pipelines split multi-line tracebacks into
+            # separate rows. The in-process path does not survive a restart, so
+            # every one of these is a job running without durability.
+            logger.error(
+                "Temporal unavailable — falling back to in-process pipeline "
+                "(job=%s paper=%s error=%r)",
+                job_id, arxiv_id, exc,
             )
 
     if not started_durably:
@@ -589,51 +618,15 @@ async def health_check(db: AsyncSession = Depends(get_db)):
     """
     Health check endpoint.
 
-    Returns status of the API and dependent services.
+    Returns status of the API and dependent services, plus the deployed
+    commit (the deploy workflow polls until ``commit`` matches the sha it
+    built). The checks live in api/health.py: nothing blocks the event loop,
+    results are cached (manim for the process, database/R2 for a short TTL)
+    and error strings are generic — details go to the server log.
     """
-    import os
-    import subprocess
-
-    # Test database connection
-    db_status = "connected"
-    try:
-        await db.execute(text("SELECT 1"))
-    except Exception as e:
-        db_status = f"error: {e!s}"
-
-    # Test Manim availability
-    manim_status = "not found"
-    try:
-        manim_exe = os.getenv("MANIM_EXECUTABLE", "manim")
-        result = subprocess.run(
-            [manim_exe, "--version"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        if result.returncode == 0:
-            version = result.stdout.strip().split("\n")[0]
-            manim_status = f"available ({version})"
-        else:
-            detail = (result.stderr.strip() or result.stdout.strip()).splitlines()
-            manim_status = f"error: {detail[-1][:200] if detail else 'command failed'}"
-    except FileNotFoundError:
-        manim_status = "not installed"
-    except Exception as e:
-        manim_status = f"error: {e!s}"
-
-    # Test storage connectivity
-    from rendering.storage import STORAGE_MODE, get_backend
-    storage_status = "local"
-    if STORAGE_MODE == "r2":
-        backend = get_backend()
-        if hasattr(backend, "check_connectivity"):
-            try:
-                storage_status = "r2: connected" if backend.check_connectivity() else "r2: unreachable"
-            except Exception as e:
-                storage_status = f"r2: error ({e})"
-        else:
-            storage_status = "r2: configured"
+    db_status = await health.database_status(db)
+    manim_status = await health.manim_status()
+    storage_status = await health.storage_status()
 
     # Check Modal configuration
     from rendering import RENDER_MODE
@@ -651,6 +644,8 @@ async def health_check(db: AsyncSession = Depends(get_db)):
     return HealthResponse(
         status="healthy" if all_healthy else "degraded",
         version="0.1.0",
+        commit=health.commit_sha(),
+        database_dialect=health.database_dialect(db),
         services={
             "database": db_status,
             "manim": manim_status if RENDER_MODE != "modal" else f"offloaded to modal ({manim_status})",

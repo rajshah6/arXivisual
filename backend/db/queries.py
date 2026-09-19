@@ -14,7 +14,7 @@ def _utcnow_naive() -> datetime:
     must stay naive; this just replaces the deprecated _utcnow_naive()."""
     return datetime.now(UTC).replace(tzinfo=None)
 
-from sqlalchemy import delete, distinct, func, select, update
+from sqlalchemy import delete, distinct, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -223,7 +223,17 @@ async def reset_paper_for_reingest(db: AsyncSession, meta: ArxivPaperMeta) -> No
             pdf_url=meta.pdf_url, html_url=meta.html_url, updated_at=_utcnow_naive(),
         )
     )
-    await db.execute(update(Visualization).where(Visualization.paper_id == meta.arxiv_id).values(section_id=None))
+    # Unlink by the SECTIONS being deleted, not only by the owning paper:
+    # legacy truncated-id viz rows (viz_26082355_1) collided across sibling
+    # papers, so a row owned by 2608.23553 can still reference a section of
+    # 2608.23552 — the delete below then fails on Postgres (FK violation).
+    doomed_sections = select(Section.id).where(Section.paper_id == meta.arxiv_id)
+    await db.execute(
+        update(Visualization)
+        .where(or_(Visualization.paper_id == meta.arxiv_id, Visualization.section_id.in_(doomed_sections)))
+        .values(section_id=None)
+        .execution_options(synchronize_session=False)  # expire_all() below
+    )
     await db.execute(delete(Section).where(Section.paper_id == meta.arxiv_id))
     await db.commit()
     db.expire_all()

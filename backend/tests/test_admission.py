@@ -239,6 +239,42 @@ async def test_turnstile_rejects_token_for_foreign_hostname(monkeypatch):
     assert await turnstile.verify_turnstile("tok", "203.0.113.9") is True
 
 
+@pytest.mark.parametrize("body", [
+    {"success": True},  # no hostname at all
+    {"success": True, "hostname": None},
+    {"success": True, "hostname": ""},
+])
+async def test_turnstile_missing_hostname_fails_closed(monkeypatch, body):
+    # The allow-list check used to be `if hostname and hostname not in ...`:
+    # a success response WITHOUT a hostname skipped it entirely, so the one
+    # field that ties a token to our site was optional.
+    monkeypatch.setenv("TURNSTILE_SECRET_KEY", "test-secret")
+    monkeypatch.setattr(turnstile.httpx, "AsyncClient", _client_returning(body))
+    verdict = await turnstile.verify_turnstile_detailed("tok", "203.0.113.9")
+    assert not verdict.ok and verdict.reason.startswith("hostname")
+
+
+async def test_turnstile_bypass_paths_survive_the_fail_closed_hostname_check(monkeypatch):
+    # Unconfigured (local dev, CI): verification is skipped before any network
+    # call or hostname check — a client that would explode proves it.
+    monkeypatch.delenv("TURNSTILE_SECRET_KEY", raising=False)
+
+    class MustNotBeCalled:
+        def __init__(self, *a, **k):
+            raise AssertionError("siteverify must not be called when unconfigured")
+
+    monkeypatch.setattr(turnstile.httpx, "AsyncClient", MustNotBeCalled)
+    assert await turnstile.verify_turnstile(None) is True
+    assert await turnstile.verify_turnstile("anything", "203.0.113.9") is True
+
+    # Configured + local development: localhost tokens still pass by default.
+    monkeypatch.setenv("TURNSTILE_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.delenv("TURNSTILE_ALLOWED_HOSTNAMES", raising=False)
+    monkeypatch.setattr(turnstile.httpx, "AsyncClient", _client_returning({"success": True, "hostname": "localhost"}))
+    assert await turnstile.verify_turnstile("tok", "203.0.113.9") is True
+
+
 @pytest.mark.parametrize("token", [None, ""])
 async def test_turnstile_empty_token_rejected_when_configured(monkeypatch, token):
     monkeypatch.setenv("TURNSTILE_SECRET_KEY", "test-secret")

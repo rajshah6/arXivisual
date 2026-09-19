@@ -99,6 +99,42 @@ async def ingest_paper(params: PipelineInput) -> None:
         await _ingest_and_store_paper(db, params.job_id, params.arxiv_id)
 
 
+def _langfuse_scope(**attrs):
+    """``propagate_attributes`` when Langfuse is importable, else a no-op.
+
+    Every activity that can call a model wraps its work in one of these with
+    ``session_id=job_id``: activities run in their own contexts, so without it
+    judge and repair generations are orphan traces that no session filter
+    can join to the paper that paid for them.
+    """
+    try:
+        from langfuse import propagate_attributes
+    except ImportError:  # pragma: no cover
+        from contextlib import nullcontext
+
+        return nullcontext()
+    return propagate_attributes(**attrs)
+
+
+def render_scope(params: RenderInput):
+    tags = ["pipeline", "temporal", "render"] + (["repair"] if params.is_repair else [])
+    return _langfuse_scope(
+        session_id=params.job_id,
+        trace_name="render-visualization",
+        tags=tags,
+        metadata={"viz_id": params.viz_id, "is_repair": "1" if params.is_repair else "0"},
+    )
+
+
+def repair_scope(params: RepairInput):
+    return _langfuse_scope(
+        session_id=params.job_id,
+        trace_name="repair-visualization",
+        tags=["pipeline", "temporal", "repair"],
+        metadata={"viz_id": params.viz_id},
+    )
+
+
 @activity.defn
 async def generate_visualizations_for_paper(params: PipelineInput) -> list[RenderInput]:
     """Run the agent pipeline; upsert viz records; return render inputs.
@@ -112,14 +148,6 @@ async def generate_visualizations_for_paper(params: PipelineInput) -> list[Rende
     from db.connection import async_session_maker
     from jobs.worker import _build_structured_paper_from_db
 
-    try:
-        from langfuse import propagate_attributes
-    except ImportError:  # pragma: no cover
-        from contextlib import nullcontext
-
-        def propagate_attributes(**_kw):  # type: ignore
-            return nullcontext()
-
     async with async_session_maker() as db:
         await queries.update_job_status(
             db, params.job_id,
@@ -130,7 +158,7 @@ async def generate_visualizations_for_paper(params: PipelineInput) -> list[Rende
         db_sections = sorted(db_paper.sections, key=lambda s: s.order_index)
         structured_paper = _build_structured_paper_from_db(db_paper, db_sections)
 
-    with propagate_attributes(
+    with _langfuse_scope(
         session_id=params.job_id,
         trace_name="process-paper",
         tags=["pipeline", "temporal"],
@@ -194,22 +222,24 @@ async def render_visualization(params: RenderInput) -> RenderResult:
     severity = "none"
     issues: list[str] = []
     try:
-        if qa_enabled:
-            video_url, verdict = await process_visualization(
-                viz_id=params.viz_id,
-                manim_code=params.manim_code,
-                quality="low_quality",
-                collect_qa=True,
-            )
-            if verdict is not None:
-                severity = verdict.severity
-                issues = list(verdict.issues)
-        else:
-            video_url = await process_visualization(
-                viz_id=params.viz_id,
-                manim_code=params.manim_code,
-                quality="low_quality",
-            )
+        with render_scope(params):
+            if qa_enabled:
+                video_url, verdict = await process_visualization(
+                    viz_id=params.viz_id,
+                    manim_code=params.manim_code,
+                    quality="low_quality",
+                    collect_qa=True,
+                    is_repair=params.is_repair,
+                )
+                if verdict is not None:
+                    severity = verdict.severity
+                    issues = list(verdict.issues)
+            else:
+                video_url = await process_visualization(
+                    viz_id=params.viz_id,
+                    manim_code=params.manim_code,
+                    quality="low_quality",
+                )
     except Exception as exc:
         succeeded = False
         error = str(exc)
@@ -304,32 +334,33 @@ async def repair_visualization_code(params: RepairInput) -> str:
     # sampling, model call, empty output, or invalid code — falls through to the
     # text-only attempt (consistent contract: garbage is treated like absence).
     code = None
-    video_bytes = await _fetch_rendered_video(params.viz_id)
-    if video_bytes:
-        raw = await repair_code_with_frames(
-            params.manim_code, params.issues, video_bytes, viz_id=params.viz_id
-        )
-        if raw:
+    with repair_scope(params):
+        video_bytes = await _fetch_rendered_video(params.viz_id)
+        if video_bytes:
+            raw = await repair_code_with_frames(
+                params.manim_code, params.issues, video_bytes, viz_id=params.viz_id
+            )
+            if raw:
+                code = _extract_and_validate(raw)
+                if code:
+                    logger.info("Vision-grounded repair produced code for %s", params.viz_id)
+                else:
+                    logger.warning(
+                        "Vision repair output failed validation for %s; trying text-only",
+                        params.viz_id,
+                    )
+
+        if code is None:
+            logger.info("Text-only repair for %s", params.viz_id)
+            from agents.visual_qa import REPAIR_OUTPUT_CONTRACT
+
+            prompt = REPAIR_PROMPT.format(
+                issues=format_issue_list(params.issues),
+                code=params.manim_code,
+                contract=REPAIR_OUTPUT_CONTRACT,
+            )
+            raw = await call_llm(prompt, max_tokens=10000, name="visual_qa_repair")
             code = _extract_and_validate(raw)
-            if code:
-                logger.info("Vision-grounded repair produced code for %s", params.viz_id)
-            else:
-                logger.warning(
-                    "Vision repair output failed validation for %s; trying text-only",
-                    params.viz_id,
-                )
-
-    if code is None:
-        logger.info("Text-only repair for %s", params.viz_id)
-        from agents.visual_qa import REPAIR_OUTPUT_CONTRACT
-
-        prompt = REPAIR_PROMPT.format(
-            issues=format_issue_list(params.issues),
-            code=params.manim_code,
-            contract=REPAIR_OUTPUT_CONTRACT,
-        )
-        raw = await call_llm(prompt, max_tokens=10000, name="visual_qa_repair")
-        code = _extract_and_validate(raw)
 
     if code is None:
         raise RuntimeError(f"Repair produced invalid code for {params.viz_id}")

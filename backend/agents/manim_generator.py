@@ -152,7 +152,11 @@ class ManimGenerator(BaseAgent):
 
     def _extract_scene_class_name(self, code: str) -> str:
         """Extract the scene class name from generated code."""
-        match = re.search(r"class\s+(\w+)\s*\(\s*(Scene|ThreeDScene|VoiceoverScene)\s*\)", code)
+        # Any base list that includes a scene base (ThreeDScene, VoiceoverScene
+        # together is the narrated-3D case); must agree with CodeValidator.
+        match = re.search(
+            r"class\s+(\w+)\s*\([^)]*\b(?:Scene|ThreeDScene|VoiceoverScene)\b[^)]*\)", code
+        )
         if match:
             return match.group(1)
         return "GeneratedScene"
@@ -257,6 +261,13 @@ class ManimGenerator(BaseAgent):
 
         try:
             live_docs = await get_manim_docs(topic=topic, max_tokens=5000, use_dedalus=True)
+            if live_docs and live_docs.strip() == self.system_prompt.strip():
+                # get_manim_docs hands back the static manim_reference.md when
+                # every live source fails — the exact text already loaded as the
+                # system prompt. Appending it sent the reference twice on every
+                # generator call in production (~4.4k tokens/call).
+                logger.info("  Live docs unavailable; static reference already in system prompt")
+                return self.system_prompt
             if live_docs and len(live_docs) > 100:
                 logger.info(
                     "  Enriched prompt with %d chars of live Manim docs "

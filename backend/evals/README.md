@@ -29,6 +29,16 @@ wall-clock time. The headline `viz_yield_rate` counts only visualizations that
 actually cleared every enabled gate — silent fallbacks
 (`VOICE_FAIL_BEHAVIOR=return_silent`) do not inflate it.
 
+**Cost is a metric too.** Every Azure call reports its usage through
+`agents.base.usage_hook` (the cost twin of `metrics_hook`) in the invoice's
+disjoint buckets — uncached input, cached input, visible output, reasoning —
+and `evals/metrics.py:UsageMetrics` prices them at Azure list (see
+`DEFAULT_PRICES_PER_M`). The report carries `usage` per paper (tokens, cost,
+per-call-type breakdown) and, in the aggregate, `cost_usd`,
+`cost_per_paper_usd` and `cost_per_validated_viz_usd`. A model with no price
+is counted in `unpriced_calls` rather than silently costing $0 — that is how a
+frontier-priced repair loop went unnoticed on the invoice for a week.
+
 ## Running locally
 
 Real LLM calls and real arXiv fetches — you need the provider env
@@ -46,11 +56,26 @@ uv run python evals/check_regression.py report.json evals/baselines.json
 - `--papers N` — first N papers of `golden_set.json` (default: all 8; order is
   cheapest/most load-bearing first)
 - `--max-viz M` — cap visualizations per paper (default 2)
+- `--reasoning-effort minimal|low|medium|high` — experiment arm: overrides
+  `AZURE_OPENAI_REASONING_EFFORT` for the run and is recorded in
+  `report["config"]`
+- `--tag LABEL` — experiment label; becomes the Langfuse `session_id` (plus an
+  `eval` tag) so an A/B arm is one filter in the Langfuse UI, and is written
+  to the report
 - `check_regression.py` exits 1 with a verdict table on any regression.
 
-**Cost:** roughly **$0.05–0.15 per paper** at 2 visualizations and low
-reasoning effort (no rendering). Nightly CI runs 5 papers; manual dispatch
-defaults to 3.
+**Cost:** measured 2026-09-07, 3 golden papers x 2 visualizations, no
+rendering: **$0.045 per paper at `low`** and **$0.076 at `medium`** (same
+6/6 yield; medium spends 8x the reasoning tokens). Nightly CI runs 5 papers;
+manual dispatch defaults to 3.
+
+A/B example (two arms, compare `aggregate.cost_per_validated_viz_usd` and the
+gate rates side by side):
+
+```bash
+uv run python evals/run_evals.py --papers 3 --reasoning-effort low --tag e1-low --output low.json
+uv run python evals/run_evals.py --papers 3 --reasoning-effort medium --tag e1-medium --output medium.json
+```
 
 ## Baselines and tightening procedure
 

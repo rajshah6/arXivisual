@@ -5,13 +5,19 @@
     "These carry generous initial slack. Once 3+ real nightly runs establish",
     "variance, tighten them toward the observed floor — procedure in",
     "backend/evals/README.md. render_tester has no threshold: evals run with",
-    "RENDER_MODE=modal, so that gate is disabled by design."
+    "RENDER_MODE=modal, so that gate is disabled by design.",
+    "cost_per_validated_viz_usd caps LLM spend per validated visualization",
+    "(Azure list prices, disjoint token buckets). Measured 2026-09-07 on 3",
+    "golden papers x 2 viz: $0.023 at reasoning_effort=low, $0.038 at medium.",
+    "The cap is ~2x medium so it catches a runaway (retry storms, a frontier",
+    "model slipping into a loop) rather than normal variance."
   ],
   "metrics": {
     "viz_yield_rate": { "min": 0.5 },
     "gates.code_validator.first_attempt_rate": { "min": 0.4 },
     "gates.code_validator.eventual_rate": { "min": 0.7 },
     "gates.spatial_validator.eventual_rate": { "min": 0.7 },
-    "gates.voiceover_script_validator.eventual_rate": { "min": 0.7 }
+    "gates.voiceover_script_validator.eventual_rate": { "min": 0.7 },
+    "cost_per_validated_viz_usd": { "max": 0.08 }
   }
 }

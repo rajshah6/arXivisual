@@ -28,12 +28,24 @@ from pydantic import BaseModel, Field
 
 # Handle imports for both package and direct execution
 try:
-    from .base import _azure_model, _get_azure_client, _with_trace_name, get_provider
+    from .base import (
+        _azure_model,
+        _get_azure_client,
+        _with_trace_name,
+        get_provider,
+        record_usage,
+    )
 except ImportError:  # pragma: no cover - direct execution path
     import sys
 
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from agents.base import _azure_model, _get_azure_client, _with_trace_name, get_provider
+    from agents.base import (
+        _azure_model,
+        _get_azure_client,
+        _with_trace_name,
+        get_provider,
+        record_usage,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +54,18 @@ logger = logging.getLogger(__name__)
 VISUAL_QA_ENABLED = os.getenv("ENABLE_VISUAL_QA", "0") == "1"
 VISUAL_QA_MODEL = os.getenv("VISUAL_QA_MODEL", "gpt-5-mini")
 VISUAL_QA_FRAMES = max(1, int(os.getenv("VISUAL_QA_FRAMES", "3")))
+
+def _effort_kwargs(env_var: str) -> dict:
+    """Per-call reasoning effort for the vision calls, read at call time.
+
+    Unset (the default) sends no ``reasoning_effort`` — the API default —
+    which is what production has always done; the judge and repair calls
+    deliberately do not inherit AZURE_OPENAI_REASONING_EFFORT so the two
+    loops can be tuned (and A/B tested) independently of the generator.
+    """
+    effort = os.getenv(env_var, "").strip()
+    return {"reasoning_effort": effort} if effort else {}
+
 
 def format_issue_list(issues: list[str], limit: int = 8) -> str:
     """Render judge issues as a bullet list for repair prompts (shared)."""
@@ -188,10 +212,12 @@ async def judge_video(video_bytes: bytes, viz_id: str = "") -> VisualQAResult | 
                     "model": _azure_model(VISUAL_QA_MODEL),
                     "messages": [{"role": "user", "content": content}],
                     "max_completion_tokens": 4096,
+                    **_effort_kwargs("VISUAL_QA_JUDGE_REASONING_EFFORT"),
                 },
                 "visual_qa_judge",
             )
         )
+        record_usage(resp, name="visual_qa_judge", model=_azure_model(VISUAL_QA_MODEL))
         verdict = _parse_verdict(resp.choices[0].message.content or "")
         verdict.judge_model = VISUAL_QA_MODEL
         verdict.frames_checked = len(frames)
@@ -273,9 +299,13 @@ async def repair_code_with_frames(
                     "messages": [{"role": "user", "content": content}],
                     # Full corrected scene (~3-4k tokens) + reasoning headroom.
                     "max_completion_tokens": 16000,
+                    **_effort_kwargs("VISUAL_QA_REPAIR_REASONING_EFFORT"),
                 },
                 "visual_qa_repair_vision",
             )
+        )
+        record_usage(
+            resp, name="visual_qa_repair_vision", model=_azure_model(VISUAL_QA_REPAIR_MODEL)
         )
         out = resp.choices[0].message.content or ""
         return out if out.strip() else None

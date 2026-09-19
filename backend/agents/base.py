@@ -5,6 +5,8 @@ import logging
 import os
 import re
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -150,7 +152,11 @@ def _azure_model(model: str | None) -> str:
 
 
 def _azure_request_kwargs(
-    model: str, prompt: str, system_prompt: str, max_tokens: int
+    model: str,
+    prompt: str,
+    system_prompt: str,
+    max_tokens: int,
+    reasoning_effort: str | None = None,
 ) -> dict:
     messages = []
     if system_prompt:
@@ -161,8 +167,12 @@ def _azure_request_kwargs(
         "messages": messages,
         "max_completion_tokens": max_tokens + _AZURE_REASONING_HEADROOM,
     }
-    # minimal | low | medium | high — low keeps the pipeline fast/cheap
-    kwargs["reasoning_effort"] = os.environ.get("AZURE_OPENAI_REASONING_EFFORT", "low")
+    # minimal | low | medium | high — low keeps the pipeline fast/cheap. A
+    # per-call value wins over the process-wide env default so call types
+    # can be tuned independently (reasoning is 36-82% of output tokens).
+    kwargs["reasoning_effort"] = reasoning_effort or os.environ.get(
+        "AZURE_OPENAI_REASONING_EFFORT", "low"
+    )
     return kwargs
 
 
@@ -218,12 +228,62 @@ def _with_trace_name(kwargs: dict, name: str | None) -> dict:
     return kwargs
 
 
+@dataclass(frozen=True)
+class LLMUsage:
+    """Token usage of one LLM call in DISJOINT buckets (the Azure invoice's
+    and Langfuse's convention): ``input_tokens`` excludes the cached prefix,
+    ``output_tokens`` excludes reasoning. OpenAI's raw ``prompt_tokens`` and
+    ``completion_tokens`` are the inclusive totals."""
+
+    name: str | None
+    model: str
+    input_tokens: int
+    cached_tokens: int
+    output_tokens: int
+    reasoning_tokens: int
+
+
+# Optional observation seam for the eval harness (backend/evals), the cost
+# twin of ``agents.pipeline.metrics_hook``: called with an ``LLMUsage`` after
+# every Azure call. None (the default) changes no behavior.
+usage_hook: Callable[[LLMUsage], None] | None = None
+
+
+def record_usage(resp: Any, *, name: str | None, model: str) -> LLMUsage | None:
+    """Parse ``resp.usage`` into an ``LLMUsage`` and report it through
+    ``usage_hook``. Never raises: accounting must not break a generation."""
+    usage = getattr(resp, "usage", None)
+    if usage is None:
+        return None
+    prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
+    completion = int(getattr(usage, "completion_tokens", 0) or 0)
+    cached = int(getattr(getattr(usage, "prompt_tokens_details", None), "cached_tokens", 0) or 0)
+    reasoning = int(
+        getattr(getattr(usage, "completion_tokens_details", None), "reasoning_tokens", 0) or 0
+    )
+    record = LLMUsage(
+        name=name,
+        model=model,
+        input_tokens=max(prompt - cached, 0),
+        cached_tokens=cached,
+        output_tokens=max(completion - reasoning, 0),
+        reasoning_tokens=reasoning,
+    )
+    if usage_hook is not None:
+        try:
+            usage_hook(record)
+        except Exception:
+            logger.debug("usage_hook raised for %s", name, exc_info=True)
+    return record
+
+
 async def call_llm(
     prompt: str,
     model: str | None = None,
     system_prompt: str = "",
     max_tokens: int = 4096,
     name: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> str:
     """Async LLM call routed through the configured provider."""
     provider = get_provider()
@@ -237,10 +297,13 @@ async def call_llm(
             client = _get_azure_client()
             resp = await client.chat.completions.create(
                 **_with_trace_name(
-                    _azure_request_kwargs(resolved, prompt, system_prompt, max_tokens),
+                    _azure_request_kwargs(
+                        resolved, prompt, system_prompt, max_tokens, reasoning_effort
+                    ),
                     name,
                 )
             )
+            record_usage(resp, name=name, model=resolved)
             output = resp.choices[0].message.content or ""
             elapsed = time.monotonic() - t0
             logger.info(f"[LLM] azure/{resolved} responded in {elapsed:.1f}s ({len(output.split())} output words)")
@@ -276,6 +339,7 @@ def call_llm_sync(
     system_prompt: str = "",
     max_tokens: int = 4096,
     name: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> str:
     """Synchronous LLM call routed through the configured provider."""
     provider = get_provider()
@@ -285,10 +349,13 @@ def call_llm_sync(
         client = _get_azure_sync_client()
         resp = client.chat.completions.create(
             **_with_trace_name(
-                _azure_request_kwargs(resolved, prompt, system_prompt, max_tokens),
+                _azure_request_kwargs(
+                    resolved, prompt, system_prompt, max_tokens, reasoning_effort
+                ),
                 name,
             )
         )
+        record_usage(resp, name=name, model=resolved)
         return resp.choices[0].message.content or ""
 
     import asyncio

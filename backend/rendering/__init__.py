@@ -5,6 +5,7 @@ Supports both local (subprocess) and Modal.com (serverless) rendering.
 Set RENDER_MODE environment variable to "local" or "modal".
 """
 
+import contextlib
 import logging
 import os
 
@@ -62,6 +63,7 @@ async def process_visualization(
     manim_code: str,
     quality: str = "low_quality",
     collect_qa: bool = False,
+    is_repair: bool = False,
 ):
     """
     Process a visualization: render Manim code and save the video.
@@ -74,6 +76,8 @@ async def process_visualization(
             ``(video_url, verdict)`` so the caller (the Temporal render
             activity) can drive a repair pass. When False (legacy path),
             returns just the URL and QA runs as background observe-mode.
+        is_repair: This render is the re-render after a layout repair; the
+            re-judge then also scores whether the repair fixed the defect.
 
     Returns:
         URL path to the rendered video, or ``(url, VisualQAResult | None)``
@@ -102,7 +106,7 @@ async def process_visualization(
 
     if collect_qa:
         # Inline judging for the repair loop: the activity needs the verdict.
-        verdict = await _judge_and_score(viz_id, video_bytes)
+        verdict = await _judge_and_score(viz_id, video_bytes, is_repair=is_repair)
         return video_url, verdict
 
     # Visual QA (observe mode): judge sampled frames for overlap/cutoff defects.
@@ -135,7 +139,71 @@ def _dispatch_visual_qa(viz_id: str, video_bytes: bytes) -> None:
     task.add_done_callback(_done)
 
 
-async def _judge_and_score(viz_id: str, video_bytes: bytes):
+@contextlib.contextmanager
+def _qa_observation(viz_id: str, is_repair: bool):
+    """Run the judge inside a Langfuse span.
+
+    Without an enclosing observation the judge's generation is an orphan root
+    and ``score_current_trace`` has nothing to attach to — which is how 97%
+    of production verdicts went unscored. Telemetry failure never blocks QA.
+    """
+    span = None
+    try:
+        from langfuse import get_client
+
+        span = get_client().start_as_current_observation(
+            as_type="span",
+            name="visual-qa",
+            metadata={"viz_id": viz_id, "is_repair": "1" if is_repair else "0"},
+        )
+        span.__enter__()
+    except Exception as exc:
+        logger.debug("[VisualQA] Langfuse span unavailable for %s: %s", viz_id, exc)
+        span = None
+    try:
+        yield
+    finally:
+        if span is not None:
+            try:
+                span.__exit__(None, None, None)
+            except Exception as exc:
+                logger.debug("[VisualQA] Langfuse span close failed for %s: %s", viz_id, exc)
+
+
+def _score_verdict(viz_id: str, verdict, is_repair: bool) -> None:
+    """Score the QA trace: defect (bool), severity (categorical) and, on a
+    post-repair re-judge, whether the repair fixed it — 'fixed' is the
+    workflow's own definition (no longer ``major``)."""
+    try:
+        from langfuse import get_client
+
+        client = get_client()
+        comment = f"{viz_id}: {verdict.severity}; " + "; ".join(verdict.issues[:3])
+        client.score_current_trace(
+            name="visual_qa_defect",
+            value=1.0 if verdict.has_defects else 0.0,
+            data_type="BOOLEAN",
+            comment=comment,
+        )
+        client.score_current_trace(
+            name="visual_qa_severity",
+            value=verdict.severity,
+            data_type="CATEGORICAL",
+            comment=viz_id,
+        )
+        if is_repair:
+            client.score_current_trace(
+                name="visual_qa_repair_fixed",
+                value=1.0 if verdict.severity != "major" else 0.0,
+                data_type="BOOLEAN",
+                comment=comment,
+            )
+    except Exception as exc:
+        # Distinguish broken telemetry from intentional unconfiguration.
+        logger.warning("[VisualQA] Langfuse scoring failed for %s: %s", viz_id, exc)
+
+
+async def _judge_and_score(viz_id: str, video_bytes: bytes, is_repair: bool = False):
     """Run the vision layout judge; log + Langfuse-score; return the verdict.
 
     Never raises — a QA failure returns None so callers can proceed.
@@ -143,29 +211,19 @@ async def _judge_and_score(viz_id: str, video_bytes: bytes):
     try:
         from agents.visual_qa import judge_video
 
-        verdict = await judge_video(video_bytes, viz_id=viz_id)
-        if verdict is None:
-            return None
-        if verdict.has_defects:
-            logger.warning(
-                "[VisualQA] %s severity=%s overlap=%s cutoff=%s collisions=%s issues=%s",
-                viz_id, verdict.severity, verdict.overlap, verdict.cutoff,
-                verdict.collisions, "; ".join(verdict.issues[:5]),
-            )
-        else:
-            logger.info("[VisualQA] %s clean (%s frames)", viz_id, verdict.frames_checked)
-        # Score the current Langfuse trace so defect rates become dashboardable.
-        try:
-            from langfuse import get_client
-
-            get_client().score_current_trace(
-                name="visual_qa_defect",
-                value=1.0 if verdict.has_defects else 0.0,
-                comment=f"{viz_id}: {verdict.severity}; " + "; ".join(verdict.issues[:3]),
-            )
-        except Exception as exc:
-            # Distinguish broken telemetry from intentional unconfiguration.
-            logger.warning("[VisualQA] Langfuse scoring failed for %s: %s", viz_id, exc)
+        with _qa_observation(viz_id, is_repair):
+            verdict = await judge_video(video_bytes, viz_id=viz_id)
+            if verdict is None:
+                return None
+            if verdict.has_defects:
+                logger.warning(
+                    "[VisualQA] %s severity=%s overlap=%s cutoff=%s collisions=%s issues=%s",
+                    viz_id, verdict.severity, verdict.overlap, verdict.cutoff,
+                    verdict.collisions, "; ".join(verdict.issues[:5]),
+                )
+            else:
+                logger.info("[VisualQA] %s clean (%s frames)", viz_id, verdict.frames_checked)
+            _score_verdict(viz_id, verdict, is_repair)
         return verdict
     except Exception as exc:
         logger.warning("[VisualQA] QA failed for %s: %s", viz_id, exc)

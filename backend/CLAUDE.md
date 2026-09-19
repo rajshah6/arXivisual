@@ -97,7 +97,15 @@ backend ruff and frontend eslint are both HARD gates). `security.yml` — gitlea
   defect frames are sampled, and the repair model sees the pixels. Text-only repair is the fallback for every
   vision-failure mode. Measured: text-only fixed 0/6; vision-grounded fixed 2/4 in its first production run.
   Also: `VISUAL_QA_MODEL` (`gpt-5-mini`), `VISUAL_QA_REPAIR_MODEL` (defaults to the judge model),
-  `VISUAL_QA_FRAMES` (3).
+  `VISUAL_QA_FRAMES` (3), `VISUAL_QA_JUDGE_REASONING_EFFORT` / `VISUAL_QA_REPAIR_REASONING_EFFORT` (unset =
+  API default; the vision calls deliberately do NOT inherit `AZURE_OPENAI_REASONING_EFFORT`). Measured
+  2026-09-07 on 24 prod videos: judge at `low` agrees with the default on major-vs-not for 19/24 at 44% of
+  the cost; `minimal` collapses nearly everything to "minor" (2 majors vs 10) and would starve the repair loop.
+  The judge runs inside a Langfuse span (`rendering._qa_observation`) and scores `visual_qa_defect` (bool),
+  `visual_qa_severity` (categorical) and, on the post-repair re-judge, `visual_qa_repair_fixed` — so defect
+  rate and repair fix rate are dashboard numbers, not log greps. Every Temporal activity that can call a
+  model wraps its work in `propagate_attributes(session_id=job_id, ...)` (`render_scope` / `repair_scope`):
+  per-paper cost in Langfuse is one session filter.
 - `VOICEOVER_TTS_SERVICE` `openai|gtts` (default `openai` = Azure-routed), `VOICEOVER_VOICE_NAME` (`nova`),
   `VOICEOVER_TTS_MODEL` (`gpt-4o-mini-tts`), `VOICEOVER_CACHE_DIR` (`/tmp/arxivisual-tts-cache`).
 - `RENDER_CONCURRENCY` (3) — parallel manim renders per host; `PIPELINE_CONCURRENCY` (2) — concurrent

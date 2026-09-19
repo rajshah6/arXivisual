@@ -91,6 +91,71 @@ def test_judge_video_survives_ffmpeg_failure(monkeypatch):
     assert result is None
 
 
+def _fake_client(content: str, prompt=1000, completion=500, cached=0, reasoning=400):
+    """Azure client fake: records the create() kwargs, returns a response with usage."""
+    from types import SimpleNamespace
+
+    class _Completions:
+        def __init__(self):
+            self.kwargs = None
+
+        async def create(self, **kwargs):
+            self.kwargs = kwargs
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
+                usage=SimpleNamespace(
+                    prompt_tokens=prompt,
+                    completion_tokens=completion,
+                    prompt_tokens_details=SimpleNamespace(cached_tokens=cached),
+                    completion_tokens_details=SimpleNamespace(reasoning_tokens=reasoning),
+                ),
+            )
+
+    completions = _Completions()
+    return SimpleNamespace(chat=SimpleNamespace(completions=completions)), completions
+
+
+def test_judge_reports_usage_through_the_shared_seam(monkeypatch):
+    """Judge calls bypass call_llm, so they must report usage themselves or
+    the eval harness cannot cost the QA loop."""
+    from agents import base
+
+    monkeypatch.setattr(visual_qa, "get_provider", lambda: "azure")
+    monkeypatch.setattr(visual_qa, "sample_frames", lambda video_bytes, count=3: [b"png"])
+    monkeypatch.setattr(visual_qa, "VISUAL_QA_MODEL", "gpt-5-mini")
+    client, _ = _fake_client('{"overlap": true, "severity": "major", "issues": ["x"]}')
+    monkeypatch.setattr(visual_qa, "_get_azure_client", lambda: client)
+    seen = []
+    monkeypatch.setattr(base, "usage_hook", seen.append)
+
+    verdict = asyncio.run(visual_qa.judge_video(b"video", viz_id="viz_1"))
+
+    assert verdict is not None and verdict.severity == "major"
+    [usage] = seen
+    assert usage.name == "visual_qa_judge"
+    assert usage.model == "gpt-5-mini"
+    assert (usage.output_tokens, usage.reasoning_tokens) == (100, 400)
+
+
+def test_repair_reports_usage_through_the_shared_seam(monkeypatch):
+    from agents import base
+
+    monkeypatch.setattr(visual_qa, "get_provider", lambda: "azure")
+    monkeypatch.setattr(visual_qa, "sample_frames", lambda video_bytes, count=3: [b"png"])
+    monkeypatch.setattr(visual_qa, "VISUAL_QA_REPAIR_MODEL", "gpt-5-mini")
+    client, _ = _fake_client("from manim import *", prompt=6000, completion=5000, reasoning=2000)
+    monkeypatch.setattr(visual_qa, "_get_azure_client", lambda: client)
+    seen = []
+    monkeypatch.setattr(base, "usage_hook", seen.append)
+
+    out = asyncio.run(visual_qa.repair_code_with_frames("code", ["overlap"], b"video"))
+
+    assert out == "from manim import *"
+    [usage] = seen
+    assert usage.name == "visual_qa_repair_vision"
+    assert (usage.input_tokens, usage.output_tokens, usage.reasoning_tokens) == (6000, 3000, 2000)
+
+
 class TestVisionGroundedRepair:
     """v2 repair: the model sees the defect frames; text-only is the fallback."""
 

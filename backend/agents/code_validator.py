@@ -112,8 +112,11 @@ class CodeValidator:
     
     def _has_scene_class(self, code: str) -> bool:
         """Check if code has a Scene class definition."""
-        # Match: class SomeName(Scene|ThreeDScene|VoiceoverScene):
-        pattern = r"class\s+\w+\s*\(\s*(Scene|ThreeDScene|VoiceoverScene)\s*\)\s*:"
+        # Match: class SomeName(Scene|ThreeDScene|VoiceoverScene): — with any
+        # number of bases, since a narrated 3D scene is
+        # `class X(ThreeDScene, VoiceoverScene):` and a single-base regex
+        # rejected it on every attempt (a paid regeneration each time).
+        pattern = r"class\s+\w+\s*\([^)]*\b(Scene|ThreeDScene|VoiceoverScene)\b[^)]*\)\s*:"
         return bool(re.search(pattern, code))
     
     def _has_construct_method(self, code: str) -> bool:

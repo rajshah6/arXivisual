@@ -7,7 +7,9 @@ Also locates a LaTeXML HTML rendering (arxiv.org/html, then ar5iv).
 
 import asyncio
 import logging
+import random
 import re
+from collections.abc import Awaitable, Callable
 
 import arxiv
 import httpx
@@ -63,16 +65,52 @@ def validate_arxiv_id(arxiv_id: str) -> bool:
     return bool(ARXIV_ID_PATTERN.match(cleaned))
 
 
-async def fetch_paper_meta(arxiv_id: str) -> ArxivPaperMeta:
+# The export API answers 429 (rate limit) and 503 (overloaded) in bursts: 206 of
+# 656 ingests in one week died here. The arxiv client's own retries (3, a fixed
+# 3 s apart) are too quick for either to clear, and 503 was not retried by this
+# loop at all. Exponential backoff with jitter (many ingests start together and
+# must not re-collide), capped — worst case about 2.8 min of waiting plus the
+# client's internal ~1 min, well inside the ingest activity's 15-minute ceiling
+# with room left for the actual ingest.
+RETRYABLE_STATUSES = frozenset({429, 503})
+META_MAX_ATTEMPTS = 6
+META_BACKOFF_BASE_SECONDS = 5.0
+META_BACKOFF_CAP_SECONDS = 60.0
+META_BACKOFF_JITTER = 0.25  # each wait is nominal x [0.75, 1.25]
+
+
+def _backoff_seconds(attempt: int, rand: Callable[[], float]) -> float:
+    """Wait before retry number ``attempt + 1``: 5, 10, 20, 40, 60 s nominal."""
+    nominal = min(META_BACKOFF_CAP_SECONDS, META_BACKOFF_BASE_SECONDS * (2 ** attempt))
+    return nominal * (1 + META_BACKOFF_JITTER * (2 * rand() - 1))
+
+
+def _http_status(error: Exception) -> int | None:
+    """HTTP status of an arxiv.HTTPError, from the error object itself.
+
+    Never from the message: it embeds the request URL, so "2404.01234"
+    contains 404 and "2429.00001" contains 429.
+    """
+    status = getattr(error, "status", None)
+    return status if isinstance(status, int) else None
+
+
+async def fetch_paper_meta(
+    arxiv_id: str,
+    *,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    rand: Callable[[], float] = random.random,
+) -> ArxivPaperMeta:
     """
     Fetch paper metadata from arXiv API.
-    
+
     Args:
         arxiv_id: arXiv paper ID (e.g., "1706.03762" or "1706.03762v1")
-        
+        sleep / rand: injectable for tests (backoff waits and jitter)
+
     Returns:
         ArxivPaperMeta with all paper metadata
-        
+
     Raises:
         ValueError: If paper not found or invalid ID
     """
@@ -87,10 +125,9 @@ async def fetch_paper_meta(arxiv_id: str) -> ArxivPaperMeta:
             f"Expected formats: '1706.03762', '1706.03762v1', or 'cs/0123456'"
         )
     
-    max_retries = 4
     last_error = None
 
-    for attempt in range(max_retries):
+    for attempt in range(META_MAX_ATTEMPTS):
         try:
             # Create search client
             client = arxiv.Client()
@@ -101,34 +138,44 @@ async def fetch_paper_meta(arxiv_id: str) -> ArxivPaperMeta:
                 max_results=1
             )
 
-            # Get results (arxiv library is synchronous)
-            results = list(client.results(search))
+            # The arxiv library is synchronous and time.sleep()s between its
+            # own retries — keep that off the event loop (it froze status
+            # polling on the in-process path, and more attempts means more of it).
+            results = await asyncio.to_thread(lambda c=client, s=search: list(c.results(s)))
             break  # Success
 
         except Exception as e:
             error_msg = str(e)
             last_error = e
+            status = _http_status(e)
 
-            # Retry on rate limit (429)
-            if "429" in error_msg:
-                wait = 3 * (2 ** attempt)  # 3s, 6s, 12s, 24s
-                logger.warning(f"arXiv rate limited (429), retrying in {wait}s (attempt {attempt + 1}/{max_retries})")
-                await asyncio.sleep(wait)
+            # Retry on rate limit (429) and overload (503)
+            if status in RETRYABLE_STATUSES:
+                if attempt + 1 < META_MAX_ATTEMPTS:
+                    wait = _backoff_seconds(attempt, rand)
+                    logger.warning(
+                        "arXiv API answered HTTP %s, retrying in %.0fs (attempt %d/%d)",
+                        status, wait, attempt + 1, META_MAX_ATTEMPTS,
+                    )
+                    await sleep(wait)
                 continue
 
-            # Non-retryable errors — raise immediately
-            if "400" in error_msg or "Bad Request" in error_msg:
+            # Non-retryable errors — raise immediately. With a real status the
+            # message is never sniffed (it embeds the URL, hence the id).
+            if status == 400 or (status is None and ("400" in error_msg or "Bad Request" in error_msg)):
                 raise ValueError(f"Invalid arXiv ID: '{arxiv_id}' - arXiv API rejected the request") from e
-            elif "404" in error_msg or "Not Found" in error_msg:
+            elif status == 404 or (status is None and ("404" in error_msg or "Not Found" in error_msg)):
                 raise ValueError(f"Paper not found on arXiv: '{arxiv_id}'") from e
-            elif "timeout" in error_msg.lower() or "connection" in error_msg.lower():
+            elif status is None and ("timeout" in error_msg.lower() or "connection" in error_msg.lower()):
                 raise ConnectionError(f"Could not connect to arXiv API: {e}") from e
             else:
                 raise ValueError(f"Error fetching paper '{arxiv_id}': {e}") from e
     else:
-        # All retries exhausted
-        raise ValueError(f"Error fetching paper '{arxiv_id}' after {max_retries} retries: {last_error}") from last_error
-    
+        # All attempts exhausted
+        raise ValueError(
+            f"Error fetching paper '{arxiv_id}' after {META_MAX_ATTEMPTS} attempts: {last_error}"
+        ) from last_error
+
     if not results:
         raise ValueError(f"Paper not found on arXiv: '{arxiv_id}'")
     

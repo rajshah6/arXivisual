@@ -4,6 +4,7 @@ FastAPI routes for the ArXiviz API.
 Now using SQLite database and local Manim rendering.
 """
 
+import asyncio
 import hmac
 import logging
 import os
@@ -96,6 +97,68 @@ def _authorize_render(secret: str | None) -> None:
     if expected and secret is not None and hmac.compare_digest(secret, expected):
         return
     raise HTTPException(status_code=404, detail="Not found")
+
+
+async def _refuse_unstarted_job(
+    db: AsyncSession, job_id: str, arxiv_id: str, ip: str, exc: Exception
+) -> HTTPException:
+    """Fail closed after the Temporal start failed: retire the job row, give
+    back what admission charged, and return the 503 for the caller to raise.
+
+    This used to fail OPEN — run the paper on the in-process BackgroundTasks
+    path. That runs the whole pipeline (LLM calls, up to 3 Manim renders, since
+    RENDER_CONCURRENCY is unset on the API) inside the single uvicorn process:
+    its last episode, 36 runs on Sep 9-15 2026 (all "tcp connect error"),
+    peaked at 2,206 MiB and sat at the 2 vCPU limit on one pod. That fallback
+    was the only reason the API was sized 2 vCPU / 4 GiB; normal API traffic
+    peaks at ~270 mcores / ~730 MiB (Azure Monitor, Sep 16 - Oct 8). With it
+    gone the API fits 0.5 vCPU / 1 GiB (about CA$78/mo less), and a Temporal
+    blip costs the user a retry instead of risking an OOM kill of every
+    request on the replica.
+    """
+    from temporalio.service import RPCError
+
+    from .temporal_client import reset_temporal_client
+
+    # ONE line that keeps the exact phrase "Temporal unavailable": the
+    # arxivisual-temporal-fallback log alert (PR #88, infra/alerts.tf) matches
+    # it, and the console log splits a traceback into separate rows. A down
+    # server surfaces two ways: an RPCError from start_workflow on the cached
+    # client (the Sep 9-15 "tcp connect error"s), then — because that client
+    # is dropped below — RuntimeError("Failed client connect: ...") from
+    # Client.connect on every later request of the same outage (temporalio
+    # 1.32 raises it from its Rust bridge). Both tracebacks are SDK internals;
+    # anything else is a bug in the start path, where the traceback is the
+    # diagnosis.
+    outage = isinstance(exc, RPCError) or (
+        isinstance(exc, RuntimeError) and str(exc).startswith("Failed client connect")
+    )
+    logger.error(
+        "Temporal unavailable — refused new paper with 503, nothing ran in-process "
+        "(job=%s paper=%s error=%r)",
+        job_id, arxiv_id, exc,
+        exc_info=not outage,
+    )
+    try:
+        await queries.update_job_status(
+            db, job_id, status="failed", error=queries.JOB_NOT_STARTED_ERROR,
+        )
+    except Exception:
+        # The database may be what is down. The 503 still goes out; a row left
+        # at "queued" is failed by reap_stale_jobs after 2 h.
+        logger.exception("Could not retire unstarted job %s", job_id)
+    recent_jobs.clear(arxiv_id)
+    # Never keep a client that just failed: the next request connects afresh.
+    reset_temporal_client()
+    # Give back the per-IP slots enforce_all charged this request. The durable
+    # daily cap and global window skip the row via JOB_NOT_STARTED_ERROR.
+    per_ip_limiter.release(ip)
+    per_ip_daily_limiter.release(ip)
+    return HTTPException(
+        status_code=503,
+        detail="Processing is temporarily unavailable. Please try again in a minute.",
+        headers={"Retry-After": "60"},
+    )
 
 
 # === Endpoints ===
@@ -220,9 +283,10 @@ async def start_processing(
     # Durable path (USE_TEMPORAL=1): start a Temporal workflow. Execution
     # happens on the worker app and survives restarts/redeploys; the workflow
     # ID makes duplicate submissions structurally impossible at the
-    # orchestrator. Fail-open: any Temporal error falls back to the legacy
-    # in-process BackgroundTasks path so paper processing never breaks on
-    # orchestrator trouble.
+    # orchestrator. Fail-closed: if the start fails, the job is retired and the
+    # caller gets a 503 with Retry-After — the paper never runs in this process
+    # (see _refuse_unstarted_job for why). The in-process BackgroundTasks path
+    # below is only for USE_TEMPORAL=0 (local dev, tests).
     started_durably = False
     from .temporal_client import temporal_enabled
 
@@ -260,13 +324,13 @@ async def start_processing(
                     status=JobStatus(active.status) if active else JobStatus.queued,
                     message="This paper is already being processed. Poll /api/status/{job_id} for updates.",
                 )
-        except Exception:
-            logger.exception(
-                "Temporal unavailable — falling back to in-process pipeline"
-            )
+        except Exception as exc:
+            raise await _refuse_unstarted_job(db, job_id, arxiv_id, ip, exc) from exc
 
     if not started_durably:
-        # Legacy path: in-process background task (does not survive restarts).
+        # Legacy path, USE_TEMPORAL=0 only: with Temporal on, every outcome
+        # above started the workflow, returned, or raised. In-process background
+        # task (does not survive restarts).
         background_tasks.add_task(process_paper_job, job_id, arxiv_id)
 
     # Product event (no-op without POSTHOG_API_KEY). The pseudonymous
@@ -584,25 +648,9 @@ async def submit_feedback(
     return FeedbackResponse()
 
 
-@router.get("/health", response_model=HealthResponse)
-async def health_check(db: AsyncSession = Depends(get_db)):
-    """
-    Health check endpoint.
-
-    Returns status of the API and dependent services.
-    """
-    import os
+def _probe_manim() -> str:
     import subprocess
 
-    # Test database connection
-    db_status = "connected"
-    try:
-        await db.execute(text("SELECT 1"))
-    except Exception as e:
-        db_status = f"error: {e!s}"
-
-    # Test Manim availability
-    manim_status = "not found"
     try:
         manim_exe = os.getenv("MANIM_EXECUTABLE", "manim")
         result = subprocess.run(
@@ -613,14 +661,60 @@ async def health_check(db: AsyncSession = Depends(get_db)):
         )
         if result.returncode == 0:
             version = result.stdout.strip().split("\n")[0]
-            manim_status = f"available ({version})"
-        else:
-            detail = (result.stderr.strip() or result.stdout.strip()).splitlines()
-            manim_status = f"error: {detail[-1][:200] if detail else 'command failed'}"
+            return f"available ({version})"
+        detail = (result.stderr.strip() or result.stdout.strip()).splitlines()
+        return f"error: {detail[-1][:200] if detail else 'command failed'}"
     except FileNotFoundError:
-        manim_status = "not installed"
+        return "not installed"
     except Exception as e:
-        manim_status = f"error: {e!s}"
+        return f"error: {e!s}"
+
+
+# `manim --version` is a whole interpreter start-up: ~1.5 CPU-s and ~175 MiB
+# RSS per run (manim 0.19.2, measured locally 2026-10-08); App Insights has
+# /api/health at p50 1,663 ms on the 2 vCPU API. health_check used to run it as
+# a blocking subprocess.run on EVERY call, freezing every request on the API's
+# one event loop (single uvicorn worker) meanwhile, for longer still at the
+# planned 0.5 vCPU. Now it runs in a worker thread, one probe at a
+# time (concurrent unauthenticated hits would otherwise each start a 175 MiB
+# process on a 1 GiB replica), and a success is kept for the life of the
+# process: the binary cannot change under a running container. PR #91's
+# api/health.py does the same plus TTL caches; take that one when it lands.
+_manim_available: str | None = None
+_manim_probe_lock = asyncio.Lock()
+
+
+async def _manim_status() -> str:
+    global _manim_available  # noqa: PLW0603 — process-lifetime cache
+    if _manim_available is not None:
+        return _manim_available
+    async with _manim_probe_lock:
+        if _manim_available is not None:  # a concurrent caller just probed
+            return _manim_available
+        status = await asyncio.to_thread(_probe_manim)
+        # Only a success is kept; a failure (incl. a timeout under CPU load)
+        # is re-probed by the next call.
+        if status.startswith("available"):
+            _manim_available = status
+        return status
+
+
+@router.get("/health", response_model=HealthResponse)
+async def health_check(db: AsyncSession = Depends(get_db)):
+    """
+    Health check endpoint.
+
+    Returns status of the API and dependent services.
+    """
+    # Test database connection
+    db_status = "connected"
+    try:
+        await db.execute(text("SELECT 1"))
+    except Exception as e:
+        db_status = f"error: {e!s}"
+
+    # Test Manim availability (off the event loop, cached once it succeeds)
+    manim_status = await _manim_status()
 
     # Test storage connectivity
     from rendering.storage import STORAGE_MODE, get_backend
@@ -629,7 +723,10 @@ async def health_check(db: AsyncSession = Depends(get_db)):
         backend = get_backend()
         if hasattr(backend, "check_connectivity"):
             try:
-                storage_status = "r2: connected" if backend.check_connectivity() else "r2: unreachable"
+                # boto3 is synchronous: a slow or unreachable R2 would hold the
+                # event loop for the whole connect timeout.
+                reachable = await asyncio.to_thread(backend.check_connectivity)
+                storage_status = "r2: connected" if reachable else "r2: unreachable"
             except Exception as e:
                 storage_status = f"r2: error ({e})"
         else:

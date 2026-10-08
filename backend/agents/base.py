@@ -1,5 +1,6 @@
 """Base agent class with provider-switchable LLM support (Azure OpenAI / Dedalus)."""
 
+import functools
 import json
 import logging
 import os
@@ -33,6 +34,38 @@ def _azure_deployment() -> str:
 # max_tokens for the *visible* answer, so give the model extra room to think
 # or it can return an empty message after exhausting the cap on reasoning.
 _AZURE_REASONING_HEADROOM = 4096
+
+# The only reasoning_effort values that BOTH model families we deploy accept:
+# gpt-6-luna rejects "minimal" and gpt-5-mini rejects "none" / "xhigh"
+# (Microsoft Learn, "Azure OpenAI reasoning models", as of 2026-10-08). Any
+# other value 400s on one side, which breaks either the luna cut-over or the
+# rollback to gpt-5-mini — both of which are an env-var flip, no new image.
+PORTABLE_REASONING_EFFORTS = ("low", "medium", "high")
+
+
+@functools.lru_cache(maxsize=32)
+def _checked_effort(env_var: str, raw: str, default: str) -> str:
+    # Cached so a bad value warns once per process, not on every LLM call.
+    value = raw.strip().lower()
+    if value in PORTABLE_REASONING_EFFORTS:
+        return value
+    logger.warning(
+        "%s=%r is not portable across gpt-5-mini and gpt-6-luna (allowed: %s) — using %r",
+        env_var, raw, " | ".join(PORTABLE_REASONING_EFFORTS), default,
+    )
+    return default
+
+
+def portable_reasoning_effort(env_var: str, default: str) -> str:
+    """``env_var`` as a reasoning_effort both deployed models accept.
+
+    Unset gives ``default``; an invalid value logs a warning and gives
+    ``default`` instead of failing every request with a 400.
+    """
+    raw = os.environ.get(env_var)
+    if raw is None:
+        return default
+    return _checked_effort(env_var, raw, default)
 
 
 def _detect_provider() -> str:
@@ -166,8 +199,10 @@ def _azure_request_kwargs(
         # a section's candidates and ~6% a planned visualization to unparseable
         # output (unescaped backslashes, stray quotes) before this.
         kwargs["response_format"] = {"type": "json_object"}
-    # minimal | low | medium | high — low keeps the pipeline fast/cheap
-    kwargs["reasoning_effort"] = os.environ.get("AZURE_OPENAI_REASONING_EFFORT", "low")
+    # low | medium | high only (PORTABLE_REASONING_EFFORTS): "minimal" breaks
+    # gpt-6-luna and "none"/"xhigh" break gpt-5-mini. Low keeps the pipeline
+    # fast/cheap; production sets medium (infra/container_apps.tf).
+    kwargs["reasoning_effort"] = portable_reasoning_effort("AZURE_OPENAI_REASONING_EFFORT", "low")
     return kwargs
 
 

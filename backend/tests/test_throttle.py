@@ -39,6 +39,26 @@ class TestSlidingWindowLimiter:
         assert allowed is False
         assert retry_after >= 1
 
+    def test_release_gives_back_one_slot(self):
+        # A request refused with 503 after admission (Temporal down) must not
+        # keep the slot it was charged.
+        lim = SlidingWindowLimiter(max_events=2, window_seconds=60)
+        assert lim.allow("k", 0.0)[0] is True
+        assert lim.allow("k", 1.0)[0] is True
+        assert lim.allow("k", 2.0)[0] is False
+        lim.release("k")
+        assert lim.allow("k", 3.0)[0] is True
+        assert lim.allow("k", 4.0)[0] is False
+
+    def test_release_is_a_noop_for_unknown_or_empty_keys(self):
+        lim = SlidingWindowLimiter(max_events=1, window_seconds=60)
+        lim.release("never-seen")
+        assert lim.allow("k", 0.0)[0] is True
+        lim.release("k")
+        lim.release("k")  # nothing left to give back
+        assert lim.allow("k", 1.0)[0] is True
+        assert lim.allow("other", 1.0)[0] is True
+
 
 class TestRecentJobs:
     def test_put_get_roundtrip(self):

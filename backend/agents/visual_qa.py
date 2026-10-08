@@ -28,12 +28,24 @@ from pydantic import BaseModel, Field
 
 # Handle imports for both package and direct execution
 try:
-    from .base import _azure_model, _get_azure_client, _with_trace_name, get_provider
+    from .base import (
+        _azure_model,
+        _get_azure_client,
+        _with_trace_name,
+        get_provider,
+        portable_reasoning_effort,
+    )
 except ImportError:  # pragma: no cover - direct execution path
     import sys
 
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from agents.base import _azure_model, _get_azure_client, _with_trace_name, get_provider
+    from agents.base import (
+        _azure_model,
+        _get_azure_client,
+        _with_trace_name,
+        get_provider,
+        portable_reasoning_effort,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +54,13 @@ logger = logging.getLogger(__name__)
 VISUAL_QA_ENABLED = os.getenv("ENABLE_VISUAL_QA", "0") == "1"
 VISUAL_QA_MODEL = os.getenv("VISUAL_QA_MODEL", "gpt-5-mini")
 VISUAL_QA_FRAMES = max(1, int(os.getenv("VISUAL_QA_FRAMES", "3")))
+# Pinned for the judge AND the vision repair. These calls used to send no
+# reasoning_effort, so each model's own default applied: medium on gpt-5-mini
+# (Microsoft Learn: models before gpt-5.1 default to medium), undocumented on
+# gpt-6-luna. medium is therefore exactly today's behaviour, and pinning it
+# keeps a model swap from silently changing judge/repair cost or quality.
+# low | medium | high only — see PORTABLE_REASONING_EFFORTS in base.py.
+VISUAL_QA_REASONING_EFFORT = portable_reasoning_effort("VISUAL_QA_REASONING_EFFORT", "medium")
 
 def format_issue_list(issues: list[str], limit: int = 8) -> str:
     """Render judge issues as a bullet list for repair prompts (shared)."""
@@ -161,6 +180,20 @@ def _parse_verdict(text: str) -> VisualQAResult:
     )
 
 
+def judge_request(
+    frames: list[bytes], *, model: str | None = None, effort: str | None = None
+) -> dict:
+    """chat.completions kwargs for the judge. Shared with tools/model_smoke.py,
+    which passes ``model``/``effort`` to try another deployment."""
+    content: list[dict] = [{"type": "text", "text": JUDGE_PROMPT}, *_frame_parts(frames)]
+    return {
+        "model": _azure_model(model or VISUAL_QA_MODEL),
+        "messages": [{"role": "user", "content": content}],
+        "max_completion_tokens": 4096,
+        "reasoning_effort": effort or VISUAL_QA_REASONING_EFFORT,
+    }
+
+
 async def judge_video(video_bytes: bytes, viz_id: str = "") -> VisualQAResult | None:
     """Judge a rendered video's frames for layout defects.
 
@@ -178,19 +211,10 @@ async def judge_video(video_bytes: bytes, viz_id: str = "") -> VisualQAResult | 
         logger.warning("[VisualQA] Frame sampling failed for %s: %s", viz_id, exc)
         return None
 
-    content: list[dict] = [{"type": "text", "text": JUDGE_PROMPT}, *_frame_parts(frames)]
-
     try:
         client = _get_azure_client()
         resp = await client.chat.completions.create(
-            **_with_trace_name(
-                {
-                    "model": _azure_model(VISUAL_QA_MODEL),
-                    "messages": [{"role": "user", "content": content}],
-                    "max_completion_tokens": 4096,
-                },
-                "visual_qa_judge",
-            )
+            **_with_trace_name(judge_request(frames), "visual_qa_judge")
         )
         verdict = _parse_verdict(resp.choices[0].message.content or "")
         verdict.judge_model = VISUAL_QA_MODEL
@@ -235,6 +259,35 @@ Current code:
 {contract}"""
 
 
+def repair_request(
+    code: str,
+    issues: list[str],
+    frames: list[bytes],
+    *,
+    model: str | None = None,
+    effort: str | None = None,
+) -> dict:
+    """chat.completions kwargs for the vision repair (see judge_request)."""
+    content: list[dict] = [
+        {
+            "type": "text",
+            "text": REPAIR_VISION_PROMPT.format(
+                issues=format_issue_list(issues),
+                code=code,
+                contract=REPAIR_OUTPUT_CONTRACT,
+            ),
+        },
+        *_frame_parts(frames),
+    ]
+    return {
+        "model": _azure_model(model or VISUAL_QA_REPAIR_MODEL),
+        "messages": [{"role": "user", "content": content}],
+        # Full corrected scene (~3-4k tokens) + reasoning headroom.
+        "max_completion_tokens": 16000,
+        "reasoning_effort": effort or VISUAL_QA_REASONING_EFFORT,
+    }
+
+
 async def repair_code_with_frames(
     code: str, issues: list[str], video_bytes: bytes, viz_id: str = ""
 ) -> str | None:
@@ -252,30 +305,10 @@ async def repair_code_with_frames(
         logger.warning("[VisualQA] Repair frame sampling failed for %s: %s", viz_id, exc)
         return None
 
-    content: list[dict] = [
-        {
-            "type": "text",
-            "text": REPAIR_VISION_PROMPT.format(
-                issues=format_issue_list(issues),
-                code=code,
-                contract=REPAIR_OUTPUT_CONTRACT,
-            ),
-        },
-        *_frame_parts(frames),
-    ]
-
     try:
         client = _get_azure_client()
         resp = await client.chat.completions.create(
-            **_with_trace_name(
-                {
-                    "model": _azure_model(VISUAL_QA_REPAIR_MODEL),
-                    "messages": [{"role": "user", "content": content}],
-                    # Full corrected scene (~3-4k tokens) + reasoning headroom.
-                    "max_completion_tokens": 16000,
-                },
-                "visual_qa_repair_vision",
-            )
+            **_with_trace_name(repair_request(code, issues, frames), "visual_qa_repair_vision")
         )
         out = resp.choices[0].message.content or ""
         return out if out.strip() else None

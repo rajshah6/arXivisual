@@ -1,26 +1,53 @@
-# Nightly LLM generation-quality evals — gates on regressions via
+# Weekly LLM generation-quality evals — gates on regressions via
 # backend/evals/check_regression.py (see backend/evals/README.md).
+# Weekly, not nightly, since 2026-10-08: ~26 fewer runs a month saves ~CA$8/mo
+# (5 papers x ~US$0.045 per paper at effort low) of Azure credits that have to
+# last to 2028-07-29, and the regression gate only catches a collapse anyway.
 #
 # Required repository secrets (Settings > Secrets and variables > Actions):
 #   AZURE_OPENAI_API_KEY      — Azure OpenAI key used by the agent pipeline
 #   AZURE_OPENAI_ENDPOINT     — e.g. https://<resource>.openai.azure.com
-#   AZURE_OPENAI_DEPLOYMENT   — deployment name (e.g. gpt-5-mini)
-# The run makes real, billable LLM calls (~$0.05–0.15 per paper without
-# rendering); paper count and per-paper viz cap keep cost bounded.
+#   AZURE_OPENAI_DEPLOYMENT   — deployment name (e.g. gpt-5-mini); a manual
+#                               run can override it with the `deployment` input
+# The run makes real, billable LLM calls (no rendering): ~US$0.045 per paper
+# at effort low and ~$0.076 at medium, measured on gpt-5-mini 2026-09-07
+# (c4799ae); paper count and per-paper viz cap keep cost bounded.
+#
+# A/B a model before pointing production at it (same day, same effort), e.g.:
+#   gh workflow run evals.yml -f deployment=gpt-5-mini -f reasoning_effort=medium -f papers=5
+#   gh workflow run evals.yml -f deployment=gpt-6-luna -f reasoning_effort=medium -f papers=5
+# That is a smoke test (API errors, outright collapse), not a quality gate:
+# RENDER_MODE=modal skips rendering and visual QA, and 5 papers x 2 viz cannot
+# resolve a 10-point pass-rate drop. The production canary is the real gate.
 name: Evals
 
 on:
   schedule:
-    - cron: "0 6 * * *" # nightly 06:00 UTC — evaluates 5 golden-set papers
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC — evaluates 5 golden-set papers
   workflow_dispatch:
     inputs:
       papers:
         description: "Number of golden-set papers to evaluate"
         required: false
         default: "3"
+      deployment:
+        description: "Azure OpenAI deployment to evaluate (blank = the AZURE_OPENAI_DEPLOYMENT secret)"
+        required: false
+        default: ""
+      # low/medium/high only: gpt-6-luna rejects `minimal` and gpt-5-mini
+      # rejects `none`/`xhigh`, so anything else breaks one side of an A/B.
+      reasoning_effort:
+        description: "AZURE_OPENAI_REASONING_EFFORT for this run (production runs medium)"
+        required: false
+        type: choice
+        options:
+          - low
+          - medium
+          - high
+        default: low
 
 # Never overlap eval runs (they share the LLM quota); queue instead of cancel
-# so a manual dispatch doesn't kill a nightly run mid-flight.
+# so a manual dispatch doesn't kill a scheduled run mid-flight.
 concurrency:
   group: evals
   cancel-in-progress: false
@@ -37,9 +64,10 @@ jobs:
       LLM_PROVIDER: azure
       AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
       AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
-      AZURE_OPENAI_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_DEPLOYMENT }}
-      # Cost control: cheapest reasoning tier is plenty for the eval workload.
-      AZURE_OPENAI_REASONING_EFFORT: low
+      # Scheduled runs have no inputs and fall back to the secret / low.
+      AZURE_OPENAI_DEPLOYMENT: ${{ github.event.inputs.deployment || secrets.AZURE_OPENAI_DEPLOYMENT }}
+      # Cost control: cheapest reasoning tier is plenty for the scheduled run.
+      AZURE_OPENAI_REASONING_EFFORT: ${{ github.event.inputs.reasoning_effort || 'low' }}
       # Evals measure the LLM gates, not ffmpeg: disables local render testing.
       # run_evals.py also forces this before importing the pipeline.
       RENDER_MODE: modal

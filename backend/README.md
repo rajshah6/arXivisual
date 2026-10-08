@@ -51,7 +51,7 @@ uvx ruff check .                        # lint (hard CI gate; tree is ruff-clean
 ```
 
 CI (`.github/workflows/ci.yml`) runs the unit suite on Python 3.11 and 3.13, typechecks and builds the
-frontend, and builds the backend Docker image. A blocking secret scan and a nightly LLM-quality eval run
+frontend, and builds the backend Docker image. A blocking secret scan and a weekly LLM-quality eval run
 (`evals/` — see [`evals/README.md`](evals/README.md)) round it out; deploys go to Azure via GitHub OIDC.
 
 ## How a paper becomes videos

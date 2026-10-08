@@ -356,10 +356,25 @@ resource "azurerm_container_app" "temporal" {
     max_replicas = 1
 
     container {
-      name   = "arxivisual-temporal"
-      image  = "temporalio/auto-setup:1.23.1.1"
-      cpu    = 1.0
-      memory = "2Gi"
+      name  = "arxivisual-temporal"
+      image = "temporalio/auto-setup:1.23.1.1"
+      # Right-sized 2026-10-08 from 1.0 / 2Gi. 30-day peak was 61 millicores
+      # and 151 MiB (az monitor metrics, hourly max, Sep 8-Oct 7; p99 45 m,
+      # flat memory, RestartCount 0); the Oct 4 recreate booted at <=34 m and
+      # <=81 MiB. It ran healthy at exactly 0.5 / 1Gi on 2026-08-25 for ~1.5 h
+      # before an unexplained bump to 1 / 2Gi during the ingress debugging.
+      # Temporal never drops below the 0.01 vCPU idle threshold, so it bills
+      # at the ACTIVE rate (Cost Management shows only Active meters for it,
+      # Sep 16-Oct 7) and the saving scales with size: ~CA$56/mo. Go is pinned to one core by automaxprocs at any size up to
+      # 1.75 vCPU, so 0.5 loses no parallelism.
+      # Applying this starts a new revision (a short Temporal outage while it
+      # boots; the startup probe allows ~310 s): the API fails open to the
+      # in-process pipeline meanwhile, which its 2 vCPU / 4Gi still absorbs.
+      # Rollback: back to 1.0 / "2Gi" if RestartCount > 0 or the system log
+      # shows OOMKilled. Next step after 1-2 clean weeks: 0.25 / "0.5Gi"
+      # (another ~CA$28/mo).
+      cpu    = 0.5
+      memory = "1Gi"
 
       env {
         name  = "DB"

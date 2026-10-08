@@ -82,14 +82,21 @@ resource "azurerm_container_app" "web" {
   }
 
   template {
-    # One warm replica: the standalone server boots in well under a second,
-    # but scale-to-zero would put a ~10-15 s image pull + cold start in front
-    # of the first visit after idle. A quarter vCPU / 0.5 Gi (the smallest
-    # Consumption pair) is plenty — the app serves HTML/JS/CSS and a cached
-    # per-paper metadata fetch; videos come straight from R2. Marginal cost
-    # at eastus2 list prices: ~$6/mo idle to ~$20/mo fully active (the
-    # subscription's free grant is already consumed by the backend apps).
-    min_replicas = 1
+    # Scale-to-zero until the DNS cut-over, one warm replica after it.
+    # arxivisual.org is still on Vercel, so this app takes no production
+    # traffic: 0-4 requests/day in Oct 2026 (Requests metric), while the warm
+    # replica billed ~CA$0.29/day of idle meters (Cost Management, Oct 2-7).
+    # min 0 saves ~CA$8.5/mo; the price is a 14-23 s cold start on the first
+    # visit after idle (AssigningReplica -> ContainerStarted, 3 starts in the
+    # system log), which deploy-frontend.yml's 30 x 10 s health poll absorbs.
+    # var.web_custom_domains_enabled is the cut-over flag (apply it once the
+    # Porkbun records point here), so the same apply that binds the domains
+    # brings the warm replica back; nobody has to remember. Between moving
+    # the records and that apply, real visitors can hit a cold start.
+    # A quarter vCPU / 0.5 Gi (the smallest Consumption pair) is plenty — the
+    # app serves HTML/JS/CSS and a cached per-paper metadata fetch; videos
+    # come straight from R2.
+    min_replicas = var.web_custom_domains_enabled ? 1 : 0
     max_replicas = 3
 
     http_scale_rule {

@@ -594,9 +594,15 @@ resource "azurerm_container_app" "worker" {
         name  = "AZURE_OPENAI_ENDPOINT"
         value = "https://arxivisual-openai.openai.azure.com"
       }
+      # Text generation (~85% of LLM spend) runs on gpt-6-luna: $0.10 in /
+      # $0.50 out per 1M tokens vs gpt-5-mini's $0.25 / $2.00, ~CA$370/mo at
+      # Oct 2026 demand if output tokens stay within ~1.3x (break-even 4.3x).
+      # Canary scope: VISUAL_QA_* and the api stay on gpt-5-mini until the
+      # Langfuse token/quality comparison holds for 48-72 h. Rollback = set
+      # this back to "gpt-5-mini" (still deployed, openai.tf) and apply.
       env {
         name  = "AZURE_OPENAI_DEPLOYMENT"
-        value = "gpt-5-mini"
+        value = azurerm_cognitive_deployment.gpt_6_luna.name
       }
       env {
         name  = "STORAGE_MODE"

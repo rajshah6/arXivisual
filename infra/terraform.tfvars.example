@@ -27,9 +27,11 @@ acr_admin_password = "REPLACE_ME"
 
 # REQUIRED (variables.tf fails the plan when either is empty): both are set on
 # the live API, and an apply without them would silently remove Turnstile
-# verification / the keyed IP fingerprints. Use the live values.
-turnstile_secret_key = "REPLACE_ME" # Cloudflare Turnstile secret (dashboard > Turnstile > widget > settings)
-ip_hash_secret       = "REPLACE_ME" # HMAC key for the IP fingerprints in admission logs
+# verification / the keyed IP fingerprints. Left empty on purpose so a copied
+# example fails the plan until the live values are pasted in; a placeholder
+# would pass the check and overwrite the live secrets.
+turnstile_secret_key = "" # Cloudflare Turnstile secret (dashboard > Turnstile > widget > settings)
+ip_hash_secret       = "" # HMAC key for the IP fingerprints in admission logs
 
 posthog_api_key = "" # optional: PostHog project token (phc_...); empty = no product events
 # posthog_host = "https://us.i.posthog.com"   # EU cloud: https://eu.i.posthog.com

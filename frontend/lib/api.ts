@@ -145,7 +145,19 @@ export async function processArxivPaper(
 
   if (!res.ok) {
     const errorText = await res.text();
-    throw new Error(`Failed to start processing: ${res.status} - ${errorText}`);
+    // Show FastAPI's {"detail": "..."} sentence (503 Temporal outage, 429 rate
+    // limit, Turnstile and budget-cap rejections all carry one) instead of raw
+    // JSON. The "[status]" prefix keeps paper_start_rejected.reason sliceable
+    // in PostHog. Retry-After is not read: the API is cross-origin and CORS
+    // does not expose it; the 503 detail already says when to retry.
+    let detail = errorText.slice(0, 300);
+    try {
+      const body = JSON.parse(errorText);
+      if (typeof body?.detail === "string") detail = body.detail;
+    } catch {
+      // Non-JSON body (proxy or gateway page): keep the truncated text.
+    }
+    throw new Error(`[${res.status}] ${detail || "Failed to start processing."}`);
   }
 
   return res.json();

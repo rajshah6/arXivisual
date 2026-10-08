@@ -9,7 +9,7 @@ in-process path is only for USE_TEMPORAL=0. These tests pin that contract.
 
 import logging
 import socket
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest_asyncio
 from fastapi import BackgroundTasks, FastAPI
@@ -249,6 +249,31 @@ async def test_503_still_goes_out_when_the_job_row_cannot_be_retired(harness, mo
     assert resp.status_code == 503
     assert harness["scheduled"] == []
     assert throttle.recent_jobs.get("2401.10007") is None
+
+
+async def test_only_never_started_rows_are_exempt_from_the_spend_ceiling(db):
+    # count_jobs_created_since feeds DAILY_NEW_PAPER_CAP and the global hourly
+    # window, which are spend ceilings: every row counts, including failed ones
+    # that already spent money, EXCEPT a row retired with JOB_NOT_STARTED_ERROR.
+    # Pins both halves, and the NULL handling (most rows have error IS NULL).
+    since = datetime(2026, 10, 8)
+    rows = {
+        "queued": ("queued", None),
+        "running": ("processing", None),
+        "done": ("completed", None),
+        "pipeline_failed": ("failed", "Pipeline failed: render timed out"),
+        "failed_no_error": ("failed", None),
+        "duplicate": ("failed", "Duplicate submission; another run was already in flight."),
+        # Lost start response: the worker ran it anyway and rewrote the status.
+        "started_after_all": ("processing", queries.JOB_NOT_STARTED_ERROR),
+        "never_started": ("failed", queries.JOB_NOT_STARTED_ERROR),
+    }
+    for job_id, (status, error) in rows.items():
+        db.add(ProcessingJob(id=job_id, status=status, error=error, created_at=since))
+    db.add(ProcessingJob(id="yesterday", status="queued", created_at=since - timedelta(seconds=1)))
+    await db.commit()
+
+    assert await queries.count_jobs_created_since(db, since) == len(rows) - 1
 
 
 # --- (b) USE_TEMPORAL=0: the legacy in-process path is unchanged -------------

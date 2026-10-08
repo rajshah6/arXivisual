@@ -8,6 +8,7 @@ visual-QA calls (which used to send no effort at all) are pinned.
 """
 
 import logging
+from types import SimpleNamespace
 
 import pytest
 
@@ -106,3 +107,53 @@ def test_requests_accept_a_deployment_and_effort_override():
     # tools/model_smoke.py sends the production shapes to another deployment.
     req = visual_qa.judge_request([b"x"], model="gpt-6-luna", effort="low")
     assert req["model"] == "gpt-6-luna" and req["reasoning_effort"] == "low"
+
+
+# --- the live calls, not just the builders ------------------------------------
+
+class _RecordingClient:
+    """``chat.completions.create`` that records its kwargs and returns ``content``."""
+
+    def __init__(self, content: str):
+        self.calls: list[dict] = []
+
+        async def create(**kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
+
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=create))
+
+
+@pytest.fixture
+def azure_vision(monkeypatch):
+    """Azure provider, one fake frame, and the pinned effort set to a value
+    that is no model's default — so only an explicit kwarg can produce it."""
+    monkeypatch.setattr(visual_qa, "get_provider", lambda: "azure")
+    monkeypatch.setattr(visual_qa, "sample_frames", lambda *_a, **_k: [b"\x89PNG fake"])
+    monkeypatch.setattr(visual_qa, "VISUAL_QA_REASONING_EFFORT", "high")
+
+    def use(content: str) -> _RecordingClient:
+        client = _RecordingClient(content)
+        monkeypatch.setattr(visual_qa, "_get_azure_client", lambda: client)
+        return client
+
+    return use
+
+
+async def test_judge_video_sends_the_pinned_effort(azure_vision):
+    client = azure_vision('{"overlap": false, "cutoff": false, "collisions": false, '
+                          '"severity": "none", "issues": []}')
+    verdict = await visual_qa.judge_video(b"mp4", "viz_1")
+    assert verdict is not None and verdict.severity == "none"
+    [kwargs] = client.calls
+    assert kwargs["reasoning_effort"] == "high"
+    assert kwargs["max_completion_tokens"] == 4096
+
+
+async def test_vision_repair_sends_the_pinned_effort(azure_vision):
+    client = azure_vision("class S(Scene):\n    def construct(self): ...")
+    out = await visual_qa.repair_code_with_frames("class S(Scene): pass", ["overlap"], b"mp4", "viz_1")
+    assert out and out.startswith("class S")
+    [kwargs] = client.calls
+    assert kwargs["reasoning_effort"] == "high"
+    assert kwargs["max_completion_tokens"] == 16000

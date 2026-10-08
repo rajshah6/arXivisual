@@ -94,6 +94,9 @@ resource "azurerm_cognitive_deployment" "gpt_6_luna" {
 # 2026-09-07 20:00Z (AzureOpenAIRequests), and 10x gpt-5-mini's output price
 # (US$20 vs $2 per 1M, Retail Prices API; CA$195.70 in its last week of use,
 # Sep 1-7). Pay-per-token meant it cost nothing idle, but an unused expensive
-# deployment invites a stale env var or a leaked key to spend on it. Old
-# branches that still set VISUAL_QA_MODEL to it would recreate it on apply;
-# don't apply from them.
+# deployment invites a stale env var or a leaked key to spend on it.
+# Any branch cut before this change still declares gpt_5_6_sol and has no
+# gpt_6_luna (on 2026-10-08 that was every open branch). Applying from one
+# recreates gpt-5.6-sol, DESTROYS gpt-6-luna (production once the worker is
+# switched to it) and reverts the Temporal, web and budget changes made with
+# it. Apply only from an up-to-date main (README "Applying").

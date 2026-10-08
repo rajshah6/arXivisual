@@ -20,7 +20,7 @@ directly. Infra changes go through `plan`/`apply` here, not ad-hoc `az`.
 | `registry.tf` | ACR `ca82c08e2eadacr` (Basic, admin enabled) + AcrPull role for the API app's system identity |
 | `openai.tf` | Azure OpenAI account `arxivisual-openai` + deployments `gpt-5-mini` (2025-08-07, GlobalStandard 250; generation, visual QA and repair; retires 2027-02-09), `gpt-4o-mini-tts` (2025-12-15, GlobalStandard 50), `gpt-6-luna` (2026-09-22, GlobalStandard 250, `NoAutoUpgrade`; gpt-5-mini's successor at ~1/4 of its output price, not referenced by any app until the worker is switched after an eval smoke test; **retires 2028-03-11**, migrate around 2028-01). `gpt-5.6-sol` was removed on 2026-10-08 (unused since 2026-09-07, 10x gpt-5-mini's output price) |
 | `database.tf` | Postgres flexible server `arxivisual-db` (**westus3**, B1ms, PG16, 32GB, custom maintenance window Sunday 21:00 UTC); databases `arxiviz`, `temporal`, `temporal_visibility`; `azure.extensions=BTREE_GIN`; allow-Azure-services firewall rule |
-| `container_apps.tf` | Log Analytics workspace, managed environment `arxivisual-api-env`, and the three backend apps: `arxivisual-api` (external HTTP :8000, 2 vCPU / 4 Gi, 1–2 replicas), `arxivisual-temporal` (internal HTTP/2 → :7233, 0.5 vCPU / 1 Gi since 2026-10-08, exactly 1 replica, see "Temporal server pin"), `arxivisual-worker` (no ingress, 2 vCPU / 4 Gi, 1–3 replicas on a KEDA Postgres rule; keep it at min 1: at min 0 every running replica bills at the active rate, so scale-to-zero would add ~CA$22/mo, measured 2026-10-08) |
+| `container_apps.tf` | Log Analytics workspace, managed environment `arxivisual-api-env`, and the three backend apps: `arxivisual-api` (external HTTP :8000, 2 vCPU / 4 Gi, 1–2 replicas), `arxivisual-temporal` (internal HTTP/2 → :7233, 0.5 vCPU / 1 Gi, down from 1.0 / 2 Gi in the 2026-10 cost review; exactly 1 replica, see "Temporal server pin"), `arxivisual-worker` (no ingress, 2 vCPU / 4 Gi, 1–3 replicas on a KEDA Postgres rule; keep it at min 1: at min 0 every running replica bills at the active rate, so scale-to-zero would add ~CA$22/mo, a replay estimate with a range of CA$10–41, 2026-10-08) |
 | `insights.tf` | Application Insights `arxivisual-insights` (workspace-based, on the Log Analytics workspace above, type `web`, default retention, 1 GB/day cap). Its connection string is injected into `arxivisual-api` and `arxivisual-worker` as the `appinsights-connection-string` secret → `APPLICATIONINSIGHTS_CONNECTION_STRING`, with `OTEL_TRACES_SAMPLER=microsoft.fixed_percentage` + `OTEL_TRACES_SAMPLER_ARG=0.2` (20% of traces) and `OTEL_SERVICE_NAME` (the cloud role name: `arxivisual-api` / `arxivisual-worker`). Output `application_insights_app_id` |
 | `alerts.tf` | Action group `arxivisual-alerts` (email to `contact_email`), metric alerts on `arxivisual-db` and the three backend apps, three 15-minute log alerts on the workspace. See "Alerts" |
 | `frontend.tf` | The Next.js frontend `arxivisual-web` (external HTTP :3000, 0.25 vCPU / 0.5 Gi, 0–3 replicas until `web_custom_domains_enabled` is set at the DNS cut-over, then 1–3, `/healthz` probes), its user-assigned identity + AcrPull role, and the `arxivisual.org` / `www.arxivisual.org` custom domains with managed certificates |
@@ -74,6 +74,44 @@ Use the pinned Terraform version from `.terraform.lock.hcl`'s era (built and
 verified with Terraform 1.15.x, azurerm 4.81, azuread 3.9, azapi 2.12). Commit
 `.terraform.lock.hcl`; never commit `.terraform/`, state files, or
 `terraform.tfvars`.
+
+### Applying
+
+**Apply only from an up-to-date `main`**, and rebase any other branch before
+planning from it. A branch cut before a resource was added or removed still
+declares the old set: on 2026-10-08 every open branch still had `gpt-5.6-sol`
+and no `gpt-6-luna`, so applying from one would destroy `gpt-6-luna` and undo
+the Temporal, web and budget changes made with it.
+
+**Know which apps a plan rolls.** Any change under a container app's
+`template` (env, cpu/memory, scale) starts a new revision, and none of them
+rolls for free:
+
+- `arxivisual-worker` has no graceful shutdown, so a roll kills in-flight
+  activities. Generation is retried only after its 8-minute heartbeat
+  timeout, ingest after its 15-minute start-to-close, and a repair is simply
+  lost (`_NO_RETRY` in `backend/temporal_app/workflows.py`).
+- `arxivisual-api` drops any paper running on the in-process fallback
+  (`backend/api/routes.py`, "does not survive restarts").
+- `arxivisual-temporal` sends papers submitted during its handover to that
+  fallback.
+
+So never roll Temporal in the same apply as the api or worker, and apply only
+when no paper is in flight: no `AzureOpenAIRequests` on any deployment for
+15 minutes (renders call `gpt-4o-mini-tts`, so this covers them too), ideally
+in the 22:00-23:00 UTC window. That window is quiet, not empty: on 2026-10-08
+there were calls at 22:09Z.
+
+```sh
+az monitor metrics list --metric AzureOpenAIRequests --interval 5m --aggregation Total -o table \
+  --resource "$(az cognitiveservices account show -n arxivisual-openai -g arxivisual-rg --query id -o tsv)"
+```
+
+When one plan rolls Temporal together with the api or worker (the first apply
+of the 2026-10 cost changes did, if `OTEL_SERVICE_NAME` had not been applied
+before it), split it: `terraform apply -target=azurerm_container_app.api
+-target=azurerm_container_app.worker` first, then a normal plan and apply for
+the rest once the check above is quiet again.
 
 ## Secrets
 

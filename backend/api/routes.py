@@ -98,6 +98,60 @@ def _authorize_render(secret: str | None) -> None:
     raise HTTPException(status_code=404, detail="Not found")
 
 
+async def _refuse_unstarted_job(
+    db: AsyncSession, job_id: str, arxiv_id: str, ip: str, exc: Exception
+) -> HTTPException:
+    """Fail closed after the Temporal start failed: retire the job row, give
+    back what admission charged, and return the 503 for the caller to raise.
+
+    This used to fail OPEN — run the paper on the in-process BackgroundTasks
+    path. That runs the whole pipeline (LLM calls, up to 3 Manim renders, since
+    RENDER_CONCURRENCY is unset on the API) inside the single uvicorn process:
+    its last episode, 36 runs on Sep 9-15 2026 (all "tcp connect error"),
+    peaked at 2,206 MiB and sat at the 2 vCPU limit on one pod. That fallback
+    was the only reason the API was sized 2 vCPU / 4 GiB; normal API traffic
+    peaks at ~270 mcores / ~730 MiB (Azure Monitor, Sep 16 - Oct 8). With it
+    gone the API fits 0.5 vCPU / 1 GiB (about CA$78/mo less), and a Temporal
+    blip costs the user a retry instead of risking an OOM kill of every
+    request on the replica.
+    """
+    from temporalio.service import RPCError
+
+    from .temporal_client import reset_temporal_client
+
+    # ONE line that keeps the exact phrase "Temporal unavailable": the
+    # arxivisual-temporal-fallback log alert (PR #88, infra/alerts.tf) matches
+    # it, and the console log splits a traceback into separate rows. An
+    # RPCError's traceback is SDK internals; anything else is a bug in the
+    # start path, where the traceback is the diagnosis.
+    logger.error(
+        "Temporal unavailable — refused new paper with 503, nothing ran in-process "
+        "(job=%s paper=%s error=%r)",
+        job_id, arxiv_id, exc,
+        exc_info=not isinstance(exc, RPCError),
+    )
+    try:
+        await queries.update_job_status(
+            db, job_id, status="failed", error=queries.JOB_NOT_STARTED_ERROR,
+        )
+    except Exception:
+        # The database may be what is down. The 503 still goes out; a row left
+        # at "queued" is failed by reap_stale_jobs after 2 h.
+        logger.exception("Could not retire unstarted job %s", job_id)
+    recent_jobs.clear(arxiv_id)
+    # Never keep a client that just failed: the next request connects afresh.
+    reset_temporal_client()
+    # Give back the per-IP slots enforce_all charged this request. The durable
+    # daily cap and global window skip the row via JOB_NOT_STARTED_ERROR.
+    per_ip_limiter.release(ip)
+    per_ip_daily_limiter.release(ip)
+    return HTTPException(
+        status_code=503,
+        detail="Processing is temporarily unavailable. Please try again in a minute.",
+        headers={"Retry-After": "60"},
+    )
+
+
 # === Endpoints ===
 
 @router.post("/process", response_model=ProcessResponse)
@@ -220,9 +274,10 @@ async def start_processing(
     # Durable path (USE_TEMPORAL=1): start a Temporal workflow. Execution
     # happens on the worker app and survives restarts/redeploys; the workflow
     # ID makes duplicate submissions structurally impossible at the
-    # orchestrator. Fail-open: any Temporal error falls back to the legacy
-    # in-process BackgroundTasks path so paper processing never breaks on
-    # orchestrator trouble.
+    # orchestrator. Fail-closed: if the start fails, the job is retired and the
+    # caller gets a 503 with Retry-After — the paper never runs in this process
+    # (see _refuse_unstarted_job for why). The in-process BackgroundTasks path
+    # below is only for USE_TEMPORAL=0 (local dev, tests).
     started_durably = False
     from .temporal_client import temporal_enabled
 
@@ -260,13 +315,13 @@ async def start_processing(
                     status=JobStatus(active.status) if active else JobStatus.queued,
                     message="This paper is already being processed. Poll /api/status/{job_id} for updates.",
                 )
-        except Exception:
-            logger.exception(
-                "Temporal unavailable — falling back to in-process pipeline"
-            )
+        except Exception as exc:
+            raise await _refuse_unstarted_job(db, job_id, arxiv_id, ip, exc) from exc
 
     if not started_durably:
-        # Legacy path: in-process background task (does not survive restarts).
+        # Legacy path, USE_TEMPORAL=0 only: with Temporal on, every outcome
+        # above started the workflow, returned, or raised. In-process background
+        # task (does not survive restarts).
         background_tasks.add_task(process_paper_job, job_id, arxiv_id)
 
     # Product event (no-op without POSTHOG_API_KEY). The pseudonymous

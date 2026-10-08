@@ -84,6 +84,21 @@ class SlidingWindowLimiter:
                 for k in dead:
                     del self._events[k]
 
+    def release(self, key: str) -> None:
+        """Give back the newest event recorded for ``key``.
+
+        For a request that was admitted (recorded) but then started nothing —
+        Temporal down, answered 503. Without it, a person retrying through a
+        short Temporal outage spent the 3/day per-IP quota on refusals. Events
+        under one key are interchangeable, so the newest stands in for ours.
+        """
+        if self.max_events == 0:
+            return
+        with self._lock:
+            q = self._events.get(key)
+            if q:
+                q.pop()
+
     def allow(self, key: str, now: float | None = None) -> tuple[bool, int]:
         """Record-and-check in one step. Returns (allowed, retry_after_seconds).
 

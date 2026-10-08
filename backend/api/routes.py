@@ -122,14 +122,22 @@ async def _refuse_unstarted_job(
 
     # ONE line that keeps the exact phrase "Temporal unavailable": the
     # arxivisual-temporal-fallback log alert (PR #88, infra/alerts.tf) matches
-    # it, and the console log splits a traceback into separate rows. An
-    # RPCError's traceback is SDK internals; anything else is a bug in the
-    # start path, where the traceback is the diagnosis.
+    # it, and the console log splits a traceback into separate rows. A down
+    # server surfaces two ways: an RPCError from start_workflow on the cached
+    # client (the Sep 9-15 "tcp connect error"s), then — because that client
+    # is dropped below — RuntimeError("Failed client connect: ...") from
+    # Client.connect on every later request of the same outage (temporalio
+    # 1.32 raises it from its Rust bridge). Both tracebacks are SDK internals;
+    # anything else is a bug in the start path, where the traceback is the
+    # diagnosis.
+    outage = isinstance(exc, RPCError) or (
+        isinstance(exc, RuntimeError) and str(exc).startswith("Failed client connect")
+    )
     logger.error(
         "Temporal unavailable — refused new paper with 503, nothing ran in-process "
         "(job=%s paper=%s error=%r)",
         job_id, arxiv_id, exc,
-        exc_info=not isinstance(exc, RPCError),
+        exc_info=not outage,
     )
     try:
         await queries.update_job_status(

@@ -8,6 +8,7 @@ in-process path is only for USE_TEMPORAL=0. These tests pin that contract.
 """
 
 import logging
+import socket
 from datetime import datetime
 
 import pytest_asyncio
@@ -38,7 +39,9 @@ class FakeTemporal:
         self.error = error
         self.started: list[str] = []
 
-    async def start_workflow(self, _run, _input, *, id, task_queue):
+    async def start_workflow(self, _run, _input, *, id, task_queue, **_options):
+        # **_options: the real call may grow keywords (PR #91 adds memo=);
+        # a TypeError here would be caught as an outage and fake a 503.
         if self.error is not None:
             raise self.error
         self.started.append(id)
@@ -204,6 +207,35 @@ async def test_rpc_outage_logs_one_line_without_traceback(harness, caplog):
     [record] = [r for r in caplog.records if "Temporal unavailable" in r.getMessage()]
     assert not record.exc_info
     assert "tcp connect error" in record.getMessage()
+
+
+def _closed_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+async def test_a_whole_outage_logs_one_line_per_request_without_tracebacks(
+    harness, monkeypatch, caplog,
+):
+    # Request 1 meets the cached client (RPCError). The client is dropped, so
+    # request 2 goes through the real Client.connect against a closed port and
+    # gets the SDK's RuntimeError("Failed client connect: ..."). Both are the
+    # outage, not a bug: one line each, no traceback rows.
+    monkeypatch.setenv("TEMPORAL_ADDRESS", f"127.0.0.1:{_closed_port()}")
+    monkeypatch.delenv("TEMPORAL_TLS", raising=False)
+    _use(FakeTemporal(error=_outage()))
+    with caplog.at_level(logging.ERROR, logger="api.routes"):
+        first = await _submit(harness["client"], "2401.10011")
+        second = await _submit(harness["client"], "2401.10012")
+
+    assert (first.status_code, second.status_code) == (503, 503)
+    records = [r for r in caplog.records if "Temporal unavailable" in r.getMessage()]
+    assert len(records) == 2
+    assert "tcp connect error" in records[0].getMessage()
+    assert "Failed client connect" in records[1].getMessage()
+    assert not any(r.exc_info for r in records)
+    assert harness["scheduled"] == []
 
 
 async def test_503_still_goes_out_when_the_job_row_cannot_be_retired(harness, monkeypatch):

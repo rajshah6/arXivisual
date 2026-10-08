@@ -52,6 +52,7 @@ import base64
 import io
 import logging
 import os
+import re
 import sys
 import time
 from collections.abc import Callable
@@ -155,10 +156,15 @@ def _check_verdict(content: str) -> str:
     return "judge verdict unparseable" if "judge output unparseable" in verdict.issues else ""
 
 
+# A class declaration at the start of a line (fenced or not), not prose that
+# happens to contain "class " ("I cannot repair this class without ...").
+_CLASS_DECL = re.compile(r"^\s*class\s+\w+\s*(\([^)]*\))?\s*:", re.MULTILINE)
+
+
 def _check_code(content: str) -> str:
     if not content.strip():
         return "empty repair reply"
-    return "" if "class " in content else "repair reply contains no class definition"
+    return "" if _CLASS_DECL.search(content) else "repair reply contains no class definition"
 
 
 Request = tuple[str, dict, bool, Callable[[str], str]]
@@ -239,6 +245,10 @@ async def run(
                 f"truncated at max_completion_tokens={kwargs['max_completion_tokens']} "
                 "(finish_reason=length)"
             )
+        elif choice.finish_reason != "stop":
+            # content_filter (and anything else) means Azure omitted output,
+            # even when some partial text came back: never count it as usable.
+            result.error = f"finish_reason={choice.finish_reason} (output omitted or incomplete)"
         else:
             result.error = check(choice.message.content or "")
         result.ok = not result.error

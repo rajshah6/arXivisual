@@ -161,6 +161,7 @@ async def test_missing_deployment_is_a_clean_row_not_a_traceback():
         ("visual_qa_judge", "", "empty judge reply"),
         ("visual_qa_judge", "looks fine to me", "unparseable"),
         ("visual_qa_repair", "I moved the title up.", "no class definition"),
+        ("visual_qa_repair", "I cannot repair this class without more information.", "no class definition"),
     ],
 )
 async def test_unusable_replies_fail(shape, bad_content, error):
@@ -183,6 +184,13 @@ async def test_truncated_reply_fails():
     results = await model_smoke.run("gpt-5-mini", "low", async_client=async_client, sync_client=sync_client)
     assert not any(r.ok for r in results)
     assert "finish_reason=length" in results[3].error
+
+
+async def test_content_filtered_reply_fails_even_with_partial_content():
+    async_client, sync_client = _clients(lambda kw: _reply(_good_content(kw), finish_reason="content_filter"))
+    results = await model_smoke.run("gpt-5-mini", "low", async_client=async_client, sync_client=sync_client)
+    assert not any(r.ok for r in results)
+    assert all("finish_reason=content_filter" in r.error for r in results)
 
 
 def test_exit_codes(monkeypatch, capsys):

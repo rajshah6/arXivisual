@@ -4,6 +4,7 @@ FastAPI routes for the ArXiviz API.
 Now using SQLite database and local Manim rendering.
 """
 
+import asyncio
 import hmac
 import logging
 import os
@@ -639,25 +640,23 @@ async def submit_feedback(
     return FeedbackResponse()
 
 
-@router.get("/health", response_model=HealthResponse)
-async def health_check(db: AsyncSession = Depends(get_db)):
-    """
-    Health check endpoint.
+# `manim --version` is a whole interpreter start-up: ~1.5 CPU-s and ~175 MiB
+# RSS per run (manim 0.19.2, measured locally 2026-10-08); App Insights has
+# /api/health at p50 1,663 ms on the 2 vCPU API. health_check used to run it as
+# a blocking subprocess.run on EVERY call, freezing every request on the API's
+# one event loop (single uvicorn worker) meanwhile, for longer still at the
+# planned 0.5 vCPU. Now it runs in a worker thread, one probe at a
+# time (concurrent unauthenticated hits would otherwise each start a 175 MiB
+# process on a 1 GiB replica), and a success is kept for the life of the
+# process: the binary cannot change under a running container. PR #91's
+# api/health.py does the same plus TTL caches; take that one when it lands.
+_manim_available: str | None = None
+_manim_probe_lock = asyncio.Lock()
 
-    Returns status of the API and dependent services.
-    """
-    import os
+
+def _probe_manim() -> str:
     import subprocess
 
-    # Test database connection
-    db_status = "connected"
-    try:
-        await db.execute(text("SELECT 1"))
-    except Exception as e:
-        db_status = f"error: {e!s}"
-
-    # Test Manim availability
-    manim_status = "not found"
     try:
         manim_exe = os.getenv("MANIM_EXECUTABLE", "manim")
         result = subprocess.run(
@@ -668,14 +667,46 @@ async def health_check(db: AsyncSession = Depends(get_db)):
         )
         if result.returncode == 0:
             version = result.stdout.strip().split("\n")[0]
-            manim_status = f"available ({version})"
-        else:
-            detail = (result.stderr.strip() or result.stdout.strip()).splitlines()
-            manim_status = f"error: {detail[-1][:200] if detail else 'command failed'}"
+            return f"available ({version})"
+        detail = (result.stderr.strip() or result.stdout.strip()).splitlines()
+        return f"error: {detail[-1][:200] if detail else 'command failed'}"
     except FileNotFoundError:
-        manim_status = "not installed"
+        return "not installed"
     except Exception as e:
-        manim_status = f"error: {e!s}"
+        return f"error: {e!s}"
+
+
+async def _manim_status() -> str:
+    global _manim_available  # noqa: PLW0603 — process-lifetime cache
+    if _manim_available is not None:
+        return _manim_available
+    async with _manim_probe_lock:
+        if _manim_available is not None:  # a concurrent caller just probed
+            return _manim_available
+        status = await asyncio.to_thread(_probe_manim)
+        # Only a success is kept; a failure (incl. a timeout under CPU load)
+        # is re-probed by the next call.
+        if status.startswith("available"):
+            _manim_available = status
+        return status
+
+
+@router.get("/health", response_model=HealthResponse)
+async def health_check(db: AsyncSession = Depends(get_db)):
+    """
+    Health check endpoint.
+
+    Returns status of the API and dependent services.
+    """
+    # Test database connection
+    db_status = "connected"
+    try:
+        await db.execute(text("SELECT 1"))
+    except Exception as e:
+        db_status = f"error: {e!s}"
+
+    # Test Manim availability (off the event loop, cached once it succeeds)
+    manim_status = await _manim_status()
 
     # Test storage connectivity
     from rendering.storage import STORAGE_MODE, get_backend
@@ -684,7 +715,10 @@ async def health_check(db: AsyncSession = Depends(get_db)):
         backend = get_backend()
         if hasattr(backend, "check_connectivity"):
             try:
-                storage_status = "r2: connected" if backend.check_connectivity() else "r2: unreachable"
+                # boto3 is synchronous: a slow or unreachable R2 would hold the
+                # event loop for the whole connect timeout.
+                reachable = await asyncio.to_thread(backend.check_connectivity)
+                storage_status = "r2: connected" if reachable else "r2: unreachable"
             except Exception as e:
                 storage_status = f"r2: error ({e})"
         else:

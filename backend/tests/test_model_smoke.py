@@ -6,12 +6,17 @@ production shapes, flags unusable replies, and reports a missing deployment
 as one clean table row instead of a traceback.
 """
 
+import base64
+import importlib
+import io
 import json
+import os
 from types import SimpleNamespace
 
 import httpx
 import openai
 import pytest
+from PIL import Image
 
 from agents import visual_qa
 from tools import model_smoke
@@ -65,9 +70,10 @@ def _clients(respond):
 
 
 @pytest.fixture(autouse=True)
-def _restore_effort_env(monkeypatch):
-    # build_requests() sets AZURE_OPENAI_REASONING_EFFORT like a CLI run would;
-    # monkeypatch puts the original value back afterwards.
+def _no_effort_env(monkeypatch):
+    # A developer's .env may set AZURE_OPENAI_REASONING_EFFORT; these tests
+    # expect the code default (low) for the pipeline shapes. The tool itself
+    # never writes the variable (see test_a_run_leaves_the_process_env_alone).
     monkeypatch.delenv("AZURE_OPENAI_REASONING_EFFORT", raising=False)
 
 
@@ -92,14 +98,35 @@ async def test_every_production_shape_is_sent_with_the_requested_effort():
     assert [m["role"] for m in text["messages"]] == ["system", "user"]
     assert text["max_completion_tokens"] == 256 + 4096
     assert as_json["response_format"] == {"type": "json_object"}
-    # The visual-QA shapes are visual_qa.judge_request / repair_request.
+    # The visual-QA shapes are visual_qa.judge_request / repair_request, with
+    # production's image input: VISUAL_QA_FRAMES frames at the -ql render size.
     judge, repair = async_client.calls[2], async_client.calls[3]
     assert judge["messages"][0]["content"][0]["text"] == visual_qa.JUDGE_PROMPT
-    assert judge["messages"][0]["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")
     assert repair["max_completion_tokens"] == 16000
+    for request in (judge, repair):
+        images = [p["image_url"]["url"] for p in request["messages"][0]["content"][1:]]
+        assert len(images) == visual_qa.VISUAL_QA_FRAMES
+        prefix = "data:image/png;base64,"
+        assert all(url.startswith(prefix) for url in images)
+        frame = Image.open(io.BytesIO(base64.b64decode(images[0][len(prefix):])))
+        assert frame.size == model_smoke.FRAME_SIZE == (854, 480)
 
     table = model_smoke.format_table(results)
     assert table.count("| ok ") == 5 and "totals: prompt 50, completion 150 (reasoning 100)" in table
+
+
+async def test_a_run_leaves_the_process_env_alone(monkeypatch):
+    # --effort used to be applied by writing AZURE_OPENAI_REASONING_EFFORT into
+    # os.environ, which leaked "high" into every test that ran afterwards.
+    async_client, sync_client = _clients(lambda kw: _reply(_good_content(kw)))
+    before = dict(os.environ)
+    await model_smoke.run("gpt-6-luna", "high", async_client=async_client, sync_client=sync_client)
+    assert dict(os.environ) == before
+
+    # Importing the module changes nothing either; only main() turns tracing off.
+    monkeypatch.delenv("LANGFUSE_TRACING_ENABLED", raising=False)
+    importlib.reload(model_smoke)
+    assert "LANGFUSE_TRACING_ENABLED" not in os.environ
 
 
 async def test_without_effort_each_shape_uses_its_production_setting(monkeypatch):
@@ -159,6 +186,8 @@ async def test_truncated_reply_fails():
 
 
 def test_exit_codes(monkeypatch, capsys):
+    # setenv first so monkeypatch records the original and undoes main()'s write.
+    monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "true")
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
     monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
     assert model_smoke.main(["--deployment", "gpt-5-mini"]) == 2
@@ -172,6 +201,7 @@ def test_exit_codes(monkeypatch, capsys):
     monkeypatch.setattr(model_smoke, "run", fake_run)
     ok_flag = True
     assert model_smoke.main(["--deployment", "gpt-5-mini", "--effort", "low"]) == 0
+    assert os.environ["LANGFUSE_TRACING_ENABLED"] == "false"  # kept out of prod traces
     ok_flag = False
     assert model_smoke.main(["--deployment", "gpt-5-mini"]) == 1
     out = capsys.readouterr().out

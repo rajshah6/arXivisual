@@ -2,10 +2,10 @@
 
 Before pointing production at another model (gpt-5-mini -> gpt-6-luna), send
 each request shape the pipeline really uses to that deployment, check the
-answers are usable, and compare token volume: reasoning tokens dominate output
-cost, and the luna saving disappears above ~4.3x gpt-5-mini's output tokens
-(cost review, 2026-10-08). The kwargs come from the production builders
-(agents.base._azure_request_kwargs, agents.visual_qa.judge_request /
+answers are usable, and get a first read on token volume: reasoning tokens
+dominate output cost, and the luna saving disappears above ~4.3x gpt-5-mini's
+output tokens (cost review, 2026-10-08). The kwargs come from the production
+builders (agents.base._azure_request_kwargs, agents.visual_qa.judge_request /
 repair_request) and the production client factories, so they cannot drift:
 
   pipeline_text     async client; system + user message, max_completion_tokens,
@@ -15,12 +15,21 @@ repair_request) and the production client factories, so they cannot drift:
                     section organizer); the reply must parse as JSON
   pipeline_sync     the sync client, same kwargs (call_llm_sync: section
                     analyzer, voiceover validator)
-  visual_qa_judge   one user message: judge prompt + PNG data-URI image_url,
-                    4,096-token cap; the verdict must parse
-  visual_qa_repair  repair prompt + code + PNG, 16,000-token cap; must return code
+  visual_qa_judge   one user message: judge prompt + VISUAL_QA_FRAMES (3) PNG
+                    data-URI image_urls, 4,096-token cap; the verdict must parse
+  visual_qa_repair  repair prompt + code + the same frames, 16,000-token cap;
+                    must return code
 
 A reply cut off at max_completion_tokens (finish_reason "length") is a FAIL:
 an empty judge reply passes a defective video (visual_qa fails open).
+
+The token columns are a rough model-to-model RATIO, not production volume. The
+pipeline prompts are a few sentences, and real output and reasoning volume
+depends on the paper (run-to-run variance at one setting was ~10%). The
+visual-QA frames are production-sized (854x480, the -ql render size, as many
+as VISUAL_QA_FRAMES) because image tokenization differs per model, but they are
+synthetic. The cost gate for a model swap is the Langfuse canary on real
+papers; this tool proves the call shapes work.
 
 Usage, from backend/ (reads AZURE_OPENAI_* from the env or backend/.env, like
 agents/base.py):
@@ -49,13 +58,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-# Before agents.base picks the (Langfuse-wrapped) OpenAI client: a smoke run
-# must not land in the production traces or cost dashboards.
-os.environ["LANGFUSE_TRACING_ENABLED"] = "false"
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from agents import base, visual_qa
+
+# The frame size of a low_quality (-ql) render, which is what production
+# renders (temporal_app/activities.py) and visual_qa.sample_frames extracts.
+FRAME_SIZE = (854, 480)
 
 # 1x1 PNG, used only when Pillow is missing (it ships with manim).
 _FALLBACK_PNG = (
@@ -87,20 +96,29 @@ class Result:
     error: str = ""
 
 
-def sample_png() -> bytes:
-    """A tiny in-memory 64x64 PNG with a real layout defect (text spilling out
-    of a box), so the judge has something to look at."""
+def sample_frames(count: int = visual_qa.VISUAL_QA_FRAMES) -> list[bytes]:
+    """``count`` in-memory PNGs the size of a production frame, each with a
+    real layout defect (a title spilling out of its box), so the judge has
+    something to find and the request carries production's image tokens."""
     try:
-        from PIL import Image, ImageDraw
+        from PIL import Image, ImageDraw, ImageFont
     except ImportError:  # pragma: no cover - Pillow comes with manim
-        return base64.b64decode(_FALLBACK_PNG)
-    img = Image.new("RGB", (64, 64), "black")
-    draw = ImageDraw.Draw(img)
-    draw.rectangle((10, 22, 54, 42), outline="white")
-    draw.text((2, 27), "TITLE TEXT", fill="yellow")
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return buf.getvalue()
+        return [base64.b64decode(_FALLBACK_PNG)] * count
+    try:
+        font = ImageFont.load_default(size=40)
+    except (TypeError, OSError):  # pragma: no cover - Pillow < 10.1 / no FreeType
+        font = ImageFont.load_default()
+    frames = []
+    for i in range(count):
+        img = Image.new("RGB", FRAME_SIZE, "black")
+        draw = ImageDraw.Draw(img)
+        draw.rectangle((277, 190, 577, 290), outline="white", width=3)
+        draw.text((150 + 20 * i, 215), "A title far too long for its box", fill="yellow", font=font)
+        draw.line((427, 290, 427, 420), fill="white", width=3)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        frames.append(buf.getvalue())
+    return frames
 
 
 def describe_error(exc: BaseException) -> str:
@@ -148,11 +166,8 @@ Request = tuple[str, dict, bool, Callable[[str], str]]
 
 def build_requests(deployment: str, effort: str | None) -> list[Request]:
     """(shape, kwargs, use_sync_client, check) for every production call shape."""
-    if effort:
-        # base reads the effort per call, exactly as production does.
-        os.environ["AZURE_OPENAI_REASONING_EFFORT"] = effort
     model = base._azure_model(deployment)
-    frames = [sample_png()]
+    frames = sample_frames()
     text = base._azure_request_kwargs(
         model,
         "In two sentences, explain what a Fourier transform does.",
@@ -173,6 +188,11 @@ def build_requests(deployment: str, effort: str | None) -> list[Request]:
         "You are a concise technical writer.",
         256,
     )
+    if effort:
+        # Override the key base set from AZURE_OPENAI_REASONING_EFFORT, rather
+        # than setting that env var: a run must leave the process as it was.
+        for kwargs in (text, as_json, sync):
+            kwargs["reasoning_effort"] = effort
     judge = visual_qa.judge_request(frames, model=model, effort=effort)
     repair = visual_qa.repair_request(
         _REPAIR_CODE, ["Title text overflows the rectangle"], frames, model=model, effort=effort,
@@ -270,6 +290,11 @@ def main(argv: list[str] | None = None) -> int:
         help="reasoning_effort for every shape (default: each shape's production setting)",
     )
     args = parser.parse_args(argv)
+
+    # Before the first call creates the (Langfuse-wrapped) OpenAI client: a
+    # smoke run must not land in the production traces or cost dashboards.
+    # Here, not at import, so importing this module changes nothing.
+    os.environ["LANGFUSE_TRACING_ENABLED"] = "false"
 
     try:
         base._require_azure_env()

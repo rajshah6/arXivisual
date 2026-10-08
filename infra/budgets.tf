@@ -11,10 +11,12 @@
 # applied and it only sends email; it stops nothing. The guardrail that would
 # actually stop spend is the subscription spending limit (portal only).
 #
-# Thresholds: 50% / 90% actual fired every month even when spending exactly on
-# pace, so they are gone. 100% forecast is the early warning (this month is
-# heading over pace), 100% actual means it went over, 150% actual means
-# something is badly wrong (a runaway deployment, a leaked key).
+# Thresholds: at 50% / 90% actual the alerts would fire every month even when
+# spend is exactly on pace, so they are gone. (At the old CA$300 they fired
+# because the burn was 3-4x the budget: CA$231 spent and a CA$1,008 forecast
+# on the evening of 2026-10-08.) 100% forecast is the early warning (this
+# month is heading over pace), 100% actual means it went over, 150% actual
+# means something is badly wrong (a runaway deployment, a leaked key).
 resource "azurerm_consumption_budget_subscription" "monthly" {
   name            = "arxivisual-monthly"
   subscription_id = "/subscriptions/${var.subscription_id}"
@@ -58,6 +60,15 @@ resource "azurerm_consumption_budget_subscription" "monthly" {
 # (Learn: analyze-unexpected-charges), so a spike is reported within ~2 days
 # instead of at the next monthly budget threshold. There was no anomaly alert
 # before this (scheduledActions on the subscription was empty, 2026-10-08).
+#
+# ONBOARDING: detection only runs for a subscription once someone has opened a
+# Cost Analysis smart view on it (Learn: "To enable anomaly detection for your
+# subscriptions, open a Cost Analysis smart view"). Nothing shows whether this
+# subscription is onboarded, and an alert on one that is not would never mail.
+# After the first apply: portal > Cost Management > scope = this subscription
+# > Cost analysis > a smart view (e.g. Resources), look for the "onboarded"
+# notice, check the anomaly insight appears within 24 h, and check that
+# arxivisual-cost-anomaly is listed under Cost alerts > Alert rules.
 #
 # EXPIRY: the provider writes the schedule with end date = now + 1 year on
 # every create or update (azurerm 4.81 cost_anomaly_alert_resource.go), the

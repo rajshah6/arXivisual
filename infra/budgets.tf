@@ -1,10 +1,25 @@
-# Subscription-scoped monthly cost budget ($300 in the billing currency) with
-# email alerts at 50% / 90% actual and 100% forecast.
+# Subscription-scoped monthly cost budget in the billing currency (CAD).
+#
+# 575 = the average monthly burn at which the remaining Azure credit lasts to
+# its expiry on 2028-07-29: US$8,786.40 left on 2026-10-08 (balanceSummary)
+# / 660 days x 30.44 days/month x 1.41655 CAD/USD = CA$574.04. Recompute it
+# quarterly (credit left / months left x FX); the burn was ~CA$1,170/mo when
+# this was set, so the alerts below are expected to fire until the cost cuts
+# land.
+#
+# What a budget can and cannot do: it evaluates cost BEFORE credits are
+# applied and it only sends email; it stops nothing. The guardrail that would
+# actually stop spend is the subscription spending limit (portal only).
+#
+# Thresholds: 50% / 90% actual fired every month even when spending exactly on
+# pace, so they are gone. 100% forecast is the early warning (this month is
+# heading over pace), 100% actual means it went over, 150% actual means
+# something is badly wrong (a runaway deployment, a leaked key).
 resource "azurerm_consumption_budget_subscription" "monthly" {
   name            = "arxivisual-monthly"
   subscription_id = "/subscriptions/${var.subscription_id}"
 
-  amount     = 300
+  amount     = 575
   time_grain = "Monthly"
 
   time_period {
@@ -15,16 +30,8 @@ resource "azurerm_consumption_budget_subscription" "monthly" {
   notification {
     enabled        = true
     operator       = "GreaterThan"
-    threshold      = 50
-    threshold_type = "Actual"
-    contact_emails = [var.contact_email]
-  }
-
-  notification {
-    enabled        = true
-    operator       = "GreaterThan"
-    threshold      = 90
-    threshold_type = "Actual"
+    threshold      = 100
+    threshold_type = "Forecasted"
     contact_emails = [var.contact_email]
   }
 
@@ -32,9 +39,40 @@ resource "azurerm_consumption_budget_subscription" "monthly" {
     enabled        = true
     operator       = "GreaterThan"
     threshold      = 100
-    threshold_type = "Forecasted"
+    threshold_type = "Actual"
     contact_emails = [var.contact_email]
   }
+
+  notification {
+    enabled        = true
+    operator       = "GreaterThan"
+    threshold      = 150
+    threshold_type = "Actual"
+    contact_emails = [var.contact_email]
+  }
+}
+
+# Cost anomaly alert (free): Cost Management compares each day's subscription
+# usage with a forecast from the previous 60 days and mails when it falls
+# outside the expected range. Detection runs 36 h after the end of the UTC day
+# (Learn: analyze-unexpected-charges), so a spike is reported within ~2 days
+# instead of at the next monthly budget threshold. There was no anomaly alert
+# before this (scheduledActions on the subscription was empty, 2026-10-08).
+#
+# EXPIRY: the provider writes the schedule with end date = now + 1 year on
+# every create or update (azurerm 4.81 cost_anomaly_alert_resource.go), the
+# API caps end dates at one year anyway (Learn: save-share-views), and the
+# schedule is not in Terraform state, so the expiry never shows in a plan. To
+# renew, change the date in `message` and apply before the stamp is a year
+# old. Mail goes out only while the identity that applied this can still read
+# the subscription's costs.
+resource "azurerm_cost_anomaly_alert" "subscription" {
+  name            = "arxivisual-cost-anomaly"
+  display_name    = "arXivisual cost anomaly"
+  subscription_id = "/subscriptions/${var.subscription_id}"
+  email_subject   = "arXivisual: Azure cost anomaly"
+  email_addresses = [var.contact_email]
+  message         = "Daily Azure usage left its expected range. Renewed 2026-10; renew by 2027-10."
 }
 
 # "MonthlyReset" is a $5 budget scoped to the BILLING ACCOUNT (Microsoft

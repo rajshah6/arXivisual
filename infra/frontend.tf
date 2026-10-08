@@ -86,7 +86,7 @@ resource "azurerm_container_app" "web" {
     # arxivisual.org is still on Vercel, so this app takes no production
     # traffic: 0-4 requests/day in Oct 2026 (Requests metric), while the warm
     # replica billed ~CA$0.29/day of idle meters (Cost Management, Oct 2-7).
-    # min 0 saves ~CA$8.5/mo; the price is a 14-23 s cold start on the first
+    # min 0 saves ~CA$8.5/mo; the price is a 15-23 s cold start on the first
     # visit after idle (AssigningReplica -> ContainerStarted, 3 starts in the
     # system log), which deploy-frontend.yml's 30 x 10 s health poll absorbs.
     # var.web_custom_domains_enabled is the cut-over flag (apply it once the

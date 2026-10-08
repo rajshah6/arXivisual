@@ -9,8 +9,9 @@
 #   AZURE_OPENAI_ENDPOINT     — e.g. https://<resource>.openai.azure.com
 #   AZURE_OPENAI_DEPLOYMENT   — deployment name (e.g. gpt-5-mini); a manual
 #                               run can override it with the `deployment` input
-# The run makes real, billable LLM calls (~$0.05–0.15 per paper without
-# rendering); paper count and per-paper viz cap keep cost bounded.
+# The run makes real, billable LLM calls (no rendering): ~US$0.045 per paper
+# at effort low and ~$0.076 at medium, measured on gpt-5-mini 2026-09-07
+# (c4799ae); paper count and per-paper viz cap keep cost bounded.
 #
 # A/B a model before pointing production at it (same day, same effort), e.g.:
 #   gh workflow run evals.yml -f deployment=gpt-5-mini -f reasoning_effort=medium -f papers=5

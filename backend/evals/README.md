@@ -3,8 +3,8 @@
 A golden-set eval harness for the multi-agent Manim generation pipeline
 (`agents/pipeline.py`). It measures per-gate LLM generation quality on a fixed
 set of real arXiv papers and **fails CI when any aggregate metric regresses
-below baseline** — see `.github/workflows/evals.yml` (weekly, Mondays 06:00 UTC, plus manual
-`workflow_dispatch`).
+below baseline** — see `.github/workflows/evals.yml` (weekly, Mondays
+06:00 UTC, plus manual `workflow_dispatch`).
 
 ## What it measures
 
@@ -48,8 +48,9 @@ uv run python evals/check_regression.py report.json evals/baselines.json
 - `--max-viz M` — cap visualizations per paper (default 2)
 - `check_regression.py` exits 1 with a verdict table on any regression.
 
-**Cost:** roughly **$0.05–0.15 per paper** at 2 visualizations and low
-reasoning effort (no rendering). The weekly CI run uses 5 papers; manual
+**Cost:** measured on gpt-5-mini 2026-09-07 (3 golden papers x 2
+visualizations, no rendering): **~$0.045 per paper at `low`** reasoning effort
+and ~$0.076 at `medium`. The weekly CI run uses 5 papers; manual
 dispatch defaults to 3. The schedule was nightly until 2026-10-08 and went
 weekly to save Azure credit.
 

@@ -74,7 +74,7 @@ TEMPORAL_TESTS=1 uv run pytest tests/test_temporal_pipeline.py   # integration (
 uvx ruff check .                             # lint — HARD CI gate; the tree is ruff-clean (policy in pyproject)
 uv run uvicorn main:app --reload             # API on :8000, docs at /docs
 uv run python -m temporal_app.worker         # Temporal worker (paper-pipeline + paper-render queues)
-uv run python evals/run_evals.py --papers 2 --max-viz 2 --output report.json   # real LLM spend (~$0.05–0.15/paper)
+uv run python evals/run_evals.py --papers 2 --max-viz 2 --output report.json   # real LLM spend (~$0.045/paper at effort low, ~$0.076 at medium)
 uv run python evals/check_regression.py report.json evals/baselines.json
 ```
 

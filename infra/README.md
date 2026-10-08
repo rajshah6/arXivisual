@@ -97,14 +97,29 @@ rolls for free:
   fallback.
 
 So never roll Temporal in the same apply as the api or worker, and apply only
-when no paper is in flight: no `AzureOpenAIRequests` on any deployment for
-15 minutes (renders call `gpt-4o-mini-tts`, so this covers them too), ideally
-in the 22:00-23:00 UTC window. That window is quiet, not empty: on 2026-10-08
-there were calls at 22:09Z.
+when no paper is in flight, ideally in the 22:00-23:00 UTC window (quiet, not
+empty: on 2026-10-08 there were calls at 22:09Z). The jobs table and Temporal
+are reachable only from inside Azure, so "no queued or processing job, no
+running workflow" is checked from outside with all three of these, over the
+last 15 minutes:
+
+1. No `AzureOpenAIRequests` on any deployment (generation, the judges and
+   TTS all call it).
+2. `arxivisual-worker` CPU at idle: `UsageNanoCores` maximum under ~10,000,000
+   (10 millicores). An idle replica sits near 0.3 millicores and a Manim
+   render uses hundreds, so this catches a long render between TTS calls,
+   which check 1 alone misses.
+3. No paper with `"status": "processing"` in `GET /api/papers`. This alone is
+   not enough: a brand-new paper has no row until ingest finishes, and a
+   re-run of a ready paper still lists as `ready`.
 
 ```sh
 az monitor metrics list --metric AzureOpenAIRequests --interval 5m --aggregation Total -o table \
   --resource "$(az cognitiveservices account show -n arxivisual-openai -g arxivisual-rg --query id -o tsv)"
+az monitor metrics list --metric UsageNanoCores --interval 5m --aggregation Maximum -o table \
+  --resource "$(az containerapp show -n arxivisual-worker -g arxivisual-rg --query id -o tsv)"
+curl -s https://arxivisual-api.purplepond-ac9e2dc5.eastus2.azurecontainerapps.io/api/papers \
+  | jq '[.papers[] | select(.status == "processing")] | length'
 ```
 
 When one plan rolls Temporal together with the api or worker (the first apply

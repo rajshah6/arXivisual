@@ -648,20 +648,6 @@ async def submit_feedback(
     return FeedbackResponse()
 
 
-# `manim --version` is a whole interpreter start-up: ~1.5 CPU-s and ~175 MiB
-# RSS per run (manim 0.19.2, measured locally 2026-10-08); App Insights has
-# /api/health at p50 1,663 ms on the 2 vCPU API. health_check used to run it as
-# a blocking subprocess.run on EVERY call, freezing every request on the API's
-# one event loop (single uvicorn worker) meanwhile, for longer still at the
-# planned 0.5 vCPU. Now it runs in a worker thread, one probe at a
-# time (concurrent unauthenticated hits would otherwise each start a 175 MiB
-# process on a 1 GiB replica), and a success is kept for the life of the
-# process: the binary cannot change under a running container. PR #91's
-# api/health.py does the same plus TTL caches; take that one when it lands.
-_manim_available: str | None = None
-_manim_probe_lock = asyncio.Lock()
-
-
 def _probe_manim() -> str:
     import subprocess
 
@@ -682,6 +668,20 @@ def _probe_manim() -> str:
         return "not installed"
     except Exception as e:
         return f"error: {e!s}"
+
+
+# `manim --version` is a whole interpreter start-up: ~1.5 CPU-s and ~175 MiB
+# RSS per run (manim 0.19.2, measured locally 2026-10-08); App Insights has
+# /api/health at p50 1,663 ms on the 2 vCPU API. health_check used to run it as
+# a blocking subprocess.run on EVERY call, freezing every request on the API's
+# one event loop (single uvicorn worker) meanwhile, for longer still at the
+# planned 0.5 vCPU. Now it runs in a worker thread, one probe at a
+# time (concurrent unauthenticated hits would otherwise each start a 175 MiB
+# process on a 1 GiB replica), and a success is kept for the life of the
+# process: the binary cannot change under a running container. PR #91's
+# api/health.py does the same plus TTL caches; take that one when it lands.
+_manim_available: str | None = None
+_manim_probe_lock = asyncio.Lock()
 
 
 async def _manim_status() -> str:

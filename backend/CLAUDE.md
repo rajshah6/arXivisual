@@ -74,13 +74,13 @@ TEMPORAL_TESTS=1 uv run pytest tests/test_temporal_pipeline.py   # integration (
 uvx ruff check .                             # lint — HARD CI gate; the tree is ruff-clean (policy in pyproject)
 uv run uvicorn main:app --reload             # API on :8000, docs at /docs
 uv run python -m temporal_app.worker         # Temporal worker (paper-pipeline + paper-render queues)
-uv run python evals/run_evals.py --papers 2 --max-viz 2 --output report.json   # real LLM spend (~$0.05–0.15/paper)
+uv run python evals/run_evals.py --papers 2 --max-viz 2 --output report.json   # real LLM spend (~$0.045/paper at effort low, ~$0.076 at medium)
 uv run python evals/check_regression.py report.json evals/baselines.json
 ```
 
 CI (`.github/workflows/`): `ci.yml` — backend pytest, frontend tsc + build, backend AND frontend docker image builds
 (hard gates; backend ruff and frontend eslint are both HARD gates). `security.yml` — gitleaks secret scan (blocking) +
-npm/pip audit (advisory). `evals.yml` — nightly 06:00 UTC golden-set evals, fails on baseline regression.
+npm/pip audit (advisory). `evals.yml` — weekly (Mondays 06:00 UTC) golden-set evals, fails on baseline regression.
 `deploy-backend.yml` / `deploy-frontend.yml` — Azure OIDC login, ACR build, Container App roll, health verify
 (the frontend one polls `/healthz` until the reported commit matches; both apps live in `infra/` Terraform).
 

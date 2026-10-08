@@ -25,7 +25,12 @@ resource "azurerm_container_app_environment" "main" {
 }
 
 locals {
-  app_image = "ca82c08e2eadacr.azurecr.io/arxivisual-api:gh-d19c154f03c9b9d59a15510d932d9955d60da5ae"
+  # Only read when Terraform CREATES or REPLACES the api/worker app (the image
+  # is in ignore_changes; deploys own it day to day), so bumping it plans as
+  # "No changes". A recreate boots exactly this build on BOTH apps: keep it close
+  # to what is live and NEVER prune this tag from ACR (see README, "ACR
+  # housekeeping"). 2026-09-18: the live API image.
+  app_image = "ca82c08e2eadacr.azurecr.io/arxivisual-api:gh-e106349610ef6514bfc47e76b06d4c5fed58db73"
 }
 
 # ---------------------------------------------------------------------------
@@ -89,9 +94,10 @@ resource "azurerm_container_app" "api" {
     name  = "langfuse-secret-key"
     value = var.langfuse_secret_key
   }
-  # Only materialize the Turnstile secret when one is configured: the
-  # Container Apps API rejects empty secret values, and an absent env means
-  # the backend skips verification (inert until activated).
+  # Dynamic because the Container Apps API rejects empty secret values. An
+  # absent env means the backend SKIPS verification, so variables.tf now fails
+  # the plan when this (or ip_hash_secret below) is empty: both are live, and
+  # these blocks are effectively always materialized.
   dynamic "secret" {
     for_each = var.turnstile_secret_key != "" ? [1] : []
     content {
@@ -126,10 +132,16 @@ resource "azurerm_container_app" "api" {
     max_replicas = 2
 
     container {
-      name   = "arxivisual-api"
-      image  = local.app_image
-      cpu    = 2.0
-      memory = "4Gi"
+      name  = "arxivisual-api"
+      image = local.app_image
+      # 2 vCPU / 4Gi existed only for the in-process Temporal fallback (peaked
+      # at 2.2 GiB with two overlapping papers, 2026-09-09). The API now fails
+      # closed with a 503 instead (fix/fail-closed-luna-safety), so it only
+      # serves HTTP: 30-day peak 0.27 vCPU / 732 MiB, a fresh pod ~490 MiB.
+      # ~CA$78/mo saved. Apply ONLY after that API image is deployed; step to
+      # 0.75 / "1.5Gi" if WorkingSetBytes passes ~800 MiB.
+      cpu    = 0.5
+      memory = "1Gi"
 
       env {
         name  = "LLM_PROVIDER"
@@ -306,6 +318,13 @@ resource "azurerm_container_app" "api" {
           value = var.posthog_host
         }
       }
+      # Keep LAST (positional diffing, see above). The Azure Monitor distro maps
+      # the OTel service.name to the Application Insights cloud role name;
+      # without it every span arrives as role "unknown_service".
+      env {
+        name  = "OTEL_SERVICE_NAME"
+        value = "arxivisual-api"
+      }
     }
   }
 }
@@ -343,10 +362,34 @@ resource "azurerm_container_app" "temporal" {
     max_replicas = 1
 
     container {
-      name   = "arxivisual-temporal"
-      image  = "temporalio/auto-setup:1.23.1.1"
-      cpu    = 1.0
-      memory = "2Gi"
+      name  = "arxivisual-temporal"
+      image = "temporalio/auto-setup:1.23.1.1"
+      # 0.5 / 1Gi, down from 1.0 / 2Gi in the 2026-10-08 cost review. 30-day
+      # peak was 61 millicores and 151 MiB (az monitor metrics, hourly max,
+      # Sep 8-Oct 7; p99 45 m, flat memory, RestartCount 0); the Oct 4
+      # recreate booted at <=34 m and <=81 MiB. It ran healthy at exactly
+      # 0.5 / 1Gi on 2026-08-25 for ~1.5 h before an unexplained bump to
+      # 1 / 2Gi during the ingress debugging. Temporal never drops below the
+      # 0.01 vCPU idle threshold, so it bills at the ACTIVE rate (Cost
+      # Management shows only Active meters for it, Sep 16-Oct 7) and the
+      # saving scales with size: ~CA$56/mo. Go is pinned to one core by
+      # automaxprocs at any size up to 1.75 vCPU, so 0.5 loses no parallelism.
+      # Applying this starts a new Temporal revision. Single-revision mode
+      # keeps the old one serving until the new one passes its probes (Learn:
+      # zero downtime deployment), so the gap should be the handoff of the one
+      # history shard, not the whole ~310 s startup window (unobserved: the
+      # last Temporal roll was 2026-08-26). A paper submitted in that gap
+      # fails open to the API's in-process pipeline, and that task dies if the
+      # API rolls in the same apply. So apply this alone, never together with
+      # a change that rolls arxivisual-api or arxivisual-worker, and only when
+      # no paper is in flight (README "Applying"). As of 2026-10-08 the first
+      # plan with this change also carries OTEL_SERVICE_NAME for the api and
+      # worker unless that was applied first: split it.
+      # Rollback: back to 1.0 / "2Gi" if RestartCount > 0 or the system log
+      # shows OOMKilled. Next step after 1-2 clean weeks: 0.25 / "0.5Gi"
+      # (another ~CA$28/mo).
+      cpu    = 0.5
+      memory = "1Gi"
 
       env {
         name  = "DB"
@@ -689,6 +732,12 @@ resource "azurerm_container_app" "worker" {
           name  = "POSTHOG_HOST"
           value = var.posthog_host
         }
+      }
+      # Keep LAST (positional diffing). Cloud role name for the worker's
+      # telemetry in Application Insights (see the same block on the API).
+      env {
+        name  = "OTEL_SERVICE_NAME"
+        value = "arxivisual-worker"
       }
     }
   }

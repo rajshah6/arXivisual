@@ -3,8 +3,8 @@
 A golden-set eval harness for the multi-agent Manim generation pipeline
 (`agents/pipeline.py`). It measures per-gate LLM generation quality on a fixed
 set of real arXiv papers and **fails CI when any aggregate metric regresses
-below baseline** — see `.github/workflows/evals.yml` (nightly at 06:00 UTC,
-plus manual `workflow_dispatch`).
+below baseline** — see `.github/workflows/evals.yml` (weekly, Mondays 06:00 UTC, plus manual
+`workflow_dispatch`).
 
 ## What it measures
 
@@ -49,8 +49,22 @@ uv run python evals/check_regression.py report.json evals/baselines.json
 - `check_regression.py` exits 1 with a verdict table on any regression.
 
 **Cost:** roughly **$0.05–0.15 per paper** at 2 visualizations and low
-reasoning effort (no rendering). Nightly CI runs 5 papers; manual dispatch
-defaults to 3.
+reasoning effort (no rendering). The weekly CI run uses 5 papers; manual
+dispatch defaults to 3. The schedule was nightly until 2026-10-08 and went
+weekly to save Azure credit.
+
+Manual dispatch also takes `deployment` (blank = the `AZURE_OPENAI_DEPLOYMENT`
+secret) and `reasoning_effort` (`low` / `medium` / `high`; default `low`), so
+a candidate model can be compared with the current one on the same day at the
+same effort before production moves to it:
+
+```sh
+gh workflow run evals.yml -f deployment=gpt-5-mini -f reasoning_effort=medium -f papers=5
+gh workflow run evals.yml -f deployment=gpt-6-luna -f reasoning_effort=medium -f papers=5
+```
+
+Treat that as a smoke test (API errors, outright collapse): with no rendering
+and no visual QA, a handful of papers cannot resolve a small pass-rate drop.
 
 ## Baselines and tightening procedure
 
@@ -62,9 +76,9 @@ defaults to 3.
 - `code_validator` first-attempt `>= 0.4`, eventual `>= 0.7`
 - `spatial_validator` / `voiceover_script_validator` eventual `>= 0.7`
 
-**Tighten once 3+ real nightly runs establish variance.** Procedure:
+**Tighten once 3+ real scheduled runs establish variance.** Procedure:
 
-1. Download the `eval-report` artifacts from the last 3+ green nightly runs.
+1. Download the `eval-report` artifacts from the last 3+ green scheduled runs.
 2. For each baselined metric, take the minimum observed value across runs.
 3. Set the threshold to that floor minus a small variance margin (~0.05–0.10
    for rates), and consider adding `{"max": ...}` caps on `avg_attempts`.

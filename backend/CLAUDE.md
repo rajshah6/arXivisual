@@ -80,7 +80,7 @@ uv run python evals/check_regression.py report.json evals/baselines.json
 
 CI (`.github/workflows/`): `ci.yml` — backend pytest, frontend tsc + build, backend AND frontend docker image builds
 (hard gates; backend ruff and frontend eslint are both HARD gates). `security.yml` — gitleaks secret scan (blocking) +
-npm/pip audit (advisory). `evals.yml` — nightly 06:00 UTC golden-set evals, fails on baseline regression.
+npm/pip audit (advisory). `evals.yml` — weekly (Mondays 06:00 UTC) golden-set evals, fails on baseline regression.
 `deploy-backend.yml` / `deploy-frontend.yml` — Azure OIDC login, ACR build, Container App roll, health verify
 (the frontend one polls `/healthz` until the reported commit matches; both apps live in `infra/` Terraform).
 

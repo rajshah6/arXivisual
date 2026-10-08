@@ -2,7 +2,7 @@
   "_comment": [
     "Regression thresholds for check_regression.py. Keys under 'metrics' are",
     "dotted paths into report['aggregate']; values are {'min': x} or {'max': x}.",
-    "These carry generous initial slack. Once 3+ real nightly runs establish",
+    "These carry generous initial slack. Once 3+ real weekly runs establish",
     "variance, tighten them toward the observed floor — procedure in",
     "backend/evals/README.md. render_tester has no threshold: evals run with",
     "RENDER_MODE=modal, so that gate is disabled by design."

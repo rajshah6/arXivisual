@@ -42,7 +42,7 @@
 #     is ForceNew).
 #
 # Gated behind var.hard_stop_enabled (default false): merging this changes
-# nothing; the plan with it on is 5 adds plus one in-place budget change.
+# nothing; the plan with it on is 7 adds plus one in-place budget change.
 # Microsoft.Automation is NOT registered on the subscription (2026-10-21) and
 # versions.tf never registers providers, so before the first apply with it on:
 #   az provider register -n Microsoft.Automation
@@ -70,40 +70,107 @@ resource "azurerm_automation_account" "hard_stop" {
   }
 }
 
-# Least privilege that still covers the stop/start actions: the built-in
-# "Container Apps Contributor" (358470bc-b998-42bd-ab17-a7e34c199c0f) grants
-# Microsoft.App/containerApps/*/action plus read/write on the apps and
-# nothing outside Microsoft.App, where Contributor on the group would also
-# reach Postgres, ACR, the OpenAI account and the state storage account.
+# A custom role with the two operations the runbook performs (GET the app,
+# POST its stop action) and nothing else. The built-in "Container Apps
+# Contributor" (358470bc-b998-42bd-ab17-a7e34c199c0f) read as least privilege
+# but its Microsoft.App/containerApps/*/action wildcard matches
+# listSecrets/action, which returns every api and worker secret
+# (DATABASE_URL, the OpenAI key, R2, Langfuse) in plain text; Learn's
+# container-apps/manage-secrets page names that role for exactly this and
+# says to write a custom role without the wildcard (review 2026-10-21).
+# start/action is left out on purpose: recovery is a human running
+# `az containerapp start` (README "Hard stop"), and the identity that can
+# stop the estate need not be able to undo it. Custom role names are unique
+# per directory, hence the project prefix. Writing a role definition needs
+# Microsoft.Authorization/roleDefinitions/write, which the subscription Owner
+# who runs terraform here has (README "Backend / auth").
+resource "azurerm_role_definition" "hard_stop" {
+  count = local.hard_stop
+
+  name        = "arxivisual-hard-stop"
+  scope       = azurerm_resource_group.main.id
+  description = "Read the arxivisual Container Apps and POST their stop action; nothing else (infra/hardstop.tf)."
+
+  permissions {
+    actions = [
+      "Microsoft.App/containerApps/read",
+      "Microsoft.App/containerApps/stop/action",
+    ]
+  }
+
+  assignable_scopes = [azurerm_resource_group.main.id]
+}
+
+# Resource-group scope is enough for the runbook's Set-AzContext to find the
+# subscription: the GitHub deploy principal holds only an RG-scoped
+# Contributor (github_oidc.tf) and `az login` + `az containerapp update` work
+# from deploy-backend.yml.
 resource "azurerm_role_assignment" "hard_stop" {
   count = local.hard_stop
 
-  scope                = azurerm_resource_group.main.id
-  role_definition_name = "Container Apps Contributor"
-  principal_id         = azurerm_automation_account.hard_stop[0].identity[0].principal_id
+  scope              = azurerm_resource_group.main.id
+  role_definition_id = azurerm_role_definition.hard_stop[0].role_definition_resource_id
+  principal_id       = azurerm_automation_account.hard_stop[0].identity[0].principal_id
   # A managed identity is a service principal; saying so skips the AAD lookup
   # that races the brand-new identity's replication (same as frontend.tf).
   principal_type = "ServicePrincipal"
 }
 
+# The runtime the job executes in. PowerShell 7.2, the newest version the
+# classic runbook API offers (runbook_type "PowerShell72"), was retired by
+# Automation on 2026-09-30: no security updates, no support, and the
+# retirement policy lets the platform cap retired runtimes at one instance
+# (Learn whats-new July 2026, automation-runtime-retirement-policy). 7.4
+# leaves PowerShell support on 2026-11-10. 7.6 is the current LTS (to
+# 2028-11-14), GA in every public region since July 2026, and reachable only
+# through a Runtime Environment (Learn automation-runbook-types, 7.6 tab).
+# Az 15.1.0 is the version Learn lists as its default package and has the
+# cmdlets the script uses (Connect-AzAccount, Set-AzContext,
+# Invoke-AzRestMethod). It is pinned here because the provider reads the
+# package map back and would otherwise plan to remove it, and removing a
+# package is ForceNew (azurerm 4.81
+# automation_runtime_environment_resource.go). The name carries the version
+# because runtime_version is ForceNew: the next bump is a new environment
+# and an in-place runbook update; the script itself does not change.
+resource "azurerm_automation_runtime_environment" "hard_stop" {
+  count = local.hard_stop
+
+  name                  = "arxivisual-ps76"
+  location              = azurerm_resource_group.main.location
+  automation_account_id = azurerm_automation_account.hard_stop[0].id
+  description           = "PowerShell 7.6 with Az for the arxivisual-hard-stop runbook (infra/hardstop.tf)."
+
+  runtime_language = "PowerShell"
+  runtime_version  = "7.6"
+
+  runtime_default_packages = {
+    az = "15.1.0"
+  }
+}
+
 # Inline content is pushed to the draft and PUBLISHED by the provider on
 # every change (azurerm 4.81 automation_runbook_resource.go), so editing the
-# .ps1 and applying is the whole release process. PowerShell 7.2 is the
-# newest runtime the classic (non-Runtime-Environment) API offers; it ships
-# Az 8.3.0 by default, which has the two cmdlets the script needs
-# (Connect-AzAccount, Invoke-AzRestMethod; Learn: automation-runbook-types).
+# .ps1 and applying is the whole release process. runbook_type is the plain
+# "PowerShell": that is the type that accepts a runtime_environment_name
+# (provider docs), and the version comes from the environment above. The
+# script carries the subscription id and resource group as literals on
+# purpose: templatefile() would need every PowerShell `${...}` in it escaped,
+# after which it could no longer be read or run as-is. The two values are
+# pinned in variables.tf (subscription_id) and main.tf
+# (azurerm_resource_group.main) and have not changed since the project began.
 resource "azurerm_automation_runbook" "hard_stop" {
   count = local.hard_stop
 
-  name                    = "arxivisual-hard-stop"
-  location                = azurerm_resource_group.main.location
-  resource_group_name     = azurerm_resource_group.main.name
-  automation_account_name = azurerm_automation_account.hard_stop[0].name
-  runbook_type            = "PowerShell72"
-  log_verbose             = false
-  log_progress            = false
-  description             = "Stops arxivisual-worker, -api, -web and -temporal when the arxivisual-monthly budget's hard-stop threshold is crossed. Recovery: az containerapp start x4 (infra/README.md, Hard stop). Start with DryRun=true to test."
-  content                 = file("${path.module}/runbooks/hard-stop.ps1")
+  name                     = "arxivisual-hard-stop"
+  location                 = azurerm_resource_group.main.location
+  resource_group_name      = azurerm_resource_group.main.name
+  automation_account_name  = azurerm_automation_account.hard_stop[0].name
+  runbook_type             = "PowerShell"
+  runtime_environment_name = azurerm_automation_runtime_environment.hard_stop[0].name
+  log_verbose              = false
+  log_progress             = false
+  description              = "Stops arxivisual-worker, -api, -web and -temporal when the arxivisual-monthly budget's hard-stop threshold is crossed. Recovery: az containerapp start x4 (infra/README.md, Hard stop). Start with DryRun=true to test."
+  content                  = file("${path.module}/runbooks/hard-stop.ps1")
 }
 
 # The URL is generated once, never readable again from Azure, and lives in
@@ -127,7 +194,9 @@ resource "azurerm_automation_webhook" "hard_stop" {
 # every monitoring rule and stays email-only). The mail here is in addition
 # to the budget's own: it says "the HARD STOP fired", not "a threshold was
 # crossed". The common alert schema is left off on the runbook receiver so
-# the job log shows the raw budget payload.
+# the job log shows the budget's own payload; on a PowerShell 7 runbook that
+# arrives as a string rather than the documented WebhookData object (Learn
+# automation-webhooks), and the script logs it as delivered.
 resource "azurerm_monitor_action_group" "hard_stop" {
   count = local.hard_stop
 

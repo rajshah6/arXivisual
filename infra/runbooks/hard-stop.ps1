@@ -29,6 +29,10 @@
 .PARAMETER WebhookData
     Filled in by Azure Automation when the action group calls the webhook
     (the budget payload, schemaId "AIP Budget Notification"). Only logged.
+    On a PowerShell 7 runbook it arrives as a string, not the documented
+    object (Learn: automation-webhooks, "auto-converts the webhook input
+    parameter to an invalid JSON"), so it is logged as delivered and read as
+    an object only when it parses.
 
 .PARAMETER DryRun
     Read and report, never stop. Defaults to false; the webhook passes no
@@ -44,6 +48,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Pinned in infra/variables.tf (subscription_id) and infra/main.tf
+# (azurerm_resource_group.main); literals here so the file stays runnable as
+# it is (hardstop.tf says why it is not a templatefile).
 $SubscriptionId = '4301c7fd-ffa2-4ad1-bca9-a15ef2d2bd59'
 $ResourceGroup  = 'arxivisual-rg'
 # A GA version that lists the stop action (az provider show -n Microsoft.App,
@@ -54,7 +61,15 @@ $ApiVersion     = '2025-07-01'
 $Apps = @('arxivisual-worker', 'arxivisual-api', 'arxivisual-web', 'arxivisual-temporal')
 
 if ($null -ne $WebhookData) {
-    Write-Output "Triggered by webhook '$($WebhookData.WebhookName)'. Payload: $($WebhookData.RequestBody)"
+    # PowerShell 7 runbooks receive this as a string, not the documented
+    # object (Learn: automation-webhooks); keep whatever arrived in the job
+    # log and use the object form only when it parses.
+    if ($WebhookData -is [string]) {
+        try { $WebhookData = $WebhookData | ConvertFrom-Json } catch { }
+    }
+    $webhookName = if ($WebhookData -is [string]) { '(unparsed)' } else { $WebhookData.WebhookName }
+    Write-Output "Triggered by webhook '${webhookName}'. WebhookData as delivered:"
+    Write-Output ($WebhookData | Out-String)
 } else {
     Write-Output "Started manually (DryRun = $DryRun)."
 }

@@ -62,8 +62,10 @@ resource "azurerm_consumption_budget_subscription" "monthly" {
   # The threshold is deliberately far above the 150% mail: at today's burn
   # the mails fire every month and must not take the site down with them
   # (reasoning in variables.tf). Dynamic on var.hard_stop_enabled so the live
-  # budget is untouched until it is set; a budget holds up to five Actual
-  # notifications and this is the third.
+  # budget is untouched until it is set. The Consumption budgets API behind
+  # this resource allows five notifications per budget in total (the newer
+  # Cost Management API counts five Actual plus five Forecasted), and this is
+  # the fourth.
   dynamic "notification" {
     for_each = var.hard_stop_enabled ? [1] : []
     content {

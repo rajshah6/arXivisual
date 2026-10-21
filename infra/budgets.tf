@@ -8,8 +8,11 @@
 # land.
 #
 # What a budget can and cannot do: it evaluates cost BEFORE credits are
-# applied and it only sends email; it stops nothing. The guardrail that would
-# actually stop spend is the subscription spending limit (portal only).
+# applied and, on its own, only sends email; it stops nothing. The guardrails
+# that actually stop spend are the subscription spending limit (portal only)
+# and the hard-stop notification at the end of this resource, which hands a
+# high threshold to an action group that stops the Container Apps
+# (hardstop.tf; off until var.hard_stop_enabled is set).
 #
 # Thresholds: at 50% / 90% actual the alerts would fire every month even when
 # spend is exactly on pace, so they are gone. (At the old CA$300 they fired
@@ -51,6 +54,28 @@ resource "azurerm_consumption_budget_subscription" "monthly" {
     threshold      = 150
     threshold_type = "Actual"
     contact_emails = [var.contact_email]
+  }
+
+  # Hard stop (hardstop.tf): the one notification whose contact group ACTS.
+  # Added to this budget rather than a second one so there is a single number
+  # (575) and a single ladder (100% forecast -> 100% -> 150% mails -> stop).
+  # The threshold is deliberately far above the 150% mail: at today's burn
+  # the mails fire every month and must not take the site down with them
+  # (reasoning in variables.tf). Dynamic on var.hard_stop_enabled so the live
+  # budget is untouched until it is set. The Consumption budgets API behind
+  # this resource allows five notifications per budget in total (the newer
+  # Cost Management API counts five Actual plus five Forecasted), and this is
+  # the fourth.
+  dynamic "notification" {
+    for_each = var.hard_stop_enabled ? [1] : []
+    content {
+      enabled        = true
+      operator       = "GreaterThan"
+      threshold      = var.hard_stop_threshold_percent
+      threshold_type = "Actual"
+      contact_emails = [var.contact_email]
+      contact_groups = [azurerm_monitor_action_group.hard_stop[0].id]
+    }
   }
 }
 

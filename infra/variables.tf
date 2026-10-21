@@ -141,6 +141,27 @@ variable "alert_worker_error_count" {
   default     = 30
 }
 
+# ---------------------------------------------------------------------------
+# Hard stop (hardstop.tf + the gated notification in budgets.tf).
+# ---------------------------------------------------------------------------
+
+variable "hard_stop_enabled" {
+  description = "Create the budget-driven hard stop (hardstop.tf): an Automation runbook, reached from the arxivisual-monthly budget through its own action group, that stops the four Container Apps once ACTUAL month-to-date cost passes hard_stop_threshold_percent of the budget. Off by default so merging changes nothing. Before the first apply with it on: az provider register -n Microsoft.Automation (not registered as of 2026-10-21; versions.tf never registers providers). Recovery after a stop is `az containerapp start` x4, not terraform apply (README 'Hard stop')."
+  type        = bool
+  default     = false
+}
+
+variable "hard_stop_threshold_percent" {
+  description = "Percent of the arxivisual-monthly budget (CA$575) at which the hard stop fires, on ACTUAL month-to-date cost before credits. 300 = CA$1,725: the Oct 14-19 2026 burn of CA$1,287/mo is 224%, so a normal month never trips it, while a 2x runaway does by ~day 21 and a 10x one by ~day 5 (plus the 1-2 day evaluation lag). Lower it toward 200 once the cost cuts land and the burn is measured. The budget's own 100/150% mails stay as the early warning."
+  type        = number
+  default     = 300
+
+  validation {
+    condition     = var.hard_stop_threshold_percent >= 100 && var.hard_stop_threshold_percent <= 1000
+    error_message = "hard_stop_threshold_percent must be between 100 and 1000: below 100 the stop would fire on a normal on-pace month, and the budgets API caps notification thresholds at 1000%."
+  }
+}
+
 variable "web_image_tag" {
   description = "Tag of the arxivisual-web image the frontend Container App is created (or replaced) with. Every deploy-frontend.yml run tags its build both gh-<sha> and latest, so the default always names an existing image once the first build has run; the image is ignored by Terraform after creation (see infra/frontend.tf)."
   type        = string

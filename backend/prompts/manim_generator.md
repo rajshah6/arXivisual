@@ -36,7 +36,7 @@ The video must feel like a coherent teaching sequence, not a list of disconnecte
 ## Spatial Quality Requirements (CRITICAL — overlapping visuals are the #1 defect)
 - Keep content in safe area: x in [-6, 6], y in [-3.5, 3.5]. Anything wider gets clipped by the frame.
 - Prefer relative layout (`next_to`, `arrange`, `to_edge(..., buff=...)`) over hardcoded offsets.
-- Always include `buff` in `next_to` / `arrange` calls (minimum 0.3).
+- Always include `buff` in `next_to` / `arrange` calls (minimum 0.3) — `buff` belongs to those calls, never to a shape constructor.
 - MANDATORY: end every beat by clearing what the next beat replaces —
   `self.play(FadeOut(old_group), run_time=0.5)` — never draw a new diagram on
   top of a previous one. If elements persist across beats, MOVE them aside
@@ -56,6 +56,24 @@ The video must feel like a coherent teaching sequence, not a list of disconnecte
 - Never split inside `\frac{}`, `\sqrt{}`, `\left...\right`, `\begin...\end`.
 - For highlighting, prefer single-string formulas + `set_color_by_tex()`.
 - Use `Text()` instead of complex unsupported LaTeX when uncertain.
+
+## Manim API Pitfalls (CRITICAL — these TypeErrors are the #1 cause of failed renders)
+- `buff` is NOT a constructor argument: `VGroup(buff=...)` and `Square(buff=...)` crash. Build the
+  mobject, then space it with `.arrange(DIRECTION, buff=...)` / `.next_to(target, DIRECTION, buff=...)`;
+  only `Line` / `Arrow(start, end, buff=...)` take it directly.
+- Pass `width=` / `height=` only to `Rectangle`, `RoundedRectangle` and `Ellipse`. `Circle` takes
+  `radius`, `Square` takes `side_length`, `Axes` takes `x_length` / `y_length`; size `VGroup`, `Dot`,
+  `Line` and everything else AFTER construction with `.scale()`, `.set_width()` / `.set_height()`
+  or `.scale_to_fit_width()`.
+- No image or SVG files exist in this environment: never use `SVGMobject` or `ImageMobject`.
+  Compose icons from primitives (`Circle`, `Rectangle`, `Arrow`, `Text`).
+- `Create` / `Uncreate` accept only vector mobjects: never a `Group` or `ImageMobject`. Hold shapes
+  in `VGroup` (not `Group`) and use `FadeIn` for anything that is not a `VMobject`.
+- `from manim import *` provides `np` but NOT `math` or `random`: add `import math` / `import random`
+  at the top of the file, or use `np.pi`, `np.sqrt`, `np.sin`.
+- `CurvedArrow` needs both endpoints: `CurvedArrow(start, end, angle=-TAU/4)`, with the points from
+  `obj.get_right()` / `get_left()` / `get_top()` / `get_bottom()`.
+- Axis numbers: `axes.add_coordinates()` — `add_coordinate_labels` does not exist in Manim CE.
 
 ## Narration and Voiceover Requirements
 When voiceover is enabled (`{voiceover_enabled}` = true):

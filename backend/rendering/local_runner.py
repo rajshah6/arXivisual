@@ -12,6 +12,11 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+try:
+    from .sandbox_env import scrubbed_env
+except ImportError:  # run as a script: python rendering/local_runner.py
+    from sandbox_env import scrubbed_env
+
 logger = logging.getLogger(__name__)
 
 
@@ -51,22 +56,32 @@ def _extract_render_error(stderr: str, stdout: str) -> str:
 def _tts_subprocess_env() -> dict[str, str]:
     """Environment for the render subprocess.
 
+    The render executes LLM-generated code, so it starts from the shared
+    secret-scrubbed environment (``rendering.sandbox_env``: database URL,
+    storage keys, Langfuse/Temporal/PostHog settings never reach the child).
+    The ONE credential a render needs is then put back explicitly:
+
     manim-voiceover's OpenAIService talks to the module-level OpenAI client,
     which reads ``OPENAI_API_KEY`` / ``OPENAI_BASE_URL``. When those aren't
     already set but Azure OpenAI is configured, point them at Azure's
     OpenAI-compatible endpoint so voiceover audio bills against Azure credits.
     A pre-existing ``OPENAI_API_KEY`` (e.g. a real OpenAI key) is respected.
+    Non-secret settings (``VOICEOVER_*``, ``OPENAI_BASE_URL``) survive the scrub.
     """
-    env = dict(os.environ)
-    if not env.get("OPENAI_API_KEY"):
-        endpoint = env.get("AZURE_OPENAI_ENDPOINT", "").rstrip("/")
-        key = env.get("AZURE_OPENAI_API_KEY", "")
+    env = scrubbed_env()
+    existing_key = os.environ.get("OPENAI_API_KEY")
+    if existing_key:
+        env["OPENAI_API_KEY"] = existing_key
+    else:
+        endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "").rstrip("/")
+        key = os.environ.get("AZURE_OPENAI_API_KEY", "")
         if endpoint and key:
             env["OPENAI_API_KEY"] = key
             env["OPENAI_BASE_URL"] = f"{endpoint}/openai/v1/"
-            # Both OPENAI_* and AZURE_OPENAI_* are now present; the module-level
-            # OpenAI client refuses to guess between them. Pin it to the plain
-            # OpenAI code path — our base_url already targets the Azure endpoint.
+            # The AZURE_OPENAI_* variables are scrubbed from the child, but pin
+            # the module-level OpenAI client to the plain OpenAI code path
+            # anyway — our base_url already targets the Azure endpoint, and the
+            # client refuses to guess when it can see both families.
             env["OPENAI_API_TYPE"] = "openai"
     return env
 
@@ -90,8 +105,9 @@ def extract_scene_name(code: str) -> str:
 
     Looks for patterns like: class MyScene(Scene), class TestScene(ThreeDScene), etc.
     """
-    # Match class definitions that inherit from Scene or any *Scene class
-    pattern = r'class\s+(\w+)\s*\(\s*\w*Scene\s*\)'
+    # Match class definitions that inherit from Scene or any *Scene class,
+    # anywhere in the base list (`class X(ThreeDScene, VoiceoverScene)`).
+    pattern = r'class\s+(\w+)\s*\([^)]*\b\w*Scene\b[^)]*\)'
     match = re.search(pattern, code)
     if match:
         return match.group(1)

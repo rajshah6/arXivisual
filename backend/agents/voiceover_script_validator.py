@@ -9,15 +9,41 @@ import re
 try:
     from ..models.generation import GeneratedCode, VisualizationCandidate, VisualizationPlan
     from ..models.voiceover import VoiceoverValidationOutput
-    from .base import call_llm_sync, get_model_name
+    from .base import (
+        call_llm_sync,
+        get_model_name,
+        pipeline_reasoning_effort,
+        portable_reasoning_effort,
+    )
 except ImportError:
     import sys
     from pathlib import Path
 
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from agents.base import call_llm_sync, get_model_name
+    from agents.base import (
+        call_llm_sync,
+        get_model_name,
+        pipeline_reasoning_effort,
+        portable_reasoning_effort,
+    )
     from models.generation import GeneratedCode, VisualizationCandidate, VisualizationPlan
     from models.voiceover import VoiceoverValidationOutput
+
+
+def voice_judge_reasoning_effort() -> str:
+    """reasoning_effort for the narration judge's LLM call.
+
+    VOICE_JUDGE_REASONING_EFFORT when set, else exactly what the request
+    builder would send on its own (base.pipeline_reasoning_effort: the
+    pipeline-wide AZURE_OPENAI_REASONING_EFFORT, medium in production) — so
+    unset changes nothing. The rubric asks for ~512 visible tokens, yet 74%
+    of the judge's output tokens were reasoning (8,680 calls, 7.55M output
+    tokens, ~CA$40/mo on gpt-5-mini, Oct 1-19 2026); "low" is the lever,
+    worth ~60% of that. Resolved per call like the global setting; low |
+    medium | high only (base.PORTABLE_REASONING_EFFORTS), an invalid value
+    warns once and inherits.
+    """
+    return portable_reasoning_effort("VOICE_JUDGE_REASONING_EFFORT", pipeline_reasoning_effort())
 
 
 class VoiceoverScriptValidator:
@@ -228,10 +254,14 @@ class VoiceoverScriptValidator:
                 "- issues: short list of concrete problems\n"
             )
 
+            # Named so the judge is its own line in Langfuse (it showed up as
+            # an anonymous "OpenAI-generation" under process-paper before).
             text = call_llm_sync(
                 prompt=prompt,
                 model=self.model,
                 max_tokens=512,
+                name="voiceover_judge",
+                reasoning_effort=voice_judge_reasoning_effort(),
             ).strip()
             match = re.search(r"```json\s*([\s\S]*?)\s*```", text)
             payload = match.group(1).strip() if match else text

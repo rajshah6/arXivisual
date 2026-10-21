@@ -41,8 +41,8 @@ POST /api/process  (api/routes.py: rate-limit + dedupe [api/throttle.py] + stale
 | 3 | ManimGenerator (voice-aware) | `agents/manim_generator.py` | LLM: full `VoiceoverScene` code, few-shot by viz type |
 | 4 | CodeValidator | `agents/code_validator.py` | gate: AST/structure/auto-fixes + static rules (MathTex splitting, `camera.frame` outside MovingCameraScene), no LLM |
 | 5 | SpatialValidator | `agents/spatial_validator.py` | gate: bounds/overlap regex, no LLM |
-| 6 | VoiceoverScriptValidator | `agents/voiceover_script_validator.py` | gate: narration quality, heuristics + LLM judge |
-| 7 | RenderTester | `agents/render_tester.py` | gate: dry-run construct() execution in a stubbed subprocess (auto-skipped when `RENDER_MODE=modal`) |
+| 6 | RenderTester | `agents/render_tester.py` | gate: dry-run construct() execution in a stubbed subprocess (auto-skipped when `RENDER_MODE=modal`) |
+| 7 | VoiceoverScriptValidator | `agents/voiceover_script_validator.py` | gate: narration quality, heuristics + LLM judge — the only paid gate, so it runs last (39% of its calls were wasted on unrenderable code before) |
 
 SectionAnalyzer and VisualizationPlanner run in JSON mode on Azure (`response_format=json_object`; the
 Dedalus fallback can only be prompted) with a short analyst persona (`prompts/system/json_analyst.md`, not
@@ -60,7 +60,8 @@ JSON-escape residue is undone at its origin (`_organize_into_sections`) and agai
 over-escaping it undoes is invited by `agents.base.call_llm_json`'s retry suffix.
 
 Gate failure → regenerate with combined feedback (`MAX_RETRIES=3` + `VOICE_QUALITY_RETRIES=2` attempts); all
-attempts failing → `VOICE_FAIL_BEHAVIOR="return_silent"`. Gates report to the eval harness through the
+attempts failing → `VOICE_FAIL_BEHAVIOR="return_silent"` ships the last attempt unless it failed the code or
+render gate (unrenderable code is dropped, never sent to the renderer). Gates report to the eval harness through the
 `agents.pipeline.metrics_hook` seam (None in production). After rendering, a vision judge samples frames for
 layout defects (`agents/visual_qa.py`); on the Temporal path a `severity=major` verdict can drive one
 closed-loop layout repair + re-render (`temporal_app/activities.py:repair_visualization_code`).
@@ -87,7 +88,10 @@ npm/pip audit (advisory). `evals.yml` — weekly (Mondays 06:00 UTC) golden-set 
 ## Env vars (\* = secret; template: `.env.example`)
 
 - `AZURE_OPENAI_API_KEY`\*, `AZURE_OPENAI_ENDPOINT` — primary provider (auto-detected; `LLM_PROVIDER=azure|dedalus` forces).
-- `AZURE_OPENAI_DEPLOYMENT` (default `gpt-5`), `AZURE_OPENAI_REASONING_EFFORT` (default `low`).
+- `AZURE_OPENAI_DEPLOYMENT` (default `gpt-5`), `AZURE_OPENAI_REASONING_EFFORT` (default `low`; prod `medium`).
+  `VOICE_JUDGE_REASONING_EFFORT` (`low|medium|high`, unset = inherits the global) pins the narration judge's
+  effort alone — a 512-token rubric whose output was 74% reasoning at medium; the visual-QA twin is
+  `VISUAL_QA_REASONING_EFFORT` (default `medium`).
 - `DEDALUS_API_KEY`\* — legacy fallback provider (also powers optional Context7 docs via `agents/context7_docs.py`).
 - `DATABASE_URL`\* — Postgres; `postgres://` is auto-rewritten to `postgresql+asyncpg://`. Unset = SQLite.
 - `STORAGE_MODE` `local|r2`; for r2: `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`\*, `S3_SECRET_KEY`\*, `S3_PUBLIC_URL`.
@@ -140,8 +144,9 @@ npm/pip audit (advisory). `evals.yml` — weekly (Mondays 06:00 UTC) golden-set 
 - `RENDER_MODE` `local|modal` (default `local`; `modal` also disables the local RenderTester gate).
 - `RENDER_TEST_EXECUTE=1` (default) — RenderTester executes `construct()` in a dry-run subprocess with TTS
   stubbed (`agents/dry_run_driver.py`, ~0.2s/scene, no network): catches the runtime-error class import
-  testing can't (e.g. numpy truth-value `if` on `get_center()`). `0` = legacy import-only validation.
-  `RENDER_TEST_TIMEOUT_SECONDS` (120) bounds it; harness breakage AND timeouts fail open — under load the
+  testing can't (e.g. numpy truth-value `if` on `get_center()`). `0` = import-only: the same secret-scrubbed
+  subprocess (`rendering/sandbox_env.py`) loads the module but never calls `construct()` — a weaker gate;
+  generated code is never imported inside the worker process. `RENDER_TEST_TIMEOUT_SECONDS` (120) bounds it; harness breakage AND timeouts fail open — under load the
   dry run starves for CPU, and treating that as bad code burned 1,405 paid regenerations in one week.
 
 ## Conventions — do not violate

@@ -68,6 +68,18 @@ def portable_reasoning_effort(env_var: str, default: str) -> str:
     return _checked_effort(env_var, raw, default)
 
 
+def pipeline_reasoning_effort() -> str:
+    """The effort every Azure call sends unless the caller pins its own.
+
+    AZURE_OPENAI_REASONING_EFFORT, default low (production sets medium in
+    infra/container_apps.tf). The single place that default lives: a
+    per-agent setting that "inherits the pipeline effort when unset" (the
+    voiceover judge) must call this rather than repeat the literal, or the
+    two drift the day the default changes.
+    """
+    return portable_reasoning_effort("AZURE_OPENAI_REASONING_EFFORT", "low")
+
+
 def _detect_provider() -> str:
     """Resolve the LLM provider from env: LLM_PROVIDER wins, else auto-detect."""
     explicit = os.environ.get("LLM_PROVIDER", "").strip().lower()
@@ -183,7 +195,12 @@ def _azure_model(model: str | None) -> str:
 
 
 def _azure_request_kwargs(
-    model: str, prompt: str, system_prompt: str, max_tokens: int, json_mode: bool = False
+    model: str,
+    prompt: str,
+    system_prompt: str,
+    max_tokens: int,
+    json_mode: bool = False,
+    reasoning_effort: str | None = None,
 ) -> dict:
     messages = []
     if system_prompt:
@@ -200,9 +217,10 @@ def _azure_request_kwargs(
         # output (unescaped backslashes, stray quotes) before this.
         kwargs["response_format"] = {"type": "json_object"}
     # low | medium | high only (PORTABLE_REASONING_EFFORTS): "minimal" breaks
-    # gpt-6-luna and "none"/"xhigh" break gpt-5-mini. Low keeps the pipeline
-    # fast/cheap; production sets medium (infra/container_apps.tf).
-    kwargs["reasoning_effort"] = portable_reasoning_effort("AZURE_OPENAI_REASONING_EFFORT", "low")
+    # gpt-6-luna and "none"/"xhigh" break gpt-5-mini. A caller may pin its
+    # own, already-validated effort (the voiceover judge does); otherwise the
+    # pipeline-wide setting applies.
+    kwargs["reasoning_effort"] = reasoning_effort or pipeline_reasoning_effort()
     return kwargs
 
 
@@ -265,8 +283,14 @@ async def call_llm(
     max_tokens: int = 4096,
     name: str | None = None,
     json_mode: bool = False,
+    reasoning_effort: str | None = None,
 ) -> str:
-    """Async LLM call routed through the configured provider."""
+    """Async LLM call routed through the configured provider.
+
+    ``reasoning_effort`` (low | medium | high, validated by the caller) pins
+    this call's effort; None uses AZURE_OPENAI_REASONING_EFFORT. Dedalus has
+    no equivalent and ignores it.
+    """
     provider = get_provider()
     input_words = len(prompt.split())
     t0 = time.monotonic()
@@ -278,7 +302,9 @@ async def call_llm(
             client = _get_azure_client()
             resp = await client.chat.completions.create(
                 **_with_trace_name(
-                    _azure_request_kwargs(resolved, prompt, system_prompt, max_tokens, json_mode),
+                    _azure_request_kwargs(
+                        resolved, prompt, system_prompt, max_tokens, json_mode, reasoning_effort
+                    ),
                     name,
                 )
             )
@@ -320,8 +346,9 @@ def call_llm_sync(
     max_tokens: int = 4096,
     name: str | None = None,
     json_mode: bool = False,
+    reasoning_effort: str | None = None,
 ) -> str:
-    """Synchronous LLM call routed through the configured provider."""
+    """Synchronous LLM call routed through the configured provider (see call_llm)."""
     provider = get_provider()
 
     if provider == "azure":
@@ -329,7 +356,9 @@ def call_llm_sync(
         client = _get_azure_sync_client()
         resp = client.chat.completions.create(
             **_with_trace_name(
-                _azure_request_kwargs(resolved, prompt, system_prompt, max_tokens, json_mode),
+                _azure_request_kwargs(
+                    resolved, prompt, system_prompt, max_tokens, json_mode, reasoning_effort
+                ),
                 name,
             )
         )

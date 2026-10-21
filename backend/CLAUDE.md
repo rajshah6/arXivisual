@@ -60,7 +60,8 @@ JSON-escape residue is undone at its origin (`_organize_into_sections`) and agai
 over-escaping it undoes is invited by `agents.base.call_llm_json`'s retry suffix.
 
 Gate failure → regenerate with combined feedback (`MAX_RETRIES=3` + `VOICE_QUALITY_RETRIES=2` attempts); all
-attempts failing → `VOICE_FAIL_BEHAVIOR="return_silent"`. Gates report to the eval harness through the
+attempts failing → `VOICE_FAIL_BEHAVIOR="return_silent"` ships the last attempt unless it failed the code or
+render gate (unrenderable code is dropped, never sent to the renderer). Gates report to the eval harness through the
 `agents.pipeline.metrics_hook` seam (None in production). After rendering, a vision judge samples frames for
 layout defects (`agents/visual_qa.py`); on the Temporal path a `severity=major` verdict can drive one
 closed-loop layout repair + re-render (`temporal_app/activities.py:repair_visualization_code`).

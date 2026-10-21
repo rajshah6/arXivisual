@@ -96,6 +96,10 @@ VOICEOVER_TARGET_DURATION_SECONDS = (30, 45)
 VOICE_QUALITY_STRICT = True
 VOICE_QUALITY_RETRIES = 2
 VOICE_FAIL_BEHAVIOR = "return_silent"  # drop_viz | return_silent | hard_error
+# Gates whose failure means the code cannot render at all (a syntax/structure
+# reject or a dry-run crash). return_silent never ships such code — see the
+# fallback at the end of generate_single_visualization.
+_UNRENDERABLE_GATES = frozenset({"code_validator", "render_tester"})
 
 # Optional observation seam for the eval harness (backend/evals). When set, it
 # is called after every quality gate as metrics_hook(gate_name, attempt, passed).
@@ -411,6 +415,7 @@ async def generate_single_visualization(
         spatial_result: SpatialValidatorOutput | None = None
         voice_result: VoiceoverValidationOutput | None = None
         render_result: RenderTestOutput | None = None
+        last_failed_gate: str | None = None
 
         voiceover_enabled_for_generation = ENABLE_VOICEOVER
         max_attempts = MAX_RETRIES + (VOICE_QUALITY_RETRIES if voiceover_enabled_for_generation else 0)
@@ -469,6 +474,7 @@ async def generate_single_visualization(
                     "    [1/4] FAILED: %s issues - regenerating",
                     len(validation.issues_found),
                 )
+                last_failed_gate = "code_validator"
                 continue
             current_code = validation.code
             if validation.issues_fixed:
@@ -487,6 +493,7 @@ async def generate_single_visualization(
                         len(spatial_result.out_of_bounds),
                         len(spatial_result.potential_overlaps),
                     )
+                    last_failed_gate = "spatial_validator"
                     continue
                 logger.info("    [2/4] PASSED")
             else:
@@ -511,6 +518,7 @@ async def generate_single_visualization(
                         render_result.error_type,
                         (render_result.error_message or "")[:120],
                     )
+                    last_failed_gate = "render_tester"
                     continue
                 logger.info("    [3/4] PASSED")
             else:
@@ -543,6 +551,7 @@ async def generate_single_visualization(
                         voice_result.score_alignment,
                         voice_result.score_educational,
                     )
+                    last_failed_gate = "voiceover_script_validator"
                     continue
 
                 logger.info(
@@ -561,6 +570,19 @@ async def generate_single_visualization(
             if VOICE_FAIL_BEHAVIOR == "hard_error":
                 raise RuntimeError(f"Strict quality checks failed for {candidate.concept_name}")
             if VOICE_FAIL_BEHAVIOR == "return_silent":
+                if last_failed_gate in _UNRENDERABLE_GATES:
+                    # The policy exists for narration the judge never accepted.
+                    # It used to ship whatever the last attempt produced even
+                    # when that code had just failed the structural or dry-run
+                    # gate, so the renderer paid TTS for the beats before the
+                    # crash, held a render slot and wrote a failed row: 562
+                    # doomed renders Oct 1-19 2026. Dropping the visualization
+                    # is the honest "completed with fewer videos" outcome.
+                    logger.warning(
+                        "  Dropping visualization: last attempt failed the %s gate, so the code cannot render.",
+                        last_failed_gate,
+                    )
+                    return None
                 logger.warning("  Returning silent visualization based on fallback policy.")
                 if code_result:
                     return Visualization(

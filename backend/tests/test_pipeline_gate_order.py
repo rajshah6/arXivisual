@@ -20,6 +20,7 @@ from models.generation import (
     ValidatorOutput,
     VisualizationCandidate,
     VisualizationPlan,
+    VisualizationStatus,
     VisualizationType,
 )
 from models.spatial import SpatialValidatorOutput
@@ -109,16 +110,19 @@ class _PassingSpatial:
         return SpatialValidatorOutput(has_spatial_issues=False, needs_regeneration=False)
 
 
-class _RenderGate:
-    """Fails the first N dry runs with a real production error, passes afterwards."""
+ALWAYS = range(1, 1000)
 
-    def __init__(self, fail_first: int = 0):
+
+class _RenderGate:
+    """Fails the dry runs numbered in ``fail_on`` (1-based) with a real production error."""
+
+    def __init__(self, fail_on=()):
         self.calls = 0
-        self.fail_first = fail_first
+        self.fail_on = set(fail_on)
 
     async def test_render(self, code, scene_class=None):
         self.calls += 1
-        if self.calls <= self.fail_first:
+        if self.calls in self.fail_on:
             return RenderTestOutput(
                 success=False,
                 error_type="TypeError",
@@ -129,20 +133,21 @@ class _RenderGate:
 
 
 class _Judge:
-    """The paid gate: counts how often it is consulted."""
+    """The paid gate: counts how often it is consulted; fails the calls in ``fail_on``."""
 
-    def __init__(self, passes: bool = True):
+    def __init__(self, fail_on=()):
         self.calls = 0
-        self.passes = passes
+        self.fail_on = set(fail_on)
 
     def validate(self, generated_code, plan, candidate):
         self.calls += 1
+        passes = self.calls not in self.fail_on
         return VoiceoverValidationOutput(
-            is_valid=self.passes,
-            issues_found=[] if self.passes else ["Narration 1 starts with animation command style wording."],
+            is_valid=passes,
+            issues_found=[] if passes else ["Narration 1 starts with animation command style wording."],
             score_alignment=0.9,
             score_educational=0.9,
-            needs_regeneration=not self.passes,
+            needs_regeneration=not passes,
         )
 
 
@@ -166,7 +171,7 @@ def _run(monkeypatch, *, generator, validator, render, judge):
 
 
 def test_render_gate_failure_skips_the_paid_judge(monkeypatch):
-    generator, render, judge = _FakeGenerator(), _RenderGate(fail_first=1), _Judge()
+    generator, render, judge = _FakeGenerator(), _RenderGate(fail_on={1}), _Judge()
 
     viz, events = _run(monkeypatch, generator=generator, validator=_Validator(), render=render, judge=judge)
 
@@ -187,7 +192,7 @@ def test_render_gate_failure_skips_the_paid_judge(monkeypatch):
 
 
 def test_render_error_still_drives_the_next_attempt(monkeypatch):
-    generator, render = _FakeGenerator(), _RenderGate(fail_first=1)
+    generator, render = _FakeGenerator(), _RenderGate(fail_on={1})
 
     _run(monkeypatch, generator=generator, validator=_Validator(), render=render, judge=_Judge())
 
@@ -209,3 +214,67 @@ def test_judge_runs_last_when_every_gate_passes(monkeypatch):
         "render_tester",
         "voiceover_script_validator",
     ]
+
+
+# ---------------------------------------------------------------------------
+# VOICE_FAIL_BEHAVIOR=return_silent after every attempt failed
+# ---------------------------------------------------------------------------
+# The fallback exists for narration the judge never accepted. It used to ship
+# the last attempt's code whatever gate it failed, so code that had just failed
+# the structural check or the dry run went to the renderer anyway: TTS billed
+# for the beats before the crash, a render slot held, a failed row written —
+# 562 times Oct 1-19 2026. Only the LAST attempt's gate decides.
+
+MAX_ATTEMPTS = pipeline.MAX_RETRIES + pipeline.VOICE_QUALITY_RETRIES
+
+
+def test_code_that_failed_the_render_gate_on_every_attempt_is_dropped(monkeypatch):
+    monkeypatch.setattr(pipeline, "VOICE_FAIL_BEHAVIOR", "return_silent")
+    generator, judge = _FakeGenerator(), _Judge()
+
+    viz, _events = _run(monkeypatch, generator=generator, validator=_Validator(), render=_RenderGate(fail_on=ALWAYS), judge=judge)
+
+    assert viz is None
+    assert generator.calls == MAX_ATTEMPTS  # the retry budget is unchanged
+    assert judge.calls == 0  # and none of it paid for a judge verdict
+
+
+def test_code_that_failed_the_structural_gate_on_every_attempt_is_dropped(monkeypatch):
+    monkeypatch.setattr(pipeline, "VOICE_FAIL_BEHAVIOR", "return_silent")
+
+    viz, _events = _run(
+        monkeypatch, generator=_FakeGenerator(), validator=_Validator(fail_first=MAX_ATTEMPTS), render=_RenderGate(), judge=_Judge()
+    )
+
+    assert viz is None
+
+
+def test_narration_only_failure_still_ships_the_silent_visualization(monkeypatch):
+    monkeypatch.setattr(pipeline, "VOICE_FAIL_BEHAVIOR", "return_silent")
+    generator, render = _FakeGenerator(), _RenderGate()
+
+    viz, _events = _run(monkeypatch, generator=generator, validator=_Validator(), render=render, judge=_Judge(fail_on=ALWAYS))
+
+    # Renderable code whose narration the judge never accepted: the existing
+    # policy, unchanged — the last attempt ships and renders silent.
+    assert viz is not None
+    assert viz.status == VisualizationStatus.PENDING
+    assert f"# attempt-{MAX_ATTEMPTS}" in viz.manim_code
+    assert render.calls == generator.calls == MAX_ATTEMPTS
+
+
+def test_only_the_last_attempt_decides(monkeypatch):
+    monkeypatch.setattr(pipeline, "VOICE_FAIL_BEHAVIOR", "return_silent")
+
+    # Judge rejected attempts 1-4, then attempt 5 crashed in the dry run: dropped.
+    viz, _events = _run(
+        monkeypatch, generator=_FakeGenerator(), validator=_Validator(), render=_RenderGate(fail_on={MAX_ATTEMPTS}), judge=_Judge(fail_on=ALWAYS)
+    )
+    assert viz is None
+
+    # Attempt 1 crashed in the dry run, attempts 2-5 rendered but the judge
+    # rejected their narration: the last attempt is renderable, so it ships.
+    viz, _events = _run(
+        monkeypatch, generator=_FakeGenerator(), validator=_Validator(), render=_RenderGate(fail_on={1}), judge=_Judge(fail_on=ALWAYS)
+    )
+    assert viz is not None

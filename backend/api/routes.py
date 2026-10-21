@@ -277,6 +277,13 @@ async def start_processing(
 
     # Create job in database
     job_id = await queries.create_job(db, arxiv_id)
+    # Remember the job this paper already maps to, if any, BEFORE overwriting
+    # it: two submissions that both passed the dedupe check above (a double
+    # click, two tabs) each create a row, and the one whose workflow start
+    # loses needs to point its caller at the winner. The DB cannot answer
+    # that yet — get_active_job_for_paper joins on paper_id, which stays NULL
+    # until ingest links the row — so this is the only record of the winner.
+    prior_job_id = recent_jobs.get(arxiv_id)
     recent_jobs.put(arxiv_id, job_id)
     logger.info("Accepted new paper %s (job %s) from client %s", arxiv_id, job_id, client_tag)
 
@@ -311,15 +318,23 @@ async def start_processing(
             except WorkflowAlreadyStartedError:
                 # A workflow for this paper is already running (race past the
                 # cheap dedupe). Retire the row we just created and point the
-                # caller at the active job.
+                # caller at the live job: the DB's answer when ingest has
+                # linked the paper, else the job this paper mapped to before
+                # we overwrote it. Returning our own, just-failed row sent the
+                # second tab to a "failed" page while the paper was running.
                 await queries.update_job_status(
-                    db, job_id, status="failed",
-                    error="Duplicate submission; another run was already in flight.",
+                    db, job_id, status="failed", error=queries.JOB_DUPLICATE_ERROR,
                 )
-                recent_jobs.clear(arxiv_id)
                 active = await queries.get_active_job_for_paper(db, arxiv_id)
+                live_job_id = active.id if active else prior_job_id
+                if live_job_id:
+                    # Keep later duplicates deduping to the live job, not to
+                    # the row we just retired.
+                    recent_jobs.put(arxiv_id, live_job_id)
+                else:
+                    recent_jobs.clear(arxiv_id)
                 return ProcessResponse(
-                    job_id=active.id if active else job_id,
+                    job_id=live_job_id or job_id,
                     arxiv_id=arxiv_id,
                     status=JobStatus(active.status) if active else JobStatus.queued,
                     message="This paper is already being processed. Poll /api/status/{job_id} for updates.",

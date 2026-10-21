@@ -88,7 +88,10 @@ npm/pip audit (advisory). `evals.yml` — weekly (Mondays 06:00 UTC) golden-set 
 ## Env vars (\* = secret; template: `.env.example`)
 
 - `AZURE_OPENAI_API_KEY`\*, `AZURE_OPENAI_ENDPOINT` — primary provider (auto-detected; `LLM_PROVIDER=azure|dedalus` forces).
-- `AZURE_OPENAI_DEPLOYMENT` (default `gpt-5`), `AZURE_OPENAI_REASONING_EFFORT` (default `low`).
+- `AZURE_OPENAI_DEPLOYMENT` (default `gpt-5`), `AZURE_OPENAI_REASONING_EFFORT` (default `low`; prod `medium`).
+  `VOICE_JUDGE_REASONING_EFFORT` (`low|medium|high`, unset = inherits the global) pins the narration judge's
+  effort alone — a 512-token rubric whose output was 74% reasoning at medium; the visual-QA twin is
+  `VISUAL_QA_REASONING_EFFORT` (default `medium`).
 - `DEDALUS_API_KEY`\* — legacy fallback provider (also powers optional Context7 docs via `agents/context7_docs.py`).
 - `DATABASE_URL`\* — Postgres; `postgres://` is auto-rewritten to `postgresql+asyncpg://`. Unset = SQLite.
 - `STORAGE_MODE` `local|r2`; for r2: `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`\*, `S3_SECRET_KEY`\*, `S3_PUBLIC_URL`.

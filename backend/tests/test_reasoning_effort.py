@@ -13,6 +13,8 @@ from types import SimpleNamespace
 import pytest
 
 from agents import base, visual_qa
+from agents import voiceover_script_validator as vsv
+from models.generation import Scene, VisualizationCandidate, VisualizationPlan, VisualizationType
 
 
 @pytest.fixture(autouse=True)
@@ -107,6 +109,100 @@ def test_requests_accept_a_deployment_and_effort_override():
     # tools/model_smoke.py sends the production shapes to another deployment.
     req = visual_qa.judge_request([b"x"], model="gpt-6-luna", effort="low")
     assert req["model"] == "gpt-6-luna" and req["reasoning_effort"] == "low"
+
+
+# --- VOICE_JUDGE_REASONING_EFFORT (narration judge) ---------------------------
+# The judge is one LLM call per attempt that reaches it, with a 512-token
+# rubric; 74% of its output tokens were reasoning at the pipeline-wide medium.
+# Unset must be exactly what it sent before the setting existed.
+
+def test_voice_judge_inherits_the_pipeline_effort_when_unset(monkeypatch):
+    monkeypatch.delenv("VOICE_JUDGE_REASONING_EFFORT", raising=False)
+    monkeypatch.setenv("AZURE_OPENAI_REASONING_EFFORT", "medium")
+    assert vsv.voice_judge_reasoning_effort() == "medium"
+    monkeypatch.delenv("AZURE_OPENAI_REASONING_EFFORT", raising=False)
+    assert vsv.voice_judge_reasoning_effort() == "low"
+
+
+@pytest.mark.parametrize("value", ["low", "medium", "high"])
+def test_voice_judge_accepts_portable_values(monkeypatch, value):
+    monkeypatch.setenv("AZURE_OPENAI_REASONING_EFFORT", "medium")
+    monkeypatch.setenv("VOICE_JUDGE_REASONING_EFFORT", value)
+    assert vsv.voice_judge_reasoning_effort() == value
+
+
+@pytest.mark.parametrize("value", ["minimal", "none", "xhigh"])
+def test_voice_judge_invalid_falls_back_to_the_pipeline_effort(monkeypatch, caplog, value):
+    monkeypatch.setenv("AZURE_OPENAI_REASONING_EFFORT", "medium")
+    monkeypatch.setenv("VOICE_JUDGE_REASONING_EFFORT", value)
+    with caplog.at_level(logging.WARNING, logger="agents.base"):
+        assert vsv.voice_judge_reasoning_effort() == "medium"
+    assert any("VOICE_JUDGE_REASONING_EFFORT" in r.getMessage() for r in caplog.records)
+
+
+def test_request_builder_pins_a_per_call_effort(monkeypatch):
+    monkeypatch.setenv("AZURE_OPENAI_REASONING_EFFORT", "medium")
+    pinned = base._azure_request_kwargs("gpt-5-mini", "hi", "", 100, reasoning_effort="low")
+    assert pinned["reasoning_effort"] == "low"
+    assert base._azure_request_kwargs("gpt-5-mini", "hi", "", 100)["reasoning_effort"] == "medium"
+
+
+class _RecordingSyncClient:
+    """Sync ``chat.completions.create`` that records its kwargs and returns ``content``."""
+
+    def __init__(self, content: str):
+        self.calls: list[dict] = []
+
+        def create(**kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
+
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=create))
+
+
+def test_sync_call_sends_the_pinned_effort_to_azure(monkeypatch):
+    monkeypatch.setenv("AZURE_OPENAI_REASONING_EFFORT", "medium")
+    monkeypatch.setattr(base, "get_provider", lambda: "azure")
+    client = _RecordingSyncClient("ok")
+    monkeypatch.setattr(base, "_get_azure_sync_client", lambda: client)
+
+    base.call_llm_sync("hi", model="gpt-5-mini", max_tokens=10, reasoning_effort="low")
+    base.call_llm_sync("hi", model="gpt-5-mini", max_tokens=10)
+
+    assert [c["reasoning_effort"] for c in client.calls] == ["low", "medium"]
+    # Everything else about the call shape is what production has always sent.
+    assert client.calls[0]["max_completion_tokens"] == 10 + base._AZURE_REASONING_HEADROOM
+
+
+def test_judge_call_sends_its_own_effort(monkeypatch):
+    monkeypatch.setenv("AZURE_OPENAI_REASONING_EFFORT", "medium")
+    monkeypatch.setenv("VOICE_JUDGE_REASONING_EFFORT", "low")
+    calls: list[dict] = []
+
+    def fake_call_llm_sync(**kwargs):
+        calls.append(kwargs)
+        return '{"score_alignment": 0.8, "score_educational": 0.7, "issues": []}'
+
+    monkeypatch.setattr(vsv, "call_llm_sync", fake_call_llm_sync)
+    judge = vsv.VoiceoverScriptValidator.__new__(vsv.VoiceoverScriptValidator)
+    judge.model = "gpt-5-mini"
+    candidate = VisualizationCandidate(
+        section_id="s1", concept_name="Attention", concept_description="d",
+        visualization_type=VisualizationType.DATA_FLOW, priority=5, context="c",
+    )
+    plan = VisualizationPlan(
+        concept_name="Attention", visualization_type=VisualizationType.DATA_FLOW, duration_seconds=30,
+        scenes=[Scene(order=1, description="beat", duration_seconds=10, transitions="Write", elements=["Text"])],
+        narration_points=[],
+    )
+
+    scores = judge._llm_judge(candidate=candidate, plan=plan, narrations=["Attention weighs every token."])
+
+    assert scores == (0.8, 0.7, None)
+    [kwargs] = calls
+    assert kwargs["reasoning_effort"] == "low"
+    assert kwargs["max_tokens"] == 512 and kwargs["model"] == "gpt-5-mini"
+    assert kwargs["name"] == "voiceover_judge"
 
 
 # --- the live calls, not just the builders ------------------------------------

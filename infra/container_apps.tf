@@ -236,13 +236,15 @@ resource "azurerm_container_app" "api" {
       }
       # 80 -> 50 (2026-10-21 audit, cap-bound-demand / demand-organic-cap-bound).
       # The cap has been the spend ceiling since Oct 11: exactly 80 accepted on
-      # 7 of 10 days, 1,476 daily-cap rejections Oct 11-17 from organic traffic
-      # (1,146 distinct fingerprints, max 3 accepts each), so LLM cost scales
-      # with this number: ~CA$357/mo less on gpt-5-mini, ~CA$180/mo once the
-      # worker is on gpt-6-luna, at the price of ~30 more papers turned away on
-      # every cap day. Only the API reads it (backend/api/throttle.py); the
-      # worker has no copy. Product decision (Ajith/Raj): revisit once the
-      # luna + effort-low cost per paper is measured.
+      # 7 of 10 days and 1,476 daily-cap rejections Oct 11-17, all organic
+      # (Oct 1-19: 1,146 distinct fingerprints, 1,013 of them single-accept,
+      # at most 3 accepts per fingerprint per day bar one 5 on Oct 6), so LLM
+      # cost scales with this number: ~CA$357/mo less on gpt-5-mini, ~CA$178/mo
+      # once the worker is on gpt-6-luna, at the price of ~30 more papers
+      # turned away on every cap day. Only the API reads it
+      # (backend/api/throttle.py); the worker has no copy. Product decision
+      # (Ajith/Raj): revisit once the luna + effort-low cost per paper is
+      # measured.
       env {
         name  = "DAILY_NEW_PAPER_CAP"
         value = "50"

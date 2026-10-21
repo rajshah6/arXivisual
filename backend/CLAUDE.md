@@ -41,8 +41,8 @@ POST /api/process  (api/routes.py: rate-limit + dedupe [api/throttle.py] + stale
 | 3 | ManimGenerator (voice-aware) | `agents/manim_generator.py` | LLM: full `VoiceoverScene` code, few-shot by viz type |
 | 4 | CodeValidator | `agents/code_validator.py` | gate: AST/structure/auto-fixes + static rules (MathTex splitting, `camera.frame` outside MovingCameraScene), no LLM |
 | 5 | SpatialValidator | `agents/spatial_validator.py` | gate: bounds/overlap regex, no LLM |
-| 6 | VoiceoverScriptValidator | `agents/voiceover_script_validator.py` | gate: narration quality, heuristics + LLM judge |
-| 7 | RenderTester | `agents/render_tester.py` | gate: dry-run construct() execution in a stubbed subprocess (auto-skipped when `RENDER_MODE=modal`) |
+| 6 | RenderTester | `agents/render_tester.py` | gate: dry-run construct() execution in a stubbed subprocess (auto-skipped when `RENDER_MODE=modal`) |
+| 7 | VoiceoverScriptValidator | `agents/voiceover_script_validator.py` | gate: narration quality, heuristics + LLM judge — the only paid gate, so it runs last (39% of its calls were wasted on unrenderable code before) |
 
 SectionAnalyzer and VisualizationPlanner run in JSON mode on Azure (`response_format=json_object`; the
 Dedalus fallback can only be prompted) with a short analyst persona (`prompts/system/json_analyst.md`, not

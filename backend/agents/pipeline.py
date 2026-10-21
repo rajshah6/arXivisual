@@ -3,7 +3,10 @@ Pipeline Orchestration - Coordinates all agents to generate visualizations.
 
 Main pipeline (quality-first voice mode):
   SectionAnalyzer -> VisualizationPlanner -> ManimGenerator (voice-aware)
-  -> CodeValidator -> SpatialValidator -> VoiceoverScriptValidator -> RenderTester
+  -> CodeValidator -> SpatialValidator -> RenderTester -> VoiceoverScriptValidator
+
+The three free gates run before the one paid gate (the voiceover judge is an
+LLM call), so code that cannot render never pays for a judge verdict.
 """
 
 import asyncio
@@ -489,11 +492,34 @@ async def generate_single_visualization(
             else:
                 logger.info("    [2/4] SpatialValidator: Skipped")
 
-            # Stage 3: strict voiceover quality validation (unified mode)
+            # From here on the remaining gates, the next attempt's feedback
+            # and the fallback below all see the validated (auto-fixed) code.
+            code_result.code = current_code
+
+            # Stage 3: render test. Runs BEFORE the voiceover judge because it
+            # is free (a ~0.2 s dry-run subprocess) while the judge is a paid
+            # LLM call: Oct 1-19 2026, 3,393 of 8,680 judge calls (39%, ~CA$15/mo)
+            # were spent on code that then failed this gate. Same verdict, same
+            # feedback to the next attempt — only the order changed.
+            if render_tester:
+                logger.info("    [3/4] RenderTester: Testing import & execution...")
+                render_result = await render_tester.test_render(current_code)
+                _report_gate("render_tester", attempt, render_result.success)
+                if not render_result.success:
+                    logger.warning(
+                        "    [3/4] FAILED: %s - %s",
+                        render_result.error_type,
+                        (render_result.error_message or "")[:120],
+                    )
+                    continue
+                logger.info("    [3/4] PASSED")
+            else:
+                logger.info("    [3/4] RenderTester: Skipped")
+
+            # Stage 4: strict voiceover quality validation (unified mode)
             if voiceover_enabled_for_generation and voiceover_script_validator:
-                logger.info("    [3/4] VoiceoverScriptValidator: Checking narration quality...")
+                logger.info("    [4/4] VoiceoverScriptValidator: Checking narration quality...")
                 narrations, beats = _extract_voiceover_metadata(current_code)
-                code_result.code = current_code
                 code_result.narration_lines = narrations
                 code_result.narration_beats = beats
                 code_result.voiceover_enabled = True
@@ -513,35 +539,19 @@ async def generate_single_visualization(
 
                 if voice_result.needs_regeneration:
                     logger.warning(
-                        "    [3/4] FAILED: alignment=%.2f educational=%.2f",
+                        "    [4/4] FAILED: alignment=%.2f educational=%.2f",
                         voice_result.score_alignment,
                         voice_result.score_educational,
                     )
                     continue
 
                 logger.info(
-                    "    [3/4] PASSED: alignment=%.2f educational=%.2f",
+                    "    [4/4] PASSED: alignment=%.2f educational=%.2f",
                     voice_result.score_alignment,
                     voice_result.score_educational,
                 )
             else:
-                logger.info("    [3/4] VoiceoverScriptValidator: Skipped")
-
-            # Stage 4: render test
-            if render_tester:
-                logger.info("    [4/4] RenderTester: Testing import & execution...")
-                render_result = await render_tester.test_render(current_code)
-                _report_gate("render_tester", attempt, render_result.success)
-                if not render_result.success:
-                    logger.warning(
-                        "    [4/4] FAILED: %s - %s",
-                        render_result.error_type,
-                        (render_result.error_message or "")[:120],
-                    )
-                    continue
-                logger.info("    [4/4] PASSED")
-            else:
-                logger.info("    [4/4] RenderTester: Skipped")
+                logger.info("    [4/4] VoiceoverScriptValidator: Skipped")
 
             code_result.code = current_code
             logger.info("  ✓ All validations passed on attempt %s", attempt + 1)

@@ -132,10 +132,16 @@ resource "azurerm_container_app" "api" {
     max_replicas = 2
 
     container {
-      name   = "arxivisual-api"
-      image  = local.app_image
-      cpu    = 2.0
-      memory = "4Gi"
+      name  = "arxivisual-api"
+      image = local.app_image
+      # 2 vCPU / 4Gi existed only for the in-process Temporal fallback (peaked
+      # at 2.2 GiB with two overlapping papers, 2026-09-09). The API now fails
+      # closed with a 503 instead (fix/fail-closed-luna-safety), so it only
+      # serves HTTP: 30-day peak 0.27 vCPU / 732 MiB, a fresh pod ~490 MiB.
+      # ~CA$78/mo saved. Apply ONLY after that API image is deployed; step to
+      # 0.75 / "1.5Gi" if WorkingSetBytes passes ~800 MiB.
+      cpu    = 0.5
+      memory = "1Gi"
 
       env {
         name  = "LLM_PROVIDER"

@@ -18,6 +18,12 @@ def temporal_enabled() -> bool:
     return os.getenv("USE_TEMPORAL", "0") == "1"
 
 
+def reset_temporal_client() -> None:
+    """Drop the cached client so the next call reconnects."""
+    global _client  # noqa: PLW0603 — lazy singleton cache
+    _client = None
+
+
 async def get_temporal_client() -> Client:
     global _client  # noqa: PLW0603 — lazy singleton cache
     if _client is None:

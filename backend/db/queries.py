@@ -14,7 +14,7 @@ def _utcnow_naive() -> datetime:
     must stay naive; this just replaces the deprecated _utcnow_naive()."""
     return datetime.now(UTC).replace(tzinfo=None)
 
-from sqlalchemy import delete, distinct, func, select, update
+from sqlalchemy import delete, distinct, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -23,6 +23,18 @@ from models.paper import ArxivPaperMeta
 from .models import Feedback, Paper, ProcessingJob, Section, Visualization
 
 # === Processing Jobs ===
+
+# Error recorded on a job row the API created but never started: Temporal was
+# unreachable, so the request was answered 503 (api/routes.py, fail-closed).
+# Nothing ran and nothing was spent, so count_jobs_created_since skips these
+# rows — otherwise a Temporal outage would burn the daily cap and the global
+# hourly window (6/h in prod) with 503s and keep turning people away with 429s
+# after Temporal came back. A row the worker later picks up anyway (lost start
+# response) has its status rewritten and counts again.
+JOB_NOT_STARTED_ERROR = (
+    "Not started: the processing service was unavailable, so nothing ran. "
+    "Submit the paper again."
+)
 
 async def create_job(db: AsyncSession, arxiv_id: str) -> str:
     """Create a new processing job and return the job_id."""
@@ -79,9 +91,19 @@ async def get_active_job_for_paper(
 async def count_jobs_created_since(db: AsyncSession, since: datetime) -> int:
     """Jobs created at/after ``since`` (naive UTC) — the durable input to the
     daily new-paper cap. Counts every created row, including ones later marked
-    duplicate/failed: conservative on purpose, the cap is a spend ceiling."""
+    duplicate/failed: conservative on purpose, the cap is a spend ceiling. The
+    one exception is a row that provably never started (JOB_NOT_STARTED_ERROR)."""
     result = await db.execute(
-        select(func.count()).select_from(ProcessingJob).where(ProcessingJob.created_at >= since)
+        select(func.count()).select_from(ProcessingJob).where(
+            ProcessingJob.created_at >= since,
+            # NULL-safe "not (failed AND error == marker)": error is NULL on
+            # most rows, and NULL != marker is NULL, not true.
+            or_(
+                ProcessingJob.status != "failed",
+                ProcessingJob.error.is_(None),
+                ProcessingJob.error != JOB_NOT_STARTED_ERROR,
+            ),
+        )
     )
     return int(result.scalar_one())
 

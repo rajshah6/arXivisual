@@ -1,0 +1,11 @@
+# Fingerprints gitleaks must skip in the full-history weekly scan (security.yml).
+# Each entry is <commit>:<file>:<rule>:<line>; add a reason beside every one.
+
+# 2026-02-07 commit c4b57e1 committed backend/.env.example with a Dedalus
+# "dsk-test..." TEST key as the example value. Dedalus is the retired fallback
+# provider and that key has been inactive since 2026-08 (Azure OpenAI is the
+# only live provider). Rewriting history is not worth it for a dead test key,
+# but leaving the scan red since 2026-08-31 hid every later run — so ignore
+# exactly this one finding. The current placeholder is allow-listed in
+# .gitleaks.toml.
+c4b57e1c7c6072494d72f49f121044a03a47c546:backend/.env.example:generic-api-key:25

@@ -53,7 +53,7 @@ Set these on the Container App (secrets referenced via `secretref:`; the rest as
 | `AZURE_OPENAI_ENDPOINT` | Azure OpenAI resource endpoint (LLM + TTS both route through it) |
 | `AZURE_OPENAI_API_KEY` | **secret** — API key for the resource |
 | `AZURE_OPENAI_DEPLOYMENT` | Deployment name of the pipeline model (production uses `gpt-5-mini`; code defaults to `gpt-5`) |
-| `AZURE_OPENAI_REASONING_EFFORT` | `minimal` \| `low` \| `medium` \| `high`; reasoning tokens dominate output cost, so this is the main cost lever |
+| `AZURE_OPENAI_REASONING_EFFORT` | `low` \| `medium` \| `high` only: gpt-6-luna rejects `minimal` and gpt-5-mini rejects `none`/`xhigh`, so anything else breaks one of the two deployments or the rollback between them. Reasoning tokens dominate output cost, so this is the main cost lever |
 | `DATABASE_URL` | **secret** — Postgres flexible server URL, `postgresql://...?ssl=require`. Unset falls back to ephemeral SQLite, which is wiped on every redeploy |
 | `STORAGE_MODE` | `r2` — videos go to Cloudflare R2 instead of the container filesystem |
 | `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_PUBLIC_URL` | R2 credentials (keys as **secrets**) and the public URL videos are served from |

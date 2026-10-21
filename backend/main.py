@@ -42,6 +42,7 @@ from fastapi.responses import RedirectResponse
 
 import analytics
 from api.cors import allowed_origins
+from api.docs import docs_urls
 from api.routes import router as api_router
 from db import init_db
 
@@ -59,14 +60,14 @@ async def lifespan(app: FastAPI):
     analytics.shutdown()
 
 
-# Create FastAPI app
+# Create FastAPI app. Interactive docs and the OpenAPI schema are off in
+# production (api/docs.py): they are a public route map nobody there needs.
 app = FastAPI(
     title="ArXiviz API",
     description="Transform arXiv papers into animated visual explanations",
     version="0.1.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
     lifespan=lifespan,
+    **docs_urls(os.getenv("ENVIRONMENT")),
 )
 
 # CORS: the production hosts plus CORS_EXTRA_ORIGINS (see api/cors.py). The

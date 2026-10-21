@@ -16,6 +16,7 @@ so only the interrupted render re-runs.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 from dataclasses import dataclass
@@ -23,6 +24,35 @@ from dataclasses import dataclass
 from temporalio import activity
 
 logger = logging.getLogger(__name__)
+
+
+@contextlib.asynccontextmanager
+async def _heartbeating(label: str, every: float = 30.0):
+    """Heartbeat ``label`` every ``every`` seconds while the body runs.
+
+    Renders and repairs had no heartbeat, so a task whose worker died (KEDA
+    scale-in, a revision roll — the worker had no SIGTERM handling either)
+    sat in Temporal until its 25-minute start-to-close timeout, twice. Oct
+    1-19 that was 595 render activities (10.9% of generated visualizations)
+    that timed out without ever running: the LLM spend behind them produced
+    no video (~CA$53/mo). With a heartbeat and a 2-minute heartbeat_timeout
+    on the workflow side, Temporal notices a dead task in minutes and hands
+    it to a live worker. Rendering runs in asyncio.to_thread, so the loop is
+    free to beat during ffmpeg.
+    """
+
+    async def beat_loop() -> None:
+        while True:
+            await asyncio.sleep(every)
+            activity.heartbeat(label)
+
+    beat = asyncio.create_task(beat_loop())
+    try:
+        yield
+    finally:
+        beat.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await beat
 
 
 @dataclass
@@ -283,22 +313,23 @@ async def render_visualization(params: RenderInput) -> RenderResult:
     severity = "none"
     issues: list[str] = []
     try:
-        if qa_enabled:
-            video_url, verdict = await process_visualization(
-                viz_id=params.viz_id,
-                manim_code=params.manim_code,
-                quality="low_quality",
-                collect_qa=True,
-            )
-            if verdict is not None:
-                severity = verdict.severity
-                issues = list(verdict.issues)
-        else:
-            video_url = await process_visualization(
-                viz_id=params.viz_id,
-                manim_code=params.manim_code,
-                quality="low_quality",
-            )
+        async with _heartbeating(f"rendering {params.viz_id}"):
+            if qa_enabled:
+                video_url, verdict = await process_visualization(
+                    viz_id=params.viz_id,
+                    manim_code=params.manim_code,
+                    quality="low_quality",
+                    collect_qa=True,
+                )
+                if verdict is not None:
+                    severity = verdict.severity
+                    issues = list(verdict.issues)
+            else:
+                video_url = await process_visualization(
+                    viz_id=params.viz_id,
+                    manim_code=params.manim_code,
+                    quality="low_quality",
+                )
     except Exception as exc:
         succeeded = False
         error = str(exc)
@@ -393,32 +424,33 @@ async def repair_visualization_code(params: RepairInput) -> str:
     # sampling, model call, empty output, or invalid code — falls through to the
     # text-only attempt (consistent contract: garbage is treated like absence).
     code = None
-    video_bytes = await _fetch_rendered_video(params.viz_id)
-    if video_bytes:
-        raw = await repair_code_with_frames(
-            params.manim_code, params.issues, video_bytes, viz_id=params.viz_id
-        )
-        if raw:
+    async with _heartbeating(f"repairing {params.viz_id}"):
+        video_bytes = await _fetch_rendered_video(params.viz_id)
+        if video_bytes:
+            raw = await repair_code_with_frames(
+                params.manim_code, params.issues, video_bytes, viz_id=params.viz_id
+            )
+            if raw:
+                code = _extract_and_validate(raw)
+                if code:
+                    logger.info("Vision-grounded repair produced code for %s", params.viz_id)
+                else:
+                    logger.warning(
+                        "Vision repair output failed validation for %s; trying text-only",
+                        params.viz_id,
+                    )
+
+        if code is None:
+            logger.info("Text-only repair for %s", params.viz_id)
+            from agents.visual_qa import REPAIR_OUTPUT_CONTRACT
+
+            prompt = REPAIR_PROMPT.format(
+                issues=format_issue_list(params.issues),
+                code=params.manim_code,
+                contract=REPAIR_OUTPUT_CONTRACT,
+            )
+            raw = await call_llm(prompt, max_tokens=10000, name="visual_qa_repair")
             code = _extract_and_validate(raw)
-            if code:
-                logger.info("Vision-grounded repair produced code for %s", params.viz_id)
-            else:
-                logger.warning(
-                    "Vision repair output failed validation for %s; trying text-only",
-                    params.viz_id,
-                )
-
-    if code is None:
-        logger.info("Text-only repair for %s", params.viz_id)
-        from agents.visual_qa import REPAIR_OUTPUT_CONTRACT
-
-        prompt = REPAIR_PROMPT.format(
-            issues=format_issue_list(params.issues),
-            code=params.manim_code,
-            contract=REPAIR_OUTPUT_CONTRACT,
-        )
-        raw = await call_llm(prompt, max_tokens=10000, name="visual_qa_repair")
-        code = _extract_and_validate(raw)
 
     if code is None:
         raise RuntimeError(f"Repair produced invalid code for {params.viz_id}")

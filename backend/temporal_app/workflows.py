@@ -63,6 +63,12 @@ _NO_RETRY = RetryPolicy(maximum_attempts=1)
 # read index (no overwrite possible) and why the retry only fills the slots
 # this run has not checkpointed — it never pays for finished work twice.
 _GENERATION_RETRY = RetryPolicy(maximum_attempts=2)
+# Renders and repairs heartbeat every 30 s (activities._heartbeating). Four
+# missed beats means the worker is gone (scale-in, revision roll), and the
+# task is re-dispatched in minutes instead of after its 25-min start-to-close
+# timeout — twice. Oct 1-19 that cost 595 renders whose generation spend
+# produced no video.
+_RENDER_HEARTBEAT = timedelta(minutes=2)
 
 
 def _failure_reason(exc: BaseException) -> str:
@@ -178,6 +184,7 @@ class PaperPipelineWorkflow:
                 ri,
                 task_queue=RENDER_TASK_QUEUE,
                 start_to_close_timeout=timedelta(minutes=25),
+                heartbeat_timeout=_RENDER_HEARTBEAT,
                 retry_policy=_INFRA_RETRY,
             )
         except Exception as exc:
@@ -211,6 +218,7 @@ class PaperPipelineWorkflow:
                 # measured slower than the text path — a 10-min cap timed out a
                 # repair that was on track in the first production benchmark.
                 start_to_close_timeout=timedelta(minutes=18),
+                heartbeat_timeout=_RENDER_HEARTBEAT,
                 retry_policy=_NO_RETRY,  # a repair is one LLM call — don't double-spend
             )
             rerender: RenderResult = await workflow.execute_activity(
@@ -223,6 +231,7 @@ class PaperPipelineWorkflow:
                 ),
                 task_queue=RENDER_TASK_QUEUE,
                 start_to_close_timeout=timedelta(minutes=25),
+                heartbeat_timeout=_RENDER_HEARTBEAT,
                 retry_policy=_NO_RETRY,  # original video already exists as fallback
             )
             return rerender.succeeded and rerender.severity != "major"

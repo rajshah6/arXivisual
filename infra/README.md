@@ -87,10 +87,12 @@ the Temporal, web and budget changes made with it.
 `template` (env, cpu/memory, scale) starts a new revision, and none of them
 rolls for free:
 
-- `arxivisual-worker` has no graceful shutdown, so a roll kills in-flight
-  activities. Generation is retried only after its 8-minute heartbeat
-  timeout, ingest after its 15-minute start-to-close, and a repair is simply
-  lost (`_NO_RETRY` in `backend/temporal_app/workflows.py`).
+- `arxivisual-worker` drains on SIGTERM (`temporal_app/worker.py`, up to
+  9 min inside a 600 s `termination_grace_period_seconds`) once the image
+  that carries that change is live; before it, a roll killed in-flight
+  activities. Even with the drain, a render longer than the grace period is
+  lost and re-dispatched after its 2-minute heartbeat timeout, and a repair
+  is simply lost (`_NO_RETRY` in `backend/temporal_app/workflows.py`).
 - `arxivisual-api` drops any paper running on the in-process fallback
   (`backend/api/routes.py`, "does not survive restarts").
 - `arxivisual-temporal` sends papers submitted during its handover to that

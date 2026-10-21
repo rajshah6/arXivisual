@@ -35,6 +35,13 @@ JOB_NOT_STARTED_ERROR = (
     "Not started: the processing service was unavailable, so nothing ran. "
     "Submit the paper again."
 )
+# A second submission that raced past the cheap dedupe and lost to the first
+# at the orchestrator (WorkflowAlreadyStartedError). Nothing ran for this row
+# either, so it is exempt from the spend ceilings the same way: with demand
+# at the daily cap, a double-click must not cost someone else their slot.
+JOB_DUPLICATE_ERROR = "Duplicate submission; another run was already in flight."
+# Rows that provably never spent anything (see count_jobs_created_since).
+_NEVER_RAN_ERRORS = (JOB_NOT_STARTED_ERROR, JOB_DUPLICATE_ERROR)
 
 async def create_job(db: AsyncSession, arxiv_id: str) -> str:
     """Create a new processing job and return the job_id."""
@@ -90,18 +97,19 @@ async def get_active_job_for_paper(
 
 async def count_jobs_created_since(db: AsyncSession, since: datetime) -> int:
     """Jobs created at/after ``since`` (naive UTC) — the durable input to the
-    daily new-paper cap. Counts every created row, including ones later marked
-    duplicate/failed: conservative on purpose, the cap is a spend ceiling. The
-    one exception is a row that provably never started (JOB_NOT_STARTED_ERROR)."""
+    daily new-paper cap. Counts every created row, including failed ones:
+    conservative on purpose, the cap is a spend ceiling. The exceptions are
+    rows that provably never ran — retired with JOB_NOT_STARTED_ERROR (Temporal
+    was down) or JOB_DUPLICATE_ERROR (lost a duplicate race)."""
     result = await db.execute(
         select(func.count()).select_from(ProcessingJob).where(
             ProcessingJob.created_at >= since,
-            # NULL-safe "not (failed AND error == marker)": error is NULL on
-            # most rows, and NULL != marker is NULL, not true.
+            # NULL-safe "not (failed AND error in markers)": error is NULL on
+            # most rows, and NULL NOT IN (...) is NULL, not true.
             or_(
                 ProcessingJob.status != "failed",
                 ProcessingJob.error.is_(None),
-                ProcessingJob.error != JOB_NOT_STARTED_ERROR,
+                ProcessingJob.error.not_in(_NEVER_RAN_ERRORS),
             ),
         )
     )

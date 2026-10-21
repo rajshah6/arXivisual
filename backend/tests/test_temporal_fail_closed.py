@@ -254,8 +254,10 @@ async def test_503_still_goes_out_when_the_job_row_cannot_be_retired(harness, mo
 async def test_only_never_started_rows_are_exempt_from_the_spend_ceiling(db):
     # count_jobs_created_since feeds DAILY_NEW_PAPER_CAP and the global hourly
     # window, which are spend ceilings: every row counts, including failed ones
-    # that already spent money, EXCEPT a row retired with JOB_NOT_STARTED_ERROR.
-    # Pins both halves, and the NULL handling (most rows have error IS NULL).
+    # that already spent money, EXCEPT rows that provably never ran — retired
+    # with JOB_NOT_STARTED_ERROR or JOB_DUPLICATE_ERROR. Pins both halves, the
+    # NULL handling (most rows have error IS NULL), and that only the exact
+    # marker text is exempt.
     since = datetime(2026, 10, 8)
     rows = {
         "queued": ("queued", None),
@@ -263,17 +265,18 @@ async def test_only_never_started_rows_are_exempt_from_the_spend_ceiling(db):
         "done": ("completed", None),
         "pipeline_failed": ("failed", "Pipeline failed: render timed out"),
         "failed_no_error": ("failed", None),
-        "duplicate": ("failed", "Duplicate submission; another run was already in flight."),
+        "duplicate_free_text": ("failed", "Duplicate submission, but worded differently"),
         # Lost start response: the worker ran it anyway and rewrote the status.
         "started_after_all": ("processing", queries.JOB_NOT_STARTED_ERROR),
         "never_started": ("failed", queries.JOB_NOT_STARTED_ERROR),
+        "duplicate": ("failed", queries.JOB_DUPLICATE_ERROR),
     }
     for job_id, (status, error) in rows.items():
         db.add(ProcessingJob(id=job_id, status=status, error=error, created_at=since))
     db.add(ProcessingJob(id="yesterday", status="queued", created_at=since - timedelta(seconds=1)))
     await db.commit()
 
-    assert await queries.count_jobs_created_since(db, since) == len(rows) - 1
+    assert await queries.count_jobs_created_since(db, since) == len(rows) - 2
 
 
 # --- (b) USE_TEMPORAL=0: the legacy in-process path is unchanged -------------
@@ -309,9 +312,47 @@ async def test_already_started_workflow_is_a_duplicate_not_an_outage(harness, db
     assert resp.status_code == 200
     assert "already being processed" in resp.json()["message"]
     [job] = await _jobs(db)
-    assert job.status == "failed" and job.error.startswith("Duplicate submission")
+    assert job.status == "failed" and job.error == queries.JOB_DUPLICATE_ERROR
     assert throttle.recent_jobs.get("2401.10010") is None
     assert harness["scheduled"] == []
     assert not [r for r in caplog.records if "Temporal unavailable" in r.getMessage()]
     # An answer from a live server, so the client is kept.
     assert temporal_client._client is fake
+
+
+async def test_duplicate_race_points_the_caller_at_the_live_job(harness, db, monkeypatch):
+    # Request 1 starts the paper normally.
+    _use(FakeTemporal())
+    first = await _submit(harness["client"], "2401.10011")
+    live_id = first.json()["job_id"]
+    assert throttle.recent_jobs.get("2401.10011") == live_id
+
+    # Request 2 raced past the cheap dedupe check before request 1 recorded
+    # its job (simulated: the check-time map read misses, every later read
+    # hits), so it creates its own row and Temporal refuses the second
+    # workflow. The DB cannot name the winner yet: ingest has not linked the
+    # paper, so get_active_job_for_paper finds nothing.
+    real_get = throttle.recent_jobs.get
+    misses = {"left": 1}
+
+    def racing_get(arxiv_id, now=None):
+        if misses["left"]:
+            misses["left"] -= 1
+            return None
+        return real_get(arxiv_id, now)
+
+    monkeypatch.setattr(throttle.recent_jobs, "get", racing_get)
+    _use(FakeTemporal(error=WorkflowAlreadyStartedError("paper-2401.10011", "PaperPipelineWorkflow")))
+    second = await _submit(harness["client"], "2401.10011")
+
+    assert second.status_code == 200
+    # The caller is sent to the job that is running, not the row just retired.
+    assert second.json()["job_id"] == live_id
+    assert second.json()["status"] == "queued"
+    jobs = {j.id: j for j in await _jobs(db)}
+    assert jobs[live_id].status == "queued"
+    [dup] = [j for j in jobs.values() if j.id != live_id]
+    assert dup.status == "failed" and dup.error == queries.JOB_DUPLICATE_ERROR
+    # Later duplicates keep deduping to the live job.
+    assert real_get("2401.10011") == live_id
+    assert harness["scheduled"] == []

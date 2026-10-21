@@ -1,5 +1,5 @@
 {
-  "_comment": "Golden-set papers for generation-quality evals. Order matters: --papers N takes the first N, so cheaper, most load-bearing papers come first (the nightly run uses 5, manual dispatch defaults to 3). The longest/most expensive papers sit at the end.",
+  "_comment": "Golden-set papers for generation-quality evals. Order matters: --papers N takes the first N, so cheaper, most load-bearing papers come first (the weekly run uses 5, manual dispatch defaults to 3). The longest/most expensive papers sit at the end.",
   "papers": [
     {
       "arxiv_id": "1706.03762",

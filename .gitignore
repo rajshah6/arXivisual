@@ -42,8 +42,10 @@ Thumbs.db
 # Logs
 *.log
 
-# Databases
+# Databases (and SQLite's WAL-mode sidecars)
 *.db
+*.db-shm
+*.db-wal
 *.sqlite3
 
 # Outputs / artifacts

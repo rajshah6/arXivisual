@@ -4,6 +4,21 @@ __pycache__/
 .git/
 .env
 arxiviz.db
+*.db-shm
+*.db-wal
 media/videos/*.mp4
 *.egg-info/
 .pytest_cache/
+
+# Not needed at runtime: neither the API (main.py) nor the worker
+# (temporal_app/worker.py) imports from these, and the image carries no pytest.
+# No trailing slash on purpose — production images are built with `az acr
+# build`, whose .dockerignore parser only matches a directory rule written
+# without one (Docker accepts both spellings).
+tests
+evals
+tools
+# Videos never belong in the build context. Two rules because the az parser
+# reads `**/` as "at least one directory deep".
+*.mp4
+**/*.mp4

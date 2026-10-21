@@ -51,6 +51,8 @@ CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs on every PR. To m
 
 ## Branches and Pull Requests
 
+> **Status as of 2026-09-18:** merging to `main` deploys the frontend to production. `arxivisual.org` is still served by the old Vercel project, whose git integration builds every push to `main` (and a preview for every PR) — see the status note in [docs/DEPLOY.md](docs/DEPLOY.md#frontend-azure-container-apps). Backend deploys stay manual. Delete this note after the cut-over.
+
 - Branch from `main` with a short descriptive name (e.g. `explore-gallery`, `security-hardening`); open a PR back to `main`.
 - PRs need green CI and a review. Automated code-review bots comment on PRs — address or explicitly rebut their findings rather than ignoring them.
 - Keep PRs focused; stack dependent branches as separate PRs rather than batching unrelated changes. If you do stack, retarget child PRs to `main` before merging the parent.

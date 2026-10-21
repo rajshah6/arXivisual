@@ -23,7 +23,7 @@ jobs:
           fetch-depth: 0 # gitleaks scans the full commit history
 
       # Public repo: no GITLEAKS_LICENSE needed.
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

@@ -104,13 +104,17 @@ class RenderTester:
         ("unexpected keyword argument 'buff'",
          "`buff` is NOT a constructor argument. Build the object first, then space it with "
          ".arrange(DIRECTION, buff=...) or .next_to(target, DIRECTION, buff=...)."),
+        # Checked against manim 0.19.2 (2026-10-21): Ellipse and the SVG-based
+        # Text/MathTex accept width/height; ImageMobject, VGroup, Circle,
+        # Square and Dot raise this TypeError from Mobject.__init__.
         ("unexpected keyword argument 'width'",
          "`width`/`height` are constructor arguments only for Rectangle/RoundedRectangle/"
-         "ImageMobject. Axes uses x_length/y_length. VGroup/Text/MathTex/Circle don't take "
-         "them — construct first, then .scale(), .set_width(), or .stretch_to_fit_width()."),
+         "Ellipse (and Text/MathTex). Axes uses x_length/y_length. VGroup/Circle/Square/Dot "
+         "don't take them — construct first, then .scale(), .set_width(), or .stretch_to_fit_width()."),
         ("unexpected keyword argument 'height'",
-         "`height` is a constructor argument only for Rectangle/RoundedRectangle. Axes uses "
-         "y_length; other mobjects: construct first, then .set_height() or .scale()."),
+         "`height` is a constructor argument only for Rectangle/RoundedRectangle/Ellipse (and "
+         "Text/MathTex). Axes uses y_length; other mobjects: construct first, then .set_height() "
+         "or .scale()."),
         ("Create only works for VMobjects",
          "Create/Uncreate accept only vector mobjects. Use FadeIn for Group/ImageMobject/"
          "Table, Write for Text/MathTex, and VGroup (not Group) to hold shapes."),

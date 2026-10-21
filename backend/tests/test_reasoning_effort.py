@@ -117,11 +117,14 @@ def test_requests_accept_a_deployment_and_effort_override():
 # Unset must be exactly what it sent before the setting existed.
 
 def test_voice_judge_inherits_the_pipeline_effort_when_unset(monkeypatch):
+    # "Inherits" means the judge sends exactly what the request builder would
+    # send on its own — the same helper, not a second copy of base.py's
+    # default literal — in both the production (medium) and the unset state.
     monkeypatch.delenv("VOICE_JUDGE_REASONING_EFFORT", raising=False)
     monkeypatch.setenv("AZURE_OPENAI_REASONING_EFFORT", "medium")
-    assert vsv.voice_judge_reasoning_effort() == "medium"
+    assert vsv.voice_judge_reasoning_effort() == _base_effort() == "medium"
     monkeypatch.delenv("AZURE_OPENAI_REASONING_EFFORT", raising=False)
-    assert vsv.voice_judge_reasoning_effort() == "low"
+    assert vsv.voice_judge_reasoning_effort() == _base_effort() == base.pipeline_reasoning_effort()
 
 
 @pytest.mark.parametrize("value", ["low", "medium", "high"])

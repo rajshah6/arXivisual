@@ -144,8 +144,9 @@ npm/pip audit (advisory). `evals.yml` — weekly (Mondays 06:00 UTC) golden-set 
 - `RENDER_MODE` `local|modal` (default `local`; `modal` also disables the local RenderTester gate).
 - `RENDER_TEST_EXECUTE=1` (default) — RenderTester executes `construct()` in a dry-run subprocess with TTS
   stubbed (`agents/dry_run_driver.py`, ~0.2s/scene, no network): catches the runtime-error class import
-  testing can't (e.g. numpy truth-value `if` on `get_center()`). `0` = legacy import-only validation.
-  `RENDER_TEST_TIMEOUT_SECONDS` (120) bounds it; harness breakage AND timeouts fail open — under load the
+  testing can't (e.g. numpy truth-value `if` on `get_center()`). `0` = import-only: the same secret-scrubbed
+  subprocess (`rendering/sandbox_env.py`) loads the module but never calls `construct()` — a weaker gate;
+  generated code is never imported inside the worker process. `RENDER_TEST_TIMEOUT_SECONDS` (120) bounds it; harness breakage AND timeouts fail open — under load the
   dry run starves for CPU, and treating that as bad code burned 1,405 paid regenerations in one week.
 
 ## Conventions — do not violate

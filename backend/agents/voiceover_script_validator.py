@@ -9,13 +9,23 @@ import re
 try:
     from ..models.generation import GeneratedCode, VisualizationCandidate, VisualizationPlan
     from ..models.voiceover import VoiceoverValidationOutput
-    from .base import call_llm_sync, get_model_name, portable_reasoning_effort
+    from .base import (
+        call_llm_sync,
+        get_model_name,
+        pipeline_reasoning_effort,
+        portable_reasoning_effort,
+    )
 except ImportError:
     import sys
     from pathlib import Path
 
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from agents.base import call_llm_sync, get_model_name, portable_reasoning_effort
+    from agents.base import (
+        call_llm_sync,
+        get_model_name,
+        pipeline_reasoning_effort,
+        portable_reasoning_effort,
+    )
     from models.generation import GeneratedCode, VisualizationCandidate, VisualizationPlan
     from models.voiceover import VoiceoverValidationOutput
 
@@ -23,18 +33,17 @@ except ImportError:
 def voice_judge_reasoning_effort() -> str:
     """reasoning_effort for the narration judge's LLM call.
 
-    VOICE_JUDGE_REASONING_EFFORT when set, else the pipeline-wide
-    AZURE_OPENAI_REASONING_EFFORT (medium in production) — so unset changes
-    nothing. The rubric asks for ~512 visible tokens, yet 74% of the judge's
-    output tokens were reasoning (8,680 calls, 7.55M output tokens, ~CA$40/mo
-    on gpt-5-mini, Oct 1-19 2026); "low" is the lever, worth ~60% of that.
-    Resolved per call like the global setting; low | medium | high only
-    (base.PORTABLE_REASONING_EFFORTS), an invalid value warns once and inherits.
+    VOICE_JUDGE_REASONING_EFFORT when set, else exactly what the request
+    builder would send on its own (base.pipeline_reasoning_effort: the
+    pipeline-wide AZURE_OPENAI_REASONING_EFFORT, medium in production) — so
+    unset changes nothing. The rubric asks for ~512 visible tokens, yet 74%
+    of the judge's output tokens were reasoning (8,680 calls, 7.55M output
+    tokens, ~CA$40/mo on gpt-5-mini, Oct 1-19 2026); "low" is the lever,
+    worth ~60% of that. Resolved per call like the global setting; low |
+    medium | high only (base.PORTABLE_REASONING_EFFORTS), an invalid value
+    warns once and inherits.
     """
-    return portable_reasoning_effort(
-        "VOICE_JUDGE_REASONING_EFFORT",
-        portable_reasoning_effort("AZURE_OPENAI_REASONING_EFFORT", "low"),
-    )
+    return portable_reasoning_effort("VOICE_JUDGE_REASONING_EFFORT", pipeline_reasoning_effort())
 
 
 class VoiceoverScriptValidator:

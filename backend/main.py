@@ -5,6 +5,8 @@ Run with: uvicorn main:app --reload --port 8000
 Docs at: http://localhost:8000/docs
 """
 
+import asyncio
+import contextlib
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -45,6 +47,7 @@ from api.cors import allowed_origins
 from api.docs import docs_urls
 from api.routes import router as api_router
 from db import init_db
+from jobs.reaper import reap_forever, reap_interval_seconds
 
 
 @asynccontextmanager
@@ -54,9 +57,26 @@ async def lifespan(app: FastAPI):
     print("Initializing database...")
     await init_db()
     print("Database ready!")
+    # Stale-job reaper (jobs/reaper.py): without it a zombie row waits for
+    # the next submission to be failed, and KEDA keeps a worker replica up
+    # for it the whole time.
+    reaper_task = None
+    interval = reap_interval_seconds()
+    if interval:
+        from db import queries
+        from db.connection import async_session_maker
+
+        reaper_task = asyncio.create_task(
+            reap_forever(interval, async_session_maker, queries.reap_stale_jobs),
+            name="stale-job-reaper",
+        )
     yield
     # Shutdown: flush queued product events (no-op when PostHog is off).
     print("Shutting down...")
+    if reaper_task is not None:
+        reaper_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await reaper_task
     analytics.shutdown()
 
 

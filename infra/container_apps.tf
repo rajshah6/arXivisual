@@ -581,7 +581,12 @@ resource "azurerm_container_app" "worker" {
       name             = "active-jobs"
       custom_rule_type = "postgresql"
       metadata = {
-        query                      = "SELECT COUNT(*) FROM processing_jobs WHERE status IN ('queued','processing')"
+        # Only rows younger than the reaper's cutoff (db/queries.py
+        # STALE_JOB_HOURS = 3 h) count: a zombie row must not hold a 2 vCPU
+        # replica at the active rate until someone submits a paper. created_at
+        # is naive UTC and the server timezone is UTC, so the comparison is
+        # exact.
+        query                      = "SELECT COUNT(*) FROM processing_jobs WHERE status IN ('queued','processing') AND created_at > (now() AT TIME ZONE 'UTC') - interval '3 hours'"
         targetQueryValue           = "2"
         activationTargetQueryValue = "0"
       }

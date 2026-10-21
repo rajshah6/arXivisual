@@ -21,7 +21,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -64,11 +66,52 @@ PIPELINE_ACTIVITIES = [
 ]
 RENDER_ACTIVITIES = [render_visualization]
 
+# How long a draining worker lets in-flight activities finish after SIGTERM
+# before cancelling them. Scale-in and revision rolls send SIGTERM; with no
+# handler Python (PID 1 — the Container App command is exec-form) ignored it
+# and the platform SIGKILLed the replica after the default 30 s grace period,
+# killing every render it held (Oct 1-19: 595 render activities timed out
+# twice without a video). The Container App's termination grace period is
+# 600 s (infra/container_apps.tf); this stays under it so the drain, not the
+# kill, ends the process. A render takes minutes, not tens of minutes.
+GRACEFUL_SHUTDOWN = timedelta(minutes=9)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+def install_shutdown_handlers(
+    loop: asyncio.AbstractEventLoop,
+    workers: list[Worker],
+    signals: tuple[signal.Signals, ...] = (signal.SIGTERM, signal.SIGINT),
+) -> None:
+    """On SIGTERM/SIGINT stop polling and drain both workers.
+
+    ``Worker.shutdown()`` stops new polls and waits for running activities
+    up to ``graceful_shutdown_timeout``; ``Worker.run()`` then returns, so
+    ``main()``'s gather completes and the process exits on its own. A second
+    signal is ignored — the drain is already under way.
+    """
+    draining = False
+
+    def _begin(sig: signal.Signals) -> None:
+        nonlocal draining
+        if draining:
+            logger.info("%s again while draining; still waiting", sig.name)
+            return
+        draining = True
+        logger.info(
+            "%s received: draining %d worker(s), up to %s for in-flight activities",
+            sig.name, len(workers), GRACEFUL_SHUTDOWN,
+        )
+        for worker in workers:
+            loop.create_task(worker.shutdown())
+
+    for sig in signals:
+        loop.add_signal_handler(sig, _begin, sig)
 
 
 async def main() -> None:
@@ -109,13 +152,16 @@ async def main() -> None:
         workflows=[PaperPipelineWorkflow],
         activities=PIPELINE_ACTIVITIES,
         max_concurrent_activities=pipeline_concurrency,
+        graceful_shutdown_timeout=GRACEFUL_SHUTDOWN,
     )
     render_worker = Worker(
         client,
         task_queue=RENDER_TASK_QUEUE,
         activities=RENDER_ACTIVITIES,
         max_concurrent_activities=render_concurrency,
+        graceful_shutdown_timeout=GRACEFUL_SHUTDOWN,
     )
+    install_shutdown_handlers(asyncio.get_running_loop(), [pipeline_worker, render_worker])
 
     logger.info(
         "Workers running: %s (pipeline), %s (render, max %d concurrent)",

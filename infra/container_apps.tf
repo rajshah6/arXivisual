@@ -570,6 +570,12 @@ resource "azurerm_container_app" "worker" {
     # is 2 vCPU; the render concurrency cap applies per replica).
     min_replicas = 1
     max_replicas = 3
+    # Time between SIGTERM and SIGKILL on scale-in or a revision roll. The
+    # default 30 s killed every render the replica held (Oct 1-19: 595 render
+    # activities timed out twice without a video, ~CA$53/mo of generation
+    # spend). The worker drains for up to 9 min (temporal_app/worker.py
+    # GRACEFUL_SHUTDOWN), so give it the platform maximum.
+    termination_grace_period_seconds = 600
 
     custom_scale_rule {
       name             = "active-jobs"
@@ -586,8 +592,11 @@ resource "azurerm_container_app" "worker" {
     }
 
     container {
-      name    = "arxivisual-worker"
-      image   = local.app_image
+      name  = "arxivisual-worker"
+      image = local.app_image
+      # Exec-form: Python is PID 1 and receives SIGTERM directly, which the
+      # worker now handles by draining (temporal_app/worker.py). Pair with
+      # termination_grace_period_seconds above.
       command = ["python", "/app/temporal_app/worker.py"]
       cpu     = 2.0
       memory  = "4Gi"

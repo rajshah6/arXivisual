@@ -145,7 +145,7 @@ async def _refuse_unstarted_job(
         )
     except Exception:
         # The database may be what is down. The 503 still goes out; a row left
-        # at "queued" is failed by reap_stale_jobs after 2 h.
+        # at "queued" is failed by reap_stale_jobs after STALE_JOB_HOURS.
         logger.exception("Could not retire unstarted job %s", job_id)
     recent_jobs.clear(arxiv_id)
     # Never keep a client that just failed: the next request connects afresh.

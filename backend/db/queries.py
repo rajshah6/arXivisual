@@ -116,13 +116,22 @@ async def count_jobs_created_since(db: AsyncSession, since: datetime) -> int:
     return int(result.scalar_one())
 
 
-async def reap_stale_jobs(db: AsyncSession, max_age_hours: float = 2.0) -> int:
+# Longer than the worst honest paper: ingest 15 min + generation 40 min +
+# two waves of 25-min renders + an 18-min repair and its re-render is ~2.5 h
+# (temporal_app/workflows.py timeouts). The old 2 h cutoff could fail a job
+# that was still legitimately rendering; the worker then rewrote the row on
+# finalize, but pollers saw "failed" in between.
+STALE_JOB_HOURS = 3.0
+
+
+async def reap_stale_jobs(db: AsyncSession, max_age_hours: float = STALE_JOB_HOURS) -> int:
     """Mark long-stranded queued/processing jobs as failed.
 
     A worker killed mid-run (redeploy, crash, OOM) never updates its job row,
     leaving it at "processing" forever — misleading pollers and, before the
-    dedupe staleness cutoff, blocking re-processing. Called opportunistically
-    on job submission; returns the number of jobs reaped.
+    dedupe staleness cutoff, blocking re-processing. Called on job submission
+    and every STALE_JOB_REAP_INTERVAL_SECONDS from the API's lifespan
+    (jobs/reaper.py); returns the number of jobs reaped.
     """
     cutoff = _utcnow_naive() - timedelta(hours=max_age_hours)
     result = await db.execute(

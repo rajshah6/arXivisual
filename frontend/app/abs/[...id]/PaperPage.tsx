@@ -313,17 +313,29 @@ export function PaperPage({
     };
   }, [state.type, demoSectionsTotal, arxivId]);
 
-  // Real API polling (non-demo papers)
+  // Real API polling (non-demo papers). 2 s for the first ~30 s so "Starting…"
+  // feels live, then 5 s: a paper takes 5–10 min, and at a flat 2 s this poll
+  // was most of the API's traffic — enough to trip its HTTP scale rule into a
+  // second replica (billed at the active rate) on 12 of 19 days in Oct 2026.
+  // Self-scheduling timeout rather than setInterval so the cadence can change.
   useEffect(() => {
     if (state.type !== "processing" || !jobId || demoSimRunning.current) return;
 
-    const pollInterval = setInterval(async () => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = () => {
+      if (cancelled) return;
+      timer = setTimeout(poll, pollTickRef.current < 15 ? 2000 : 5000);
+    };
+    const poll = async () => {
+      if (cancelled) return;
+      let done = false;
       try {
         const response = await getProcessingStatus(jobId);
         const status = toProcessingStatus(response);
 
         if (response.status === "completed") {
-          clearInterval(pollInterval);
+          done = true;
           const paper = await getPaper(arxivId);
           if (paper) {
             track("paper_ready", { arxiv_id: arxivId, job_id: jobId, videos: countVideos(paper) });
@@ -334,7 +346,7 @@ export function PaperPage({
             setState({ type: "error", message: "Paper processing completed but paper not found" });
           }
         } else if (response.status === "failed") {
-          clearInterval(pollInterval);
+          done = true;
           // The paper text often survives a failed pipeline (e.g. all renders
           // failed) — show what exists instead of a dead end.
           const paper = await getPaper(arxivId).catch(() => null);
@@ -361,8 +373,8 @@ export function PaperPage({
         } else {
           // Progressive reading: once the backend has stored the paper text
           // (~30% progress), fetch it so the reader renders immediately.
-          // During the render phase, refetch every other tick (~4s) so each
-          // finished video pops into its section live.
+          // During the render phase, refetch every other tick (~10 s at the
+          // slow cadence) so each finished video pops into its section live.
           pollTickRef.current += 1;
           const shouldFetchPreview =
             response.progress >= 0.3 &&
@@ -376,10 +388,16 @@ export function PaperPage({
         }
       } catch (err) {
         console.error("Error polling status:", err);
+      } finally {
+        if (!done) schedule();
       }
-    }, 2000);
+    };
+    schedule();
 
-    return () => clearInterval(pollInterval);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [state.type, jobId, arxivId, notifier]);
 
   // Don't start loading until the background has had its moment

@@ -1,7 +1,19 @@
-# Manual backend deploy: build the image in ACR, roll the Container App, verify health.
+# Manual backend deploy: build the image in ACR, roll BOTH Container Apps that
+# run it — arxivisual-api, then arxivisual-worker — and verify each.
 #
 # Deploys are human-initiated on purpose — there is NO on:push trigger. Run this
-# from the Actions tab (or `gh workflow run deploy-backend.yml`) once CI is green.
+# from the Actions tab (or `gh workflow run deploy-backend.yml`); the first step
+# refuses a commit whose CI is not green (waiting for checks still running).
+#
+# One image, two apps: the API only admits jobs (USE_TEMPORAL=1); the Temporal
+# worker (same image, `python /app/temporal_app/worker.py`) runs the whole paper
+# pipeline. This workflow used to roll the API alone, and Terraform ignores the
+# image on both apps, so the worker sat 7 merged PRs behind the API for 9 days.
+# The monitor workflow (monitor.yml) now fails when the two ever differ.
+#
+# Do NOT add `environment:` to the job: that changes the OIDC subject to
+# repo:...:environment:<name>, which the federated credential below
+# (ref:refs/heads/main) does not match.
 #
 # ─────────────────────────────────────────────────────────────────────────────
 # One-time Azure setup (maintainers run these locally, once)
@@ -45,6 +57,11 @@ name: Deploy backend
 
 on:
   workflow_dispatch:
+    inputs:
+      skip_ci_check:
+        description: "EMERGENCY ONLY: deploy without requiring green CI on this commit"
+        type: boolean
+        default: false
 
 # One deploy at a time; queue rather than cancel a rollout mid-flight.
 concurrency:
@@ -54,13 +71,16 @@ concurrency:
 permissions:
   id-token: write # mint the OIDC token azure/login exchanges
   contents: read
+  checks: read # the CI gate reads this commit's check runs
 
 env:
   ACR_NAME: ca82c08e2eadacr
   IMAGE_NAME: arxivisual-api
   APP_NAME: arxivisual-api
+  WORKER_APP_NAME: arxivisual-worker
   RESOURCE_GROUP: arxivisual-rg
   HEALTH_URL: https://arxivisual-api.purplepond-ac9e2dc5.eastus2.azurecontainerapps.io/api/health
+  DEPLOY_SHA: ${{ github.sha }}
 
 jobs:
   deploy:
@@ -68,6 +88,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      # Before anything touches Azure. The last three production deploys were
+      # dispatched ~90 s before CI finished on the commit they shipped; every
+      # "Backend tests (py…)" matrix leg must be green here, and checks still
+      # running are waited for. The image build needs no gate of its own — the
+      # ACR build below fails first if the Dockerfile cannot build.
+      - name: Require green CI on this commit
+        if: ${{ !inputs.skip_ci_check }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/require-green-ci.sh "Backend tests"
+
+      - name: CI check skipped
+        if: ${{ inputs.skip_ci_check }}
+        run: |
+          echo "::warning::skip_ci_check=true — deploying $DEPLOY_SHA without verifying its CI."
 
       - name: Azure login (OIDC)
         uses: azure/login@v2
@@ -78,29 +114,130 @@ jobs:
 
       # Build happens inside ACR (same as the manual `az acr build` flow the
       # project has used so far), tagged with the exact commit being deployed.
+      # APP_COMMIT_SHA is baked into the image so /api/health can report which
+      # commit is answering (backend/Dockerfile).
       - name: Build image in ACR
-        run: az acr build -r "$ACR_NAME" -t "$IMAGE_NAME:gh-${{ github.sha }}" backend
+        run: |
+          az acr build -r "$ACR_NAME" \
+            -t "$IMAGE_NAME:gh-$DEPLOY_SHA" \
+            --build-arg "APP_COMMIT_SHA=$DEPLOY_SHA" \
+            backend
 
-      - name: Roll Container App to the new image
+      # What each app runs right now = the rollback target if this deploy
+      # fails. Read after the (long) build so it is accurate at roll time.
+      - name: Record the images being replaced
+        run: |
+          previous_api=$(az containerapp show -n "$APP_NAME" -g "$RESOURCE_GROUP" \
+            --query "properties.template.containers[0].image" -o tsv)
+          previous_worker=$(az containerapp show -n "$WORKER_APP_NAME" -g "$RESOURCE_GROUP" \
+            --query "properties.template.containers[0].image" -o tsv)
+          echo "$APP_NAME runs $previous_api"
+          echo "$WORKER_APP_NAME runs $previous_worker"
+          {
+            echo "IMAGE=$ACR_NAME.azurecr.io/$IMAGE_NAME:gh-$DEPLOY_SHA"
+            echo "PREVIOUS_API_IMAGE=$previous_api"
+            echo "PREVIOUS_WORKER_IMAGE=$previous_worker"
+          } >> "$GITHUB_ENV"
+
+      # --output none: the CLI otherwise prints the whole app definition (every
+      # plain env value) into the public Actions log.
+      - name: Roll the API to the new image
         run: |
           az containerapp update \
             -n "$APP_NAME" -g "$RESOURCE_GROUP" \
-            --image "$ACR_NAME.azurecr.io/$IMAGE_NAME:gh-${{ github.sha }}"
+            --image "$IMAGE" --output none
 
       # The update returns before the new revision finishes provisioning, so
-      # poll the public health endpoint instead of trusting the CLI exit code.
-      - name: Verify health
+      # wait for the revision itself instead of trusting the CLI exit code.
+      - name: Wait for the new API revision
+        run: bash .github/scripts/wait-for-revision.sh "$APP_NAME" "$IMAGE"
+
+      # In single-revision mode the previous revision keeps serving until the
+      # new one passes its probes, so a plain 200 proves nothing — the old
+      # any-2xx poll passed against the OLD revision. /api/health reports the
+      # commit baked into the image; wait for it to flip (same idea as the
+      # frontend's /healthz check).
+      - name: Verify the API serves the new commit
         run: |
-          echo "Polling $HEALTH_URL ..."
-          for attempt in $(seq 1 30); do
-            if curl -fsS --max-time 10 "$HEALTH_URL"; then
-              echo
-              echo "Backend healthy (attempt $attempt)."
+          echo "Polling $HEALTH_URL for commit $DEPLOY_SHA ..."
+          keyless=0
+          for attempt in $(seq 1 60); do
+            body=$(curl -fsS --max-time 15 "$HEALTH_URL" || true)
+            commit=$(jq -r '.commit // empty' <<<"$body" 2>/dev/null || true)
+            if [ "$commit" = "$DEPLOY_SHA" ]; then
+              echo "$body"
+              echo "The new API revision is serving (attempt $attempt)."
               exit 0
             fi
-            echo "Attempt $attempt/30: not healthy yet, retrying in 10s..."
+            # Transitional: a build from before /api/health grew its "commit"
+            # key can never match. The revision wait above already proved the
+            # roll, so accept it (loudly) rather than fail here and leave the
+            # worker un-rolled. Six keyless answers in a row, so the old
+            # revision answering during the traffic switch is not mistaken
+            # for that.
+            if jq -e 'type == "object" and (has("commit") | not)' <<<"$body" >/dev/null 2>&1; then
+              keyless=$((keyless + 1))
+            else
+              keyless=0
+            fi
+            if [ "$keyless" -ge 6 ]; then
+              echo "::warning::/api/health has no \"commit\" key (this build predates it) — the API roll was verified at the revision level only."
+              exit 0
+            fi
+            echo "Attempt $attempt/60: commit='${commit:-<none>}', retrying in 10s..."
             sleep 10
           done
-          echo "Backend did not become healthy within ~5 minutes." >&2
-          echo "Inspect the revision: az containerapp logs show -n $APP_NAME -g $RESOURCE_GROUP --tail 100" >&2
+          echo "::error::$HEALTH_URL never reported commit $DEPLOY_SHA (~10 minutes after the revision turned Healthy)."
           exit 1
+
+      # Only now — the new API revision healthy and the replaced one
+      # deactivated — so old + new replicas of BOTH apps never overlap on the
+      # Postgres connection budget.
+      - name: Roll the worker to the same image
+        run: |
+          az containerapp update \
+            -n "$WORKER_APP_NAME" -g "$RESOURCE_GROUP" \
+            --image "$IMAGE" --output none
+
+      # The worker has no ingress, so there is no endpoint to poll: the app
+      # must name the image and its newest revision must carry it, Healthy and
+      # Running, without crash-looping (a startup restart that stops is only
+      # a warning — see wait-for-revision.sh).
+      - name: Verify the worker revision
+        run: bash .github/scripts/wait-for-revision.sh "$WORKER_APP_NAME" "$IMAGE"
+
+      - name: Summary
+        run: |
+          {
+            echo "### Backend deployed"
+            echo "- image: \`$IMAGE\`"
+            echo "- \`$APP_NAME\` and \`$WORKER_APP_NAME\` both verified on it"
+            echo "- replaced: api \`$PREVIOUS_API_IMAGE\`, worker \`$PREVIOUS_WORKER_IMAGE\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Print rollback commands
+        if: failure()
+        run: |
+          if [ -z "${PREVIOUS_API_IMAGE:-}" ]; then
+            echo "Nothing was rolled (the failure came before the first update), so there is nothing to roll back."
+            exit 0
+          fi
+          echo "::error::Backend deploy of gh-$DEPLOY_SHA failed part-way — the API and the worker may now run different images."
+          api_now=$(az containerapp show -n "$APP_NAME" -g "$RESOURCE_GROUP" \
+            --query "properties.template.containers[0].image" -o tsv 2>/dev/null || true)
+          worker_now=$(az containerapp show -n "$WORKER_APP_NAME" -g "$RESOURCE_GROUP" \
+            --query "properties.template.containers[0].image" -o tsv 2>/dev/null || true)
+          echo "$APP_NAME is configured with: ${api_now:-<unreadable>}"
+          echo "$WORKER_APP_NAME is configured with: ${worker_now:-<unreadable>}"
+          # Every step after the API roll is skipped once one fails, so a
+          # failure there leaves the worker on the old image until someone acts.
+          if [ "$api_now" = "$IMAGE" ] && [ "$worker_now" != "$IMAGE" ]; then
+            echo "::error::$APP_NAME is on the new image and $WORKER_APP_NAME is not: the backend is half-deployed (the API admits jobs for a pipeline the worker does not have yet) and stays so until you go back or forward."
+          fi
+          echo "Back — roll back whichever app changed:"
+          echo "  az containerapp update -n $APP_NAME -g $RESOURCE_GROUP --image $PREVIOUS_API_IMAGE"
+          echo "  az containerapp update -n $WORKER_APP_NAME -g $RESOURCE_GROUP --image $PREVIOUS_WORKER_IMAGE"
+          echo "Forward — once the failure above is understood, retry the deploy (it re-verifies the API, then rolls the worker):"
+          echo "  gh workflow run deploy-backend.yml --ref main"
+          echo "or, if the API is known to be fine, roll just the worker by hand (unverified — the monitor only checks that the images match):"
+          echo "  az containerapp update -n $WORKER_APP_NAME -g $RESOURCE_GROUP --image $IMAGE"

@@ -2,7 +2,11 @@
 # App, and wait until the NEW revision is the one answering.
 #
 # Same OIDC identity and conventions as deploy-backend.yml (see its header for
-# the one-time Entra setup); no on:push trigger on purpose.
+# the one-time Entra setup); no on:push trigger on purpose. Adding one would
+# also be silently broken: the roll and verify steps are gated on inputs.roll,
+# which is empty on a push, so the run would build, go green and never roll.
+# Like the backend deploy, the first step refuses a commit whose CI is not
+# green (input skip_ci_check is the emergency override).
 #
 # Build-time configuration lives in GitHub *repository variables* (Settings →
 # Secrets and variables → Actions → Variables, or `gh variable set NAME`):
@@ -42,6 +46,10 @@ on:
         description: "Roll the Container App to the new image (off = build only, e.g. before the app exists)"
         type: boolean
         default: true
+      skip_ci_check:
+        description: "EMERGENCY ONLY: deploy without requiring green CI on this commit"
+        type: boolean
+        default: false
 
 concurrency:
   group: deploy-frontend
@@ -50,6 +58,7 @@ concurrency:
 permissions:
   id-token: write
   contents: read
+  checks: read # the CI gate reads this commit's check runs
 
 env:
   ACR_NAME: ca82c08e2eadacr
@@ -64,6 +73,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      # Same gate as deploy-backend.yml: refuse a commit whose CI is not green
+      # (checks still running are waited for), before anything touches Azure.
+      - name: Require green CI on this commit
+        if: ${{ !inputs.skip_ci_check }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY_SHA: ${{ github.sha }}
+        run: bash .github/scripts/require-green-ci.sh "Frontend typecheck, lint & build"
+
+      - name: CI check skipped
+        if: ${{ inputs.skip_ci_check }}
+        run: |
+          echo "::warning::skip_ci_check=true — deploying ${{ github.sha }} without verifying its CI."
 
       - name: Azure login (OIDC)
         uses: azure/login@v2

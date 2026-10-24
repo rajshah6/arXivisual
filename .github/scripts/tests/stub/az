@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Stand-in for the Azure CLI, first on PATH while wait-for-revision.test.sh
+# runs. It answers the four calls wait-for-revision.sh makes from files in
+# $AZ_STUB_DIR, in the shape the real CLI prints for those --query strings:
+#
+#   configured   containerapp show              the app's configured image
+#   newest       containerapp revision list     newest revision as JSON — one
+#                                               line per call, last one repeats
+#   replicas     containerapp replica list      containers as JSON — one line
+#                                               per call, last one repeats
+#   others       containerapp revision list     count of other active revisions
+#                (the "length(...)" query)      (absent = 0)
+#
+# A line reading ERROR makes that call fail the way a CLI outage does: nothing
+# on stdout, exit 1.
+set -euo pipefail
+
+: "${AZ_STUB_DIR:?AZ_STUB_DIR must point at the scenario directory}"
+
+next_line() { # <file>: line N on the Nth call, the last line from then on
+  local file=$1 n total line
+  n=$(( $(cat "$file.calls" 2>/dev/null || echo 0) + 1 ))
+  echo "$n" > "$file.calls"
+  total=$(wc -l < "$file" | tr -d ' ')
+  if [ "$n" -gt "$total" ]; then
+    n=$total
+  fi
+  line=$(sed -n "${n}p" "$file")
+  if [ "$line" = "ERROR" ]; then
+    echo "stub az: simulated failure" >&2
+    exit 1
+  fi
+  echo "$line"
+}
+
+args="$*"
+case "$args" in
+  "containerapp show "*)
+    next_line "$AZ_STUB_DIR/configured"
+    ;;
+  "containerapp revision list "*"-o table"*)
+    echo "(revision table)"
+    ;;
+  "containerapp revision list "*"length("*)
+    if [ -f "$AZ_STUB_DIR/others" ]; then
+      next_line "$AZ_STUB_DIR/others"
+    else
+      echo 0
+    fi
+    ;;
+  "containerapp revision list "*)
+    next_line "$AZ_STUB_DIR/newest"
+    ;;
+  "containerapp replica list "*)
+    next_line "$AZ_STUB_DIR/replicas"
+    ;;
+  *)
+    echo "stub az: unexpected call: $args" >&2
+    exit 2
+    ;;
+esac

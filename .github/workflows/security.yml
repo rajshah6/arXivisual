@@ -1,10 +1,19 @@
-# Lightweight security checks. Only the secret scan blocks — leaked credentials
-# are an emergency regardless of context. The dependency audits are advisory
-# (continue-on-error) so a new upstream CVE never blocks unrelated work; they
-# surface in the logs and in the weekly scheduled run.
+# Lightweight security checks.
+#
+# Blocking: the secret scan, always — leaked credentials are an emergency
+# regardless of context — and a CRITICAL advisory in the frontend's production
+# dependencies on main (push + the weekly run). Everything else is advisory
+# (step-level continue-on-error): a new upstream CVE must never block an
+# unrelated PR, so on pull requests the audits only surface in the logs.
+#
+# push: two direct pushes to main (2026-09-09) were never scanned — nothing
+# ran outside pull requests and the weekly schedule. On push, gitleaks scans
+# the pushed commit range only; the scheduled run scans the full history.
 name: Security
 
 on:
+  push:
+    branches: [main]
   pull_request:
   schedule:
     - cron: "0 8 * * 1" # Mondays 08:00 UTC, runs against main
@@ -28,7 +37,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   npm-audit:
-    name: npm audit (advisory)
+    name: npm audit (critical blocks on main)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -38,14 +47,21 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
-      # Audits straight from package-lock.json — no install needed. Advisory:
-      # matches CI's lint precedent (step-level continue-on-error keeps the
-      # finding visible in logs without gating merges on upstream advisories).
+      # Audits straight from package-lock.json — no install needed. Advisory
+      # everywhere: continue-on-error keeps high-severity findings visible in
+      # the logs without gating merges on upstream advisories.
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
         continue-on-error: true
+
+      # The one audit that blocks, and only where it cannot hold an unrelated
+      # PR hostage: main itself (push) and the weekly run. A critical advisory
+      # in what ships to browsers turns the run red until it is patched.
+      - name: Critical advisories block on main
+        if: github.event_name == 'push' || github.event_name == 'schedule'
+        run: npm audit --omit=dev --audit-level=critical
 
   pip-audit:
     name: pip-audit (advisory)

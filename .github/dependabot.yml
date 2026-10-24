@@ -1,6 +1,10 @@
 # Weekly dependency updates. Minor + patch bumps are grouped into a single PR
 # per ecosystem to keep noise down; majors still arrive as individual PRs so
 # breaking changes get individual review.
+#
+# The `ignore` rules below are for bumps CI cannot vouch for. CI never renders
+# a video, so anything that can only break a real Manim render (or that needs
+# a migration rather than a bump) is moved by hand, not by a green PR.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
@@ -24,6 +28,14 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # A TypeScript major is a migration (new errors across the tree).
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      # Tracks the Node major the app runs on (frontend/Dockerfile, CI's
+      # setup-node) — moved together with those, by hand.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
 
   # Dependabot understands uv lockfiles natively (GA since 2025), so updates
   # land in backend/uv.lock — the file CI's `uv sync --frozen` actually checks.
@@ -31,9 +43,52 @@ updates:
     directory: "/backend"
     schedule:
       interval: "weekly"
+    # The default of 5 was exhausted by long-lived majors, which silently
+    # stopped every other update from being proposed.
+    open-pull-requests-limit: 10
     groups:
       python-minor-and-patch:
         applies-to: version-updates
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # The LLM + TTS client (agents/base.py, manim-voiceover's OpenAIService).
+      - dependency-name: "openai"
+        update-types: ["version-update:semver-major"]
+      # setuptools 82 removed pkg_resources, which manim-voiceover imports.
+      - dependency-name: "setuptools"
+        versions: [">=82"]
+      # The renderer. CI never renders, so a green PR proves nothing: bump by
+      # hand, with a real render in the container.
+      - dependency-name: "manim"
+      - dependency-name: "manim-voiceover"
+      # pyproject caps it <0.22 for manim-voiceover 0.3.x; the 1.x PR (#44)
+      # silently dragged manim-voiceover to 0.4.0 along with it.
+      - dependency-name: "python-dotenv"
+        update-types: ["version-update:semver-major"]
+
+  # Providers (azurerm, azuread, azapi, time) + infra/.terraform.lock.hcl. CI's
+  # terraform job validates the bump; a human still reads the plan.
+  - package-ecosystem: "terraform"
+    directory: "/infra"
+    schedule:
+      interval: "weekly"
+
+  # Base images and the pinned uv image (FROM lines only — which is why uv is
+  # a named stage in backend/Dockerfile).
+  - package-ecosystem: "docker"
+    directories:
+      - "/backend"
+      - "/frontend"
+    schedule:
+      interval: "weekly"
+    ignore:
+      # pyproject requires Python <3.14, and a new Python needs a real render.
+      - dependency-name: "python"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+      # Node majors move together: the image, CI's setup-node, @types/node.
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]

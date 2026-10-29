@@ -66,6 +66,21 @@ async def test_section_lists_all_complete_videos_newest_first(client, db):
     assert sec["video_url"] == "https://x/4.mp4"
 
 
+async def test_concept_labels_are_plain_text(client, db):
+    # 1609.03851: the LLM-written concept carried bare TeX, shown raw as the video title.
+    await _seed(db)
+    sec = "2608.13717-section-2"
+    db.add(Visualization(id="viz_2608_13717_7", paper_id="2608.13717", section_id=sec,
+                         concept="Spread operators S_{(j)}^* and \\Phi(\\bx)", status="complete",
+                         video_url="https://x/7.mp4", created_at=datetime(2026, 9, 7, 14)))
+    await db.commit()
+    body = (await client.get("/api/paper/2608.13717")).json()
+    plain = "Spread operators S₍j₎* and Φ(bx)"
+    videos = body["sections"][0]["videos"]
+    assert [v["concept"] for v in videos] == [plain, "DP realignment", "Teacher -> Student"]
+    assert {v["id"]: v["concept"] for v in body["visualizations"]}["viz_2608_13717_7"] == plain
+
+
 async def test_upsert_to_pending_clears_previous_run_url_and_sets_paper(db):
     await _seed(db)
     await queries.upsert_visualization(

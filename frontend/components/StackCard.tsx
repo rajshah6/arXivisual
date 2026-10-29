@@ -29,14 +29,17 @@ function mergeContentWithEquations(content: string, equations?: string[]): strin
   }
 
   if (equationsToAppend.length > 0) {
+    // remark-math renders `$$` as display math only when the fences sit on
+    // their own lines; a one-line `$$eq$$` comes out as inline math.
     const equationBlocks = equationsToAppend
       .map((eq) => {
-        const trimmed = eq.trim();
-        if (trimmed.startsWith("$$") && trimmed.endsWith("$$")) return trimmed;
-        if (trimmed.startsWith("$") && trimmed.endsWith("$") && !trimmed.startsWith("$$")) {
-          return `$${trimmed}$`;
+        let body = eq.trim();
+        if (body.length >= 4 && body.startsWith("$$") && body.endsWith("$$")) {
+          body = body.slice(2, -2);
+        } else if (body.length >= 2 && body.startsWith("$") && body.endsWith("$")) {
+          body = body.slice(1, -1);
         }
-        return `$$${trimmed}$$`;
+        return `$$\n${body.trim()}\n$$`;
       })
       .join("\n\n");
 

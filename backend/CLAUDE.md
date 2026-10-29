@@ -57,7 +57,9 @@ legacy in-process path (`jobs/worker.py`) still writes rows the old way — no c
 Display text has ONE owner: `ingestion/text_normalize.py` (idempotent; applied by `section_formatter` at ingest
 and by `api/routes.py` at read time; abstracts use `from_organizer=False`). The frontend does no text repair.
 JSON-escape residue is undone at its origin (`_organize_into_sections`) and again idempotently here; the
-over-escaping it undoes is invited by `agents.base.call_llm_json`'s retry suffix.
+over-escaping it undoes is invited by `agents.base.call_llm_json`'s retry suffix. Video concept labels go
+through `label_to_text` at read time only: `Visualization.concept` is the de-dup and resume key
+(`skip_concepts`), so the stored value stays as the LLM wrote it.
 
 Gate failure → regenerate with combined feedback (`MAX_RETRIES=3` + `VOICE_QUALITY_RETRIES=2` attempts); all
 attempts failing → `VOICE_FAIL_BEHAVIOR="return_silent"` ships the last attempt unless it failed the code or

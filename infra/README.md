@@ -24,7 +24,8 @@ directly. Infra changes go through `plan`/`apply` here, not ad-hoc `az`.
 | `insights.tf` | Application Insights `arxivisual-insights` (workspace-based, on the Log Analytics workspace above, type `web`, default retention, 1 GB/day cap). Its connection string is injected into `arxivisual-api` and `arxivisual-worker` as the `appinsights-connection-string` secret → `APPLICATIONINSIGHTS_CONNECTION_STRING`, with `OTEL_TRACES_SAMPLER=microsoft.fixed_percentage` + `OTEL_TRACES_SAMPLER_ARG=0.2` (20% of traces) and `OTEL_SERVICE_NAME` (the cloud role name: `arxivisual-api` / `arxivisual-worker`). Output `application_insights_app_id` |
 | `alerts.tf` | Action group `arxivisual-alerts` (email to `contact_email`), metric alerts on `arxivisual-db` and the three backend apps, three 15-minute log alerts on the workspace. See "Alerts" |
 | `frontend.tf` | The Next.js frontend `arxivisual-web` (external HTTP :3000, 0.25 vCPU / 0.5 Gi, 0–3 replicas until `web_custom_domains_enabled` is set at the DNS cut-over, then 1–3, `/healthz` probes), its user-assigned identity + AcrPull role, and the `arxivisual.org` / `www.arxivisual.org` custom domains with managed certificates |
-| `budgets.tf` | Subscription budget `arxivisual-monthly` (CA$575 = the monthly pace at which the Azure credit lasts to 2028-07-29, recompute quarterly; forecast-100% / actual-100% / actual-150% alerts; counts cost before credits and only emails), cost anomaly alert `arxivisual-cost-anomaly` (daily, free, ~2-day lag; detection only runs once the subscription is onboarded by opening a Cost Analysis smart view on it, so do that once after the first apply and check the rule under Cost alerts > Alert rules; **expires a year after each apply that writes it**, renew by bumping the date in its `message`), and billing-account budget `MonthlyReset` ($5) via **azapi** (azurerm has no billing-account budget resource); notifications go to `contact_email` |
+| `budgets.tf` | Subscription budget `arxivisual-monthly` (CA$575 = the monthly pace at which the Azure credit lasts to 2028-07-29, recompute quarterly; forecast-100% / actual-100% / actual-150% alerts; counts cost before credits and only emails, plus an actual-`hard_stop_threshold_percent` notification that calls the hard stop once `hard_stop_enabled` is set), cost anomaly alert `arxivisual-cost-anomaly` (daily, free, ~2-day lag; detection only runs once the subscription is onboarded by opening a Cost Analysis smart view on it, so do that once after the first apply and check the rule under Cost alerts > Alert rules; **expires a year after each apply that writes it**, renew by bumping the date in its `message`), and billing-account budget `MonthlyReset` ($5) via **azapi** (azurerm has no billing-account budget resource); notifications go to `contact_email` |
+| `hardstop.tf` | **Off until `hard_stop_enabled = true`.** Automation account `arxivisual-automation` (Basic, system identity), custom role `arxivisual-hard-stop` on the RG (read + stop on Container Apps, no `listSecrets`), runtime environment `arxivisual-ps76` (PowerShell 7.6, Az 15.1.0), runbook `arxivisual-hard-stop` (`runbooks/hard-stop.ps1`), its webhook, and action group `arxivisual-hard-stop` that the budget's hard-stop notification calls to **stop the four Container Apps**. See "Hard stop" |
 | `github_oidc.tf` | Entra app `arxivisual-github-deploy`, its service principal, the GitHub OIDC federated credential (`repo:rajshah6/arXivisual:ref:refs/heads/main`), and its Contributor role on the RG |
 | `state.tf` | The `arxivisualtfstate` storage account + `tfstate` container (the backend manages state *in* it and Terraform also *manages* it), with blob versioning and 14-day soft delete. See "State protection" |
 
@@ -306,6 +307,163 @@ Known gaps, so nobody trusts these further than they go:
 The first apply makes Azure mail the receiver a "you have been added to an
 action group" notice; if it does not arrive, check spam before trusting any of
 the above.
+
+## Hard stop
+
+Nothing else here stops spend. The billing profile's spending limit is Off
+(`LimitRemoved` since 2026-07-29) with a card on file, every budget
+notification is email-only, and the US$10K startup credit runs out around
+mid-2027 at the Oct 2026 burn, a year before its 2028-07-29 expiry; after
+that the card pays ~CA$1,300/month with no ceiling, and a runaway during the
+credit period just burns credit faster (audit 2026-10-21). `hardstop.tf` is
+the Learn-documented answer (cost-management-budget-scenario): the
+`arxivisual-monthly` budget gets one more **Actual** notification at
+`hard_stop_threshold_percent` (default 300% = CA$1,725) whose contact group is
+the action group `arxivisual-hard-stop`, whose only receiver is a webhook on
+the Automation runbook `arxivisual-hard-stop`, which POSTs the Container Apps
+`stop` action on `arxivisual-worker`, `-api`, `-web` and `-temporal`. A
+stopped app has no replicas and no scale rule can wake it, so Container Apps
+compute ends at once and Foundry Models spend ends because nothing calls the
+model. Postgres, ACR, R2, the app definitions and their revisions survive.
+
+Why `stop` and not replicas: the Container Apps scale limits allow a minimum
+of 0 but a **maximum of 1**, and at min 0 / max 1 the api wakes on the next
+HTTP request and the worker on the next queued job.
+
+**Cost: ~CA$0.** The Automation account is free; Basic-SKU job minutes bill at
+US$0.002/min after 500 free minutes per subscription per month, and one run is
+2-5 minutes. Action-group runbook receivers and budget notifications are free.
+
+**What the runbook's identity can do:** read the Container Apps and POST
+their `stop` action, through the custom role `arxivisual-hard-stop`, and
+nothing else. The built-in `Container Apps Contributor` was not used because
+its `containerApps/*/action` wildcard includes `listSecrets`, which returns
+the apps' secrets in plain text. It cannot `start` anything either: recovery
+is a human (below).
+
+### Threshold
+
+300% of CA$575 = CA$1,725 per month of **actual, pre-credit** cost. The
+Oct 14-19 2026 burn of CA$1,287/mo is 224%, so a normal month never trips it
+(200% would have: that is why the default is not 200), while a 2x runaway
+crosses it by ~day 21 and a 10x one by ~day 5. Cost Management evaluates once
+a day on data that lands 8-24 h late, so the stop arrives 1-2 days after the
+line is crossed: ~CA$90 of overshoot at today's burn, ~CA$900 for a 10x
+runaway. Lower `hard_stop_threshold_percent` toward 200 once the cost cuts
+land and the new burn is measured; the budget's 100%/150% mails stay as the
+early warning.
+
+### Turning it on (Ajith)
+
+1. `az provider register -n Microsoft.Automation` and wait for
+   `az provider show -n Microsoft.Automation --query registrationState` to
+   say `Registered`. The provider is not registered on this subscription
+   (2026-10-21) and `versions.tf` never registers providers, so the apply
+   fails without this.
+2. Set `hard_stop_enabled = true` (tfvars or `-var`) and plan. The hard stop
+   itself is seven adds and one in-place change:
+   `+ azurerm_automation_account.hard_stop[0]`,
+   `+ azurerm_role_definition.hard_stop[0]`,
+   `+ azurerm_role_assignment.hard_stop[0]`,
+   `+ azurerm_automation_runtime_environment.hard_stop[0]`,
+   `+ azurerm_automation_runbook.hard_stop[0]`,
+   `+ azurerm_automation_webhook.hard_stop[0]`,
+   `+ azurerm_monitor_action_group.hard_stop[0]` and
+   `~ azurerm_consumption_budget_subscription.monthly` (one notification
+   added). None of these touches a Container App. **The same plan also
+   carries whatever `main` has pending**, and until the 2026-10 cost-cut
+   apply has landed that is four `~ azurerm_container_app.<app> will be
+   updated in-place` lines, among them the worker's `AZURE_OPENAI_DEPLOYMENT`
+   flip to `gpt-6-luna` and the api's 0.5 CPU / 1Gi. A plain `apply` from
+   that plan would roll the worker onto luna before `model_smoke` has passed
+   on it (the audit's apply sequence requires 5/5 first). So either arm the
+   hard stop after that sequence is done, when a plan from `main` shows
+   nothing but the lines above, or apply just the hard stop:
+
+   ```sh
+   terraform apply -var=hard_stop_enabled=true \
+     -target=azurerm_automation_account.hard_stop \
+     -target=azurerm_role_definition.hard_stop \
+     -target=azurerm_role_assignment.hard_stop \
+     -target=azurerm_automation_runtime_environment.hard_stop \
+     -target=azurerm_automation_runbook.hard_stop \
+     -target=azurerm_automation_webhook.hard_stop \
+     -target=azurerm_monitor_action_group.hard_stop \
+     -target=azurerm_consumption_budget_subscription.monthly
+   ```
+
+   Read the targeted plan before answering `yes`: it must list the eight
+   resources above and no `azurerm_container_app`. (The budget target also
+   applies that resource's other pending edits, the 575 amount and the
+   50%/90% removals from #98; they roll nothing.) If the role assignment
+   fails with `RoleDefinitionDoesNotExist`, the new custom role had not
+   replicated yet: run the same apply again.
+3. Prove it without stopping anything: portal > Automation Accounts >
+   `arxivisual-automation` > Runbooks > `arxivisual-hard-stop` > **Start**,
+   set `DryRun` = `true`, and read the job output: one
+   `runningStatus=Running` line per app and `DryRun complete`. A 403 means the
+   role assignment has not propagated yet (minutes) or the account's
+   identity is missing; a 4xx on the GET means the API version in
+   `runbooks/hard-stop.ps1` needs bumping; a module error on
+   `Connect-AzAccount` means the runtime environment's `az` package did not
+   load (portal > Runtime Environments > `arxivisual-ps76` > Packages).
+   Azure also mails the "you have been added to an action group" notice for
+   `arxivisual-hard-stop`.
+4. Optional full rehearsal in a quiet window (README "Applying"): start the
+   runbook with `DryRun` = `false`, watch the four apps go `Stopped`, then run
+   the recovery below. This is the only way to see the whole chain end to end
+   short of a real budget trigger, and it costs a few minutes of downtime.
+
+### When it fires
+
+Three signals: the budget's own threshold mail, the action group's mail (the
+subject names `arxivisual-hard-stop`), and a job under the Automation account
+whose output lists each app's status. arxivisual.org stays up if it is still
+on Vercel; otherwise `arxivisual-web` is stopped too and the site is down.
+Every in-flight paper dies (`arxivisual-worker` has no graceful shutdown).
+
+### Recovery
+
+Manual, and **not** `terraform apply`: the azurerm provider does not model the
+running state, so a plan reads "No changes" after a stop and an apply brings
+nothing back. Find the cause first (Cost analysis, Langfuse, the api's
+admission logs), fix it, then:
+
+```sh
+for app in arxivisual-temporal arxivisual-worker arxivisual-api arxivisual-web; do
+  az containerapp start -g arxivisual-rg -n "$app"
+done
+```
+
+Temporal first so the api and worker reconnect to it on boot. Each app resumes
+its current revision with its previous scale settings; the `<app>-no-replicas`
+alerts in `alerts.tf` clear once they are back. The threshold has fired for
+this budget period, so the restarted estate runs **unguarded until the next
+month**; the 150% mail and the anomaly alert are what is left.
+
+### Known gaps
+
+- 1-2 day lag between crossing the line and the stop (budget evaluation).
+- Each threshold fires once per period; see "Recovery".
+- The webhook URL is a bearer secret held in Terraform state, and `expiry_time`
+  (2035-12-31) is `ForceNew`: changing it mints a new URL and rewrites the
+  action group in the same apply.
+- The budget itself ends 2028-07-31; extending it extends the hard stop.
+- `runbooks/hard-stop.ps1` is authored without a local PowerShell to parse it;
+  the DryRun in step 3 is its test. Azure publishes it on every apply that
+  changes it (the provider pushes the draft and publishes).
+- The runtime is PowerShell 7.6 (LTS to 2028-11-14) with Az 15.1.0 pinned in
+  the runtime environment `arxivisual-ps76`. Automation retired 7.2 on
+  2026-09-30 and 7.4 leaves PowerShell support on 2026-11-10, so when the
+  next retirement notice comes the change is `runtime_version` and the `az`
+  package version in `hardstop.tf` (a new environment, the runbook re-links
+  to it in place, the script is untouched).
+- On a PowerShell 7 runbook the webhook payload arrives as a string, not the
+  documented `WebhookData` object; the script logs it as delivered, so the
+  job output still shows what the budget sent.
+- This bounds a runaway; it is not the spending limit. Turning the spending
+  limit back on (portal, takes effect at the next billing period) is the
+  separate, complementary decision in the audit.
 
 ## State protection
 

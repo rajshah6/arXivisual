@@ -99,16 +99,18 @@ resource "azurerm_consumption_budget_subscription" "monthly" {
 # every create or update (azurerm 4.81 cost_anomaly_alert_resource.go), the
 # API caps end dates at one year anyway (Learn: save-share-views), and the
 # schedule is not in Terraform state, so the expiry never shows in a plan. To
-# renew, change the date in `message` and apply before the stamp is a year
+# renew, change the month in `message` and apply before the stamp is a year
 # old. Mail goes out only while the identity that applied this can still read
 # the subscription's costs.
+# Spell months out: Azure rejects digit runs like "2026-10 ... 2027-10" in
+# `message` as a phone number (400 InvalidScheduledActionFieldContainsPii).
 resource "azurerm_cost_anomaly_alert" "subscription" {
   name            = "arxivisual-cost-anomaly"
   display_name    = "arXivisual cost anomaly"
   subscription_id = "/subscriptions/${var.subscription_id}"
   email_subject   = "arXivisual: Azure cost anomaly"
   email_addresses = [var.contact_email]
-  message         = "Daily Azure usage left its expected range. Renewed 2026-10; renew by 2027-10."
+  message         = "Daily Azure usage left its expected range. Renewed November 2026; renew by November 2027."
 }
 
 # "MonthlyReset" is a $5 budget scoped to the BILLING ACCOUNT (Microsoft

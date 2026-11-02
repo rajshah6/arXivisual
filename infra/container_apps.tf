@@ -242,9 +242,9 @@ resource "azurerm_container_app" "api" {
       # cost scales with this number: ~CA$357/mo less on gpt-5-mini, ~CA$178/mo
       # once the worker is on gpt-6-luna, at the price of ~30 more papers
       # turned away on every cap day. Only the API reads it
-      # (backend/api/throttle.py); the worker has no copy. Product decision
-      # (Ajith/Raj): revisit once the luna + effort-low cost per paper is
-      # measured.
+      # (backend/api/throttle.py); the worker has no copy. Decided by Ajith
+      # on 2026-11-02 to keep the credits lasting until 2028-07-29; revisit
+      # once the cost per paper on gpt-6-luna is measured.
       env {
         name  = "DAILY_NEW_PAPER_CAP"
         value = "50"

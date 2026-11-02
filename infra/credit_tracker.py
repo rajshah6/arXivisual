@@ -15,10 +15,11 @@ and writes four JSON files of row objects to --out (default: print a summary):
   runway.json   projected credit balance per month until expiry
   cuts.json     each cost cut, whether it is live, and what it is set to
 
-Credits: Cost Management shows charges, not the credit balance. The balance is
-estimated as a portal reading (BASELINE_*) minus every charge since. Recalibrate
-when you read the real number in the portal (Cost Management + Billing >
-Credits): pass --baseline-cad and --baseline-date, or edit the constants.
+Credits: the billing API gives the exact balance as of the latest invoice
+(monthly, issued around the 9th). Charges since then come from Cost
+Management and are subtracted, so the figure is current to the day. If the
+billing API cannot be read, a fixed reading (BASELINE_*) is used instead;
+--baseline-cad and --baseline-date force one.
 
     python3 infra/credit_tracker.py                 # human summary
     python3 infra/credit_tracker.py --out /tmp/ct   # JSON for the dashboard
@@ -33,14 +34,17 @@ import json
 import pathlib
 import subprocess
 import sys
+import time
 
 SUB = "4301c7fd-ffa2-4ad1-bca9-a15ef2d2bd59"
 RG = "arxivisual-rg"
 OPENAI_ACCOUNT = "arxivisual-openai"
 BUDGET_NAME = "arxivisual-monthly"
+BILLING_ACCOUNT = "3f54dc1c-3b08-5841-bb04-33a83cf4e3a7:9dc3de7a-80d3-4d17-baf3-665da89267cd_2019-05-31"
+BILLING_PROFILE = "PVNY-KSBE-BG7-PGB"
 
-# Credit balance read from the Consumption API on 2026-10-20 (US$8,427 at the
-# day's rate). Charges from this date on are subtracted from it.
+# Fallback only, when the billing API cannot be read: a balance and the first
+# day whose charges are not in it. Charges from this date on are subtracted.
 BASELINE_CAD = 11937.0
 BASELINE_DATE = dt.date(2026, 10, 20)
 EXPIRY = dt.date(2028, 7, 29)
@@ -67,12 +71,20 @@ EST_SAVING = {
 }
 
 
-def az_json(*args: str):
-    """Run an az command and parse its JSON; None when it fails."""
-    proc = subprocess.run(
-        ["az", *args, "-o", "json"], capture_output=True, text=True, timeout=180
-    )
-    if proc.returncode != 0:
+def az_json(*args: str, attempts: int = 3):
+    """Run an az command and parse its JSON; None when it fails.
+
+    Cost Management throttles bursts (429), so failures are retried.
+    """
+    for attempt in range(attempts):
+        proc = subprocess.run(
+            ["az", *args, "-o", "json"], capture_output=True, text=True, timeout=180
+        )
+        if proc.returncode == 0:
+            break
+        if attempt + 1 < attempts:
+            time.sleep(20 * (attempt + 1))
+    else:
         return None
     try:
         return json.loads(proc.stdout or "null")
@@ -127,6 +139,36 @@ def daily_costs(start: dt.date, end: dt.date) -> dict[dt.date, dict[str, float]]
             out[day][component(r.get("ResourceId", ""), r.get("Meter", ""))] += r["Cost"]
         url = props.get("nextLink")
     return out
+
+
+def invoiced_baseline():
+    """(balance_cad, first_unbilled_day, rate) from the billing API, or None.
+
+    The credit lot's currentBalance is exact up to the end of the latest
+    issued invoice's period; everything after that is unbilled. Azure's own
+    estimatedBalance subtracts unbilled charges too, but it lags by a week or
+    two (2026-11-02: it had only Oct 1-17 deducted), so the tracker subtracts
+    Cost Management's charges from the invoiced balance itself.
+    """
+    base = f"https://management.azure.com/providers/Microsoft.Billing/billingAccounts/{BILLING_ACCOUNT}/billingProfiles/{BILLING_PROFILE}"
+    bal = az_json("rest", "--method", "get", "--url",
+                  f"{base}/providers/Microsoft.Consumption/credits/balanceSummary?api-version=2023-05-01")
+    today = dt.datetime.now(dt.timezone.utc).date()
+    inv = az_json("rest", "--method", "get", "--url",
+                  f"{base}/invoices?periodStartDate={today - dt.timedelta(days=120)}"
+                  f"&periodEndDate={today}&api-version=2020-05-01")
+    try:
+        summary = bal["properties"]["balanceSummary"]
+        usd = float(summary["currentBalance"]["value"])
+        rate = float(summary["estimatedBalanceInBillingCurrency"]["exchangeRate"])
+        ends = [i["properties"]["invoicePeriodEndDate"][:10] for i in inv["value"]]
+        due = sum(float((i["properties"].get("amountDue") or {}).get("value") or 0) for i in inv["value"])
+    except (TypeError, KeyError, ValueError):
+        return None
+    if not ends:
+        return None
+    first_unbilled = dt.date.fromisoformat(max(ends)) + dt.timedelta(days=1)
+    return usd * rate, first_unbilled, rate, usd, due
 
 
 def app(name: str):
@@ -191,12 +233,21 @@ def live_cuts() -> list[dict]:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--out", type=pathlib.Path, help="write the four JSON files here")
-    ap.add_argument("--baseline-cad", type=float, default=BASELINE_CAD)
-    ap.add_argument("--baseline-date", type=dt.date.fromisoformat, default=BASELINE_DATE)
+    ap.add_argument("--baseline-cad", type=float, help="force a balance in CAD (with --baseline-date)")
+    ap.add_argument("--baseline-date", type=dt.date.fromisoformat, help="first day NOT in --baseline-cad")
     ap.add_argument("--skip-cuts", action="store_true", help="costs only, no live settings")
     args = ap.parse_args()
 
     today = dt.datetime.now(dt.timezone.utc).date()
+    card_due = None
+    if args.baseline_cad is not None and args.baseline_date is not None:
+        source = "given on the command line"
+    elif (live := invoiced_baseline()) is not None:
+        args.baseline_cad, args.baseline_date, _rate, _usd, card_due = live
+        source = f"invoiced balance US${_usd:,.2f} at {_rate:.4f} CAD/USD"
+    else:
+        args.baseline_cad, args.baseline_date = BASELINE_CAD, BASELINE_DATE
+        source = "fixed reading (billing API unreadable)"
     start = min(args.baseline_date, today - dt.timedelta(days=HISTORY_DAYS))
     costs = daily_costs(start, today)
 
@@ -231,6 +282,8 @@ def main() -> None:
         "credits_left_cad": round(remaining, 2),
         "baseline_cad": args.baseline_cad,
         "baseline_date": args.baseline_date.isoformat(),
+        "baseline_source": source,
+        "card_amount_due_cad": card_due,
         "spent_since_baseline_cad": round(spent, 2),
         "burn_7d_cad_day": round(burn7, 2),
         "burn_30d_cad_day": round(burn30, 2),

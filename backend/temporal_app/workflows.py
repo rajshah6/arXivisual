@@ -30,6 +30,8 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+from temporalio.exceptions import ActivityError, TimeoutType
+from temporalio.exceptions import TimeoutError as TemporalTimeoutError
 
 with workflow.unsafe.imports_passed_through():
     from temporal_app.activities import (
@@ -69,6 +71,28 @@ _GENERATION_RETRY = RetryPolicy(maximum_attempts=2)
 # timeout — twice. Oct 1-19 that cost 595 renders whose generation spend
 # produced no video.
 _RENDER_HEARTBEAT = timedelta(minutes=2)
+# Fresh dispatches for a render whose task the server marked started but no
+# worker ever ran. Oct 20 - Nov 2 that was 13-29 renders a day (~5%): the
+# body never logged a line, both attempts died on the heartbeat timeout, and
+# the Temporal server logged "Activity task already started" beside Postgres
+# "context deadline exceeded" — the start was recorded, the delivery lost. A
+# render that never started cost nothing, so sending it again is free; each
+# dispatch can cost a retry round of heartbeat timeouts (~4 min), hence the cap.
+_LOST_DISPATCH_REDISPATCHES = 2
+_REDISPATCH_PATCH = "redispatch-never-started-renders"
+
+
+def _never_started(exc: BaseException) -> bool:
+    """True when an activity failed on its heartbeat timeout without ever
+    heartbeating. Heartbeat details carry across retry attempts and the render
+    beats on entry (activities._heartbeating), so empty details mean no attempt
+    ever entered the activity body."""
+    cause = exc.cause if isinstance(exc, ActivityError) else None
+    return (
+        isinstance(cause, TemporalTimeoutError)
+        and cause.type == TimeoutType.HEARTBEAT
+        and not cause.last_heartbeat_details
+    )
 
 
 def _failure_reason(exc: BaseException) -> str:
@@ -174,19 +198,43 @@ class PaperPipelineWorkflow:
             )
             raise
 
+    async def _execute_render(self, ri: RenderInput, retry_policy: RetryPolicy) -> RenderResult:
+        """Run the render activity, dispatching it again (up to
+        _LOST_DISPATCH_REDISPATCHES times) when the server lost the task
+        before any attempt started. Every other failure propagates."""
+        redispatches = 0
+        while True:
+            try:
+                # 25 min: under multi-paper load (KEDA scaled out ten minutes
+                # into a two-paper burst) two renders that were on track hit
+                # the old 15-min ceiling and shipped as failed visualizations.
+                return await workflow.execute_activity(
+                    render_visualization,
+                    ri,
+                    task_queue=RENDER_TASK_QUEUE,
+                    start_to_close_timeout=timedelta(minutes=25),
+                    heartbeat_timeout=_RENDER_HEARTBEAT,
+                    retry_policy=retry_policy,
+                )
+            except ActivityError as exc:
+                # patched() last: histories recorded before this change replay
+                # their original failure path instead of a new dispatch.
+                if (
+                    redispatches >= _LOST_DISPATCH_REDISPATCHES
+                    or not _never_started(exc)
+                    or not workflow.patched(_REDISPATCH_PATCH)
+                ):
+                    raise
+                redispatches += 1
+                workflow.logger.warning(
+                    "Render task for %s was lost before it started (no heartbeat); "
+                    "dispatching again (%d/%d)",
+                    ri.viz_id, redispatches, _LOST_DISPATCH_REDISPATCHES,
+                )
+
     async def _render_one(self, ri: RenderInput) -> RenderResult:
         try:
-            # 25 min: under multi-paper load (KEDA scaled out ten minutes into
-            # a two-paper burst) two renders that were on track hit the old
-            # 15-min ceiling and shipped as failed visualizations.
-            return await workflow.execute_activity(
-                render_visualization,
-                ri,
-                task_queue=RENDER_TASK_QUEUE,
-                start_to_close_timeout=timedelta(minutes=25),
-                heartbeat_timeout=_RENDER_HEARTBEAT,
-                retry_policy=_INFRA_RETRY,
-            )
+            return await self._execute_render(ri, _INFRA_RETRY)
         except Exception as exc:
             workflow.logger.warning("Render activity failed for %s: %s", ri.viz_id, exc)
             # Best effort: the recorder keeps the row from stranding at
@@ -221,18 +269,14 @@ class PaperPipelineWorkflow:
                 heartbeat_timeout=_RENDER_HEARTBEAT,
                 retry_policy=_NO_RETRY,  # a repair is one LLM call — don't double-spend
             )
-            rerender: RenderResult = await workflow.execute_activity(
-                render_visualization,
+            rerender = await self._execute_render(
                 RenderInput(
                     job_id=job_id,
                     viz_id=result.viz_id,
                     manim_code=fixed_code,
                     is_repair=True,
                 ),
-                task_queue=RENDER_TASK_QUEUE,
-                start_to_close_timeout=timedelta(minutes=25),
-                heartbeat_timeout=_RENDER_HEARTBEAT,
-                retry_policy=_NO_RETRY,  # original video already exists as fallback
+                _NO_RETRY,  # original video already exists as fallback
             )
             return rerender.succeeded and rerender.severity != "major"
         except Exception as exc:

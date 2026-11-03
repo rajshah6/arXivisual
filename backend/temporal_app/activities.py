@@ -39,6 +39,11 @@ async def _heartbeating(label: str, every: float = 30.0):
     on the workflow side, Temporal notices a dead task in minutes and hands
     it to a live worker. Rendering runs in asyncio.to_thread, so the loop is
     free to beat during ffmpeg.
+
+    The first beat goes out on entry, not after ``every``: the workflow reads
+    a heartbeat timeout with no heartbeat details as "no attempt ever ran"
+    and re-dispatches it for free (workflows._never_started). Without the
+    entry beat, a render that died in its first 30 s would look the same.
     """
 
     async def beat_loop() -> None:
@@ -46,6 +51,7 @@ async def _heartbeating(label: str, every: float = 30.0):
             await asyncio.sleep(every)
             activity.heartbeat(label)
 
+    activity.heartbeat(label)
     beat = asyncio.create_task(beat_loop())
     try:
         yield

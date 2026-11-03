@@ -19,6 +19,15 @@ async def test_heartbeats_on_the_timer_and_stops_with_the_body(monkeypatch):
     assert len(beats) == seen, "the beat task must be cancelled when the body ends"
 
 
+async def test_beats_once_on_entry_before_the_first_interval(monkeypatch):
+    # The workflow reads "no heartbeat details" as "no attempt ever started"
+    # (workflows._never_started); a beat on entry is what makes that true.
+    beats = []
+    monkeypatch.setattr(activities.activity, "heartbeat", beats.append)
+    async with activities._heartbeating("rendering viz_x", every=60):
+        assert beats == ["rendering viz_x"]
+
+
 async def test_body_exception_still_stops_the_beat(monkeypatch):
     beats = []
     monkeypatch.setattr(activities.activity, "heartbeat", beats.append)
@@ -41,6 +50,9 @@ def test_render_and_repair_activities_are_wrapped():
 def test_workflow_sets_a_heartbeat_timeout_on_every_render_and_repair_call():
     src = inspect.getsource(workflows.PaperPipelineWorkflow)
     calls = [c for c in src.split("workflow.execute_activity(") if c.lstrip().startswith(("render_visualization", "repair_visualization_code"))]
-    assert len(calls) == 3
+    # One render call site (_execute_render, shared by first renders and
+    # repair re-renders) plus the repair itself.
+    assert len(calls) == 2
     assert all("heartbeat_timeout=_RENDER_HEARTBEAT" in c for c in calls)
+    assert src.count("self._execute_render(") == 2
     assert workflows._RENDER_HEARTBEAT.total_seconds() >= 4 * 30, "allow four missed 30 s beats"

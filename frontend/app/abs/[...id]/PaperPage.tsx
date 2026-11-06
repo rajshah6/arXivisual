@@ -405,36 +405,43 @@ export function PaperPage({
     if (bgReady) loadPaper();
   }, [bgReady, loadPaper]);
 
-  // Refetch while sections still lack videos (late renders trickle in). Keeps
-  // polling until EVERY section has its video or the retry budget runs out —
-  // the old `some()` stop condition abandoned all but the first-arriving video.
+  // Refetch while renders are still in flight, so late videos pop in. Gated on
+  // in-flight visualizations, not on sections lacking a video: most sections
+  // never get one (nothing was planned for them, or the render failed), so the
+  // old gate re-fetched every finished paper 12 times per visit, ~13x the
+  // reads, for videos that were never coming.
   const missingVideoCount =
     state.type === "ready"
       ? state.paper.sections.filter((s) => !s.video_url).length
       : 0;
+  const videosInFlight =
+    state.type === "ready" ? (state.paper.videos_in_flight ?? 0) : 0;
   useEffect(() => {
-    if (missingVideoCount === 0 || !arxivId) return;
+    if (videosInFlight === 0 || !arxivId) return;
     let retries = 0;
-    const maxRetries = 12; // ~2 min
+    const maxRetries = 12; // ~2 min; bounds a render that never finishes
     const refetchInterval = setInterval(async () => {
       retries++;
       if (retries > maxRetries) return clearInterval(refetchInterval);
       const paper = await getPaper(arxivId).catch(() => null);
       if (!paper) return;
       const stillMissing = paper.sections.filter((s) => !s.video_url).length;
-      if (stillMissing < missingVideoCount) {
+      // A render that failed lowers the in-flight count without adding a
+      // video; take that update too, or polling never learns it can stop.
+      const stillInFlight = paper.videos_in_flight ?? 0;
+      if (stillMissing < missingVideoCount || stillInFlight < videosInFlight) {
         setState((prev) => ({
           type: "ready",
           paper,
           notice: prev.type === "ready" ? prev.notice : undefined,
         }));
-        // missingVideoCount changes -> effect re-runs with a fresh budget,
-        // or stops naturally when stillMissing reaches 0.
+        // The counts change -> effect re-runs with a fresh budget, or stops
+        // once nothing is left in flight.
         clearInterval(refetchInterval);
       }
     }, 10000);
     return () => clearInterval(refetchInterval);
-  }, [missingVideoCount, arxivId]);
+  }, [videosInFlight, missingVideoCount, arxivId]);
 
   const onProgressChange = useCallback((progress: number) => {
     setScrollProgress(progress);

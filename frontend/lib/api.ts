@@ -258,6 +258,9 @@ export async function getPaper(arxivId: string): Promise<Paper | null> {
     pdf_url: data.pdf_url,
     html_url: data.html_url,
     sections,
+    videos_in_flight: (data.visualizations ?? []).filter(
+      (v) => v.status === "pending" || v.status === "rendering",
+    ).length,
   };
 }
 

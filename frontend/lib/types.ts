@@ -16,6 +16,9 @@ export type Paper = {
   pdf_url: string;
   html_url?: string;
   sections: Section[];
+  /** Visualizations still pending or rendering. Only these can still give a
+   *  section a video; a section with none in flight never will. */
+  videos_in_flight?: number;
 };
 
 // stale = abstract-only ingest from before the LaTeXML fix; hidden until re-processed.

@@ -135,7 +135,7 @@ jobs:
         # the Dockerfile. First attempt uses the cache; the retry below drops
         # it so a cache-service outage can't fail CI.
         continue-on-error: true
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./backend
           push: false
@@ -144,7 +144,7 @@ jobs:
 
       - name: Build backend image (retry without cache)
         if: steps.build.outcome == 'failure'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./backend
           push: false
@@ -166,7 +166,7 @@ jobs:
       - name: Build frontend image
         id: build
         continue-on-error: true
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./frontend
           push: false
@@ -177,7 +177,7 @@ jobs:
 
       - name: Build frontend image (retry without cache)
         if: steps.build.outcome == 'failure'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./frontend
           push: false

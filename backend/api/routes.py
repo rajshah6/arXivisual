@@ -21,7 +21,7 @@ import analytics
 from db import queries
 from db.connection import get_db
 from db.queries import _utcnow_naive
-from ingestion.text_normalize import normalize_display_text, tex_to_text
+from ingestion.text_normalize import label_to_text, normalize_display_text, tex_to_text
 from jobs import process_paper_job
 from rendering import extract_scene_name, get_video_path, get_video_url, process_visualization
 
@@ -454,7 +454,9 @@ async def get_paper(arxiv_id: str, db: AsyncSession = Depends(get_db)):
         for v in ordered:
             if v.status == "complete" and v.video_url and v.section_id:
                 section_videos.setdefault(v.section_id, []).append(
-                    SectionVideo(viz_id=v.id, video_url=v.video_url, concept=v.concept or "")
+                    SectionVideo(
+                        viz_id=v.id, video_url=v.video_url, concept=label_to_text(v.concept)
+                    )
                 )
 
         return PaperResponse(
@@ -484,7 +486,7 @@ async def get_paper(arxiv_id: str, db: AsyncSession = Depends(get_db)):
                 VisualizationResponse(
                     id=v.id,
                     section_id=v.section_id,
-                    concept=v.concept,
+                    concept=label_to_text(v.concept),
                     video_url=v.video_url,
                     status=VisualizationStatus(v.status),
                 )

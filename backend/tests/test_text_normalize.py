@@ -8,6 +8,7 @@ import pytest
 from ingestion.section_formatter import _clean_display_text
 from ingestion.text_normalize import (
     escape_currency,
+    label_to_text,
     normalize_display_text,
     normalize_math_fences,
     tex_to_text,
@@ -68,6 +69,41 @@ class TestFences:
     def test_odd_fence_count_closed(self):
         assert normalize_math_fences("intro\n$$\nx=1").count("$$") == 2
 
+    # A list item's block closed at column 0 ends the item, and every later $$
+    # pairs with the wrong partner (1609.03851: 11 KaTeX errors). Each closer
+    # the walk writes takes the opener's indentation; the first case is the
+    # stored shape, repaired at read time.
+    @pytest.mark.parametrize(("text", "expected"), [
+        ("- a:\n  $$\n  x = 1\n$$\n  where $y$", "- a:\n  $$\n  x = 1\n  $$\n  where $y$"),
+        ("- a:\n  $$\n  x = 1\n  \\$\n  where $y$", "- a:\n  $$\n  x = 1\n  $$\n  where $y$"),
+        ("- a:\n  $$\n  x = 1.$$ where $y$", "- a:\n  $$\n  x = 1.\n  $$\n\n  where $y$"),
+        ("- a:\n  $$\n  x = 1 $$\n  where $y$", "- a:\n  $$\n  x = 1\n  $$\n  where $y$"),
+        ("- a:\n  $$\n  x = 1", "- a:\n  $$\n  x = 1\n  $$"),
+    ])
+    def test_closer_takes_the_opener_indentation(self, text, expected):
+        assert normalize_math_fences(text) == expected
+
+    def test_one_line_display_is_split_onto_fence_lines(self):
+        # 1301.0081: remark-math renders a one-line $$...$$ as inline math.
+        assert normalize_math_fences("so\n\n$$K \\le c$$\n\nfor all") == "so\n\n$$\nK \\le c\n$$\n\nfor all"
+        assert normalize_math_fences("- prior:\n  $$p_n \\propto 2^{-K(n)}.$$") == (
+            "- prior:\n  $$\n  p_n \\propto 2^{-K(n)}.\n  $$"
+        )
+
+    def test_glued_multiline_opener_gets_its_own_line(self):
+        # 1903.06586: "$$x,\qquad" read as the fence's meta, closer never found.
+        text = "1. Split:\n   $$U = F(X),\\qquad\n   V = G(X),$$\n   next"
+        assert normalize_math_fences(text) == "1. Split:\n   $$\n   U = F(X),\\qquad\n   V = G(X),\n   $$\n   next"
+        # The closing $$ the walk adds at the end closes it too.
+        assert normalize_math_fences("$$x = 1\nprose") == "$$\nx = 1\nprose\n$$"
+
+    def test_glued_opener_without_a_later_closer_is_not_split(self):
+        assert normalize_math_fences("$$x = 1\nso $$y$$ here").split("\n")[0] == "$$x = 1"
+
+    def test_one_line_pair_inside_a_code_fence_is_not_split(self):
+        text = "```\n$$x$$\n```"
+        assert normalize_math_fences(text) == text
+
 
 class TestJsonArtifacts:
     def test_unicode_escapes_double_backslashes_literal_newlines(self):
@@ -83,6 +119,18 @@ class TestJsonArtifacts:
 
     def test_prose_with_real_newlines_is_not_double_encoded(self):
         text = "Use \\n to break lines.\nRow breaks in math use \\\\ too."
+        assert unescape_json_artifacts(text) == text
+
+    def test_literal_newline_residue_beside_real_newlines(self):
+        # 2004.07558: rendered as a literal "\n\n" and an unbroken list.
+        text = "Pack[$P$].\\n\\nKey types:\\n- Motions\\n- Pieces\n\nWith rotations, hard."
+        assert unescape_json_artifacts(text) == "Pack[$P$].\n\nKey types:\n- Motions\n- Pieces\n\nWith rotations, hard."
+
+    def test_residue_next_to_a_real_break_leaves_no_blank_run(self):
+        assert unescape_json_artifacts("A.\n\\n\\nB\nC") == "A.\n\nB\nC"
+
+    def test_literal_newlines_in_code_are_kept(self):
+        text = "Split on `a\\n\\nB` here.\n```\nx = \"\\n\\nY\"\n```"
         assert unescape_json_artifacts(text) == text
 
 
@@ -104,6 +152,27 @@ class TestCurrency:
     def test_closing_dollar_before_digit_is_not_currency(self):
         assert escape_currency("gain $\\alpha$5 units") == "gain $\\alpha$5 units"
 
+    def test_one_token_digit_led_span_is_math(self):
+        for text in ("dimension $6n$ (positions and momenta)", "the $2n-1$ terms"):
+            assert escape_currency(text) == text
+
+    def test_stored_escape_before_a_formula_is_undone(self):
+        # 1301.0081 was stored as \$6n$ by the older rule.
+        assert escape_currency("dimension \\$6n$ here") == "dimension $6n$ here"
+        assert escape_currency("the \\$2n-1$ terms") == "the $2n-1$ terms"
+        # Every stored escape on a line is undone in the same pass.
+        assert escape_currency("a \\$2n$-dimensional phase space with \\$6n$ coordinates") == (
+            "a $2n$-dimensional phase space with $6n$ coordinates"
+        )
+        assert escape_currency("the \\$2n-1$ terms and \\$2n$ others") == "the $2n-1$ terms and $2n$ others"
+        # Only the shape the older rule escaped is undone; an escape it never wrote stays.
+        for text in ("paid \\$5 for $x$ units", "pay \\$5/unit and $x$ later", "a \\$5$ b"):
+            assert escape_currency(text) == text
+        # A closer glued to \ or a letter opens a span wrap_bare_tex wrote after the escape.
+        for text in ("~\\$5M($\\pm$ 2M)", "the fee \\$5-$x$ per unit", "about \\$5M,$\\ldots$ more"):
+            assert escape_currency(text) == text
+        assert escape_currency("dimension \\$6n$ and $x$") == "dimension $6n$ and $x$"
+
 
 class TestIdempotencyAndFalsePositives:
     SAMPLES = [
@@ -113,12 +182,25 @@ class TestIdempotencyAndFalsePositives:
         "maps \\mathbf{x}\\in\\mathbb{R}^n to \\(y\\) via \\[z\\]",
         "\\$5 already escaped and $\\alpha$ later",
         "S \\u2248 30 with W[\\\\mathbf{p}] = \\\\sum_i f",
+        "- a:\n  $$\n  x = 1\n$$\n  where $y$ and $6n$ \\$6n$",
+        "  $$\n  x = 1\n  $$\nthen\n\n- b:\n  $$K \\le c$$",
+        "1. Split:\n   $$U = F(X),\\qquad\n   V = G(X),$$ so\n   next",
+        "Intro.\\n\\nKey:\\n- a\n\\n\\nB `c\\n\\nD`",
+        "rate \\$10\\%$ x",
+        "$$x = 1\nprose",
+        "$$a = 1,\nb = 2\n\n$$y$$",
+        "Revenue ~$5M(\\pm 2M) in 2020.",
+        "the fee $5-\\(x\\) per unit",
+        "about $5M,\\ldots more",
+        "a \\$2n$-dimensional phase space with \\$6n$ coordinates",
+        "the \\$2n-1$ terms and \\$2n$ others",
     ]
 
+    @pytest.mark.parametrize("from_organizer", [True, False])
     @pytest.mark.parametrize("text", SAMPLES)
-    def test_applying_twice_equals_once(self, text):
-        once = N(text)
-        assert N(once) == once
+    def test_applying_twice_equals_once(self, text, from_organizer):
+        once = N(text, from_organizer=from_organizer)
+        assert N(once, from_organizer=from_organizer) == once
 
     NO_OPS = [
         "Prices were \\$5 and \\$10 per unit.",
@@ -127,6 +209,7 @@ class TestIdempotencyAndFalsePositives:
         "Use \\n to break lines.\nSecond line.",
         "$$\na \\\\ b\n$$",
         "with $2^n$ states and where $d_k = 64$ heads",
+        "pay \\$5/unit and $x$ later",
     ]
 
     @pytest.mark.parametrize("text", NO_OPS)
@@ -169,3 +252,63 @@ class TestTitles:
     def test_symbols_and_unknown_commands_are_not_deleted(self):
         assert tex_to_text("$\\alpha$-decay of $\\ell_\\infty$ norms") == "α-decay of ℓ∞ norms"
         assert tex_to_text("the $\\softmax$ trick") == "the softmax trick"
+
+    def test_symbol_followed_by_a_script(self):
+        # Symbols map before scripts are flattened: $\\phi_i$ used to read "phii".
+        assert tex_to_text("$\\phi_i$ and $\\pi^+\\pi^-$ pairs") == "φi and π⁺π⁻ pairs"
+        assert tex_to_text("optimum $S^*$ of $x_+$") == "optimum S* of x₊"
+        assert tex_to_text("$e^(x)$ growth") == "e^(x) growth"  # only dropped before a symbol
+
+    # TeX's -- is an en dash in a title; labels keep it as written (TestLabels).
+    @pytest.mark.parametrize(("title", "expected"), [
+        ("Yang--Mills theory", "Yang\u2013Mills theory"),
+        ("$\\alpha$--$\\beta$ duality", "α\u2013β duality"),
+    ])
+    def test_double_dash_is_an_en_dash(self, title, expected):
+        assert tex_to_text(title) == expected
+
+
+class TestLabels:
+    """Video concepts are LLM-written plain text that often carries bare TeX."""
+
+    @pytest.mark.parametrize(("label", "expected"), [
+        ("Spread operators S_{(j)} and S_{(j)}^* (boundary\u2194grid)", "Spread operators S₍j₎ and S₍j₎* (boundary\u2194grid)"),
+        ("Unified encoder: \\Phi(\\bx)=g_{\\theta}(x)", "Unified encoder: Φ(bx)=gθ(x)"),
+        ("Levin\\'s prior over K(n)", "Levin's prior over K(n)"),
+        ("Pipeline (M_0 \\u2192 cuts) with \\\\theta", "Pipeline (M₀ → cuts) with θ"),
+        ("Acoustic scale r_{\\rm d} (drag epoch)", "Acoustic scale rd (drag epoch)"),
+        ("Taste (the $\\alpha$-line)", "Taste (the α-line)"),
+        ("Fees: $5 and $x$ units", "Fees: $5 and x units"),
+        ("f_{} and g", "f and g"),
+        ("x_1x_2 coupling", "x₁x₂ coupling"),
+        ("T_1T_2 relaxation", "T₁T₂ relaxation"),
+    ])
+    def test_tex_becomes_plain_text(self, label, expected):
+        assert label_to_text(label) == expected
+        assert label_to_text(expected) == expected
+
+    @pytest.mark.parametrize("label", [
+        "DP realignment", "Teacher -> Student", "JRC_m and G_goal in file_name.py", "Fees of $5 per x_1 call",
+        "$5 vs $10 pricing", "Cost reduction from $5M to $2M", "2^10 tokens", "model_2_layers and conv2d_3x3",
+        "conv_block_1 and num_heads_8", "train_stage_1.py config", "G_goal_1 vs hidden_state_0",
+    ])
+    def test_plain_labels_are_unchanged(self, label):
+        assert label_to_text(label) == label
+
+    # Arrows and rules, not en dashes: kept as written, also next to TeX and
+    # inside a TeX span (the title rule turned "-->" into an en dash and ">").
+    @pytest.mark.parametrize(("label", "expected"), [
+        ("Encoder --> Decoder pipeline", "Encoder --> Decoder pipeline"),
+        ("Decoder <-- Encoder", "Decoder <-- Encoder"),
+        ("Encoder <--> Decoder", "Encoder <--> Decoder"),
+        ("Before --- after", "Before --- after"),
+        ("Yang--Baxter maps", "Yang--Baxter maps"),
+        ("x_1 --> \\Phi(x)", "x₁ --> Φ(x)"),
+        ("$a--b$ split", "a--b split"),
+    ])
+    def test_double_dashes_are_kept(self, label, expected):
+        assert label_to_text(label) == expected
+        assert label_to_text(expected) == expected
+
+    def test_missing_label(self):
+        assert label_to_text(None) == "" and label_to_text("") == ""

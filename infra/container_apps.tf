@@ -245,9 +245,20 @@ resource "azurerm_container_app" "api" {
       # (backend/api/throttle.py); the worker has no copy. Decided by Ajith
       # on 2026-11-02 to keep the credits lasting until 2028-07-29; revisit
       # once the cost per paper on gpt-6-luna is measured.
+      #
+      # 50 -> 100 (Ajith, 2026-11-26), now that it is measured. Nov 12-25 on
+      # gpt-6-luna: cost/day ~= CA$5.5 fixed + CA$0.14 per accepted paper
+      # (AI text + voice ~0.11, worker scale-out ~0.03-0.05), i.e. CA$12.6/day
+      # at ~47 papers against a pace of CA$17.95/day that lasts to expiry. The
+      # 50 cap closed on 8 of the last 10 days and turned away 25-39 distinct
+      # people on each of the last 5 (159 people got nothing but rejections
+      # in the week to Nov 26). Break-even is a SUSTAINED ~89 accepted papers/day:
+      # expected demand (~75/day) lands near CA$16/day, under pace; 100 every
+      # single day would be ~CA$19.5/day, ~9% over. If the 7-day average of
+      # accepted papers passes ~89, set this to 90.
       env {
         name  = "DAILY_NEW_PAPER_CAP"
-        value = "50"
+        value = "100"
       }
       dynamic "env" {
         for_each = var.turnstile_secret_key != "" ? [1] : []

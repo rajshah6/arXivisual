@@ -66,7 +66,7 @@ EST_SAVING = {
     "sol_removed": 0,
     "budget": 0,
     "hard_stop": 0,
-    "cap": 180,
+    "cap": 0,  # was 180 for the 80 -> 50 cut; the cap is 100 since 2026-11-26
     "tts": 130,
 }
 
@@ -220,7 +220,9 @@ def live_cuts() -> list[dict]:
          f"budget {amount}"),
         ("hard_stop", "Hard stop armed", bool(automation),
          "armed" if automation else "not armed (README: Hard stop)"),
-        ("cap", "Daily paper cap at 50", cap.isdigit() and 0 < int(cap) <= 50, f"cap {cap}/day"),
+        # Raised 50 -> 100 on 2026-11-26 (reasoning beside DAILY_NEW_PAPER_CAP in
+        # container_apps.tf); the row now only checks that a cap is still set.
+        ("cap", "Daily paper cap at 100 or lower", cap.isdigit() and 0 < int(cap) <= 100, f"cap {cap}/day"),
         ("tts", "Free narration voice", tts == "gtts", f"voice service {tts}"),
     ]
     return [
